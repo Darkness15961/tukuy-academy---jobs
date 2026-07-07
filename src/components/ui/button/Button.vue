@@ -4,13 +4,15 @@ import { cn } from '@/lib/utils'
 
 const props = withDefaults(
   defineProps<{
-    variant?: 'default' | 'secondary' | 'outline' | 'ghost' | 'destructive'
+    variant?: 'default' | 'secondary' | 'outline' | 'ghost' | 'destructive' | 'link'
     size?: 'sm' | 'default' | 'lg' | 'icon'
+    type?: 'button' | 'submit' | 'reset'
     class?: string
   }>(),
   {
     variant: 'default',
     size: 'default',
+    type: 'button',
   },
 )
 
@@ -22,6 +24,7 @@ const classes = computed(() =>
       'bg-secondary text-secondary-foreground hover:bg-teal-800': props.variant === 'secondary',
       'border border-input bg-card hover:bg-muted': props.variant === 'outline',
       'hover:bg-muted': props.variant === 'ghost',
+      'text-primary underline-offset-4 hover:underline': props.variant === 'link',
       'bg-destructive text-destructive-foreground hover:bg-red-700': props.variant === 'destructive',
       'h-8 px-3 text-xs': props.size === 'sm',
       'h-10 px-4 py-2': props.size === 'default',
@@ -34,7 +37,7 @@ const classes = computed(() =>
 </script>
 
 <template>
-  <button :class="classes">
+  <button :type="type" :class="classes">
     <slot />
   </button>
 </template>

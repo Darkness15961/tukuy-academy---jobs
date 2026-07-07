@@ -1,6 +1,8 @@
 import type { Component } from 'vue'
 
-export type ViewId = 'home' | 'learning' | 'jobs' | 'cv' | 'certificates' | 'profile'
+export type ViewId = 'courses' | 'learning' | 'favorites' | 'jobs' | 'cv' | 'certificates' | 'profile'
+
+export type CoursePricing = 'free' | 'paid'
 
 export type Course = {
   id: string
@@ -11,8 +13,14 @@ export type Course = {
   mode: 'Virtual' | 'Presencial' | 'Mixto'
   progress: number
   status: 'Disponible' | 'En curso' | 'Completado'
+  pricing: CoursePricing
+  price?: number
   imageTone: string
   image: string
+  instructor?: string
+  rating?: number
+  reviewCount?: number
+  bestseller?: boolean
 }
 
 export type Job = {
@@ -21,6 +29,8 @@ export type Job = {
   company: string
   location: string
   match: number
+  postedAt: string
+  deadlineAt: string
   deadline: string
   tags: string[]
 }

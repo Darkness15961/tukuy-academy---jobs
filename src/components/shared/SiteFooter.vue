@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Button } from '@/components/ui/button'
 import { computed } from 'vue'
 
 const props = withDefaults(defineProps<{ variant?: 'dark' | 'light' }>(), {
@@ -46,26 +47,30 @@ const company = ['Inicio', 'Cursos', 'Oportunidades', 'Beneficios', 'Contacto']
 
       <div class="grid content-start gap-3">
         <h3 class="font-bold">Módulos</h3>
-        <a
+        <Button
           v-for="item in modules"
           :key="item"
-          :class="['text-sm transition', isDark ? 'text-white/70 hover:text-white' : 'text-[#52657A] hover:text-[#07152B]']"
-          href="#"
+          class="h-auto justify-start p-0 font-normal"
+          :class="isDark ? 'text-white/70 hover:text-white' : 'text-[#52657A] hover:text-[#07152B]'"
+          variant="link"
+          type="button"
         >
           {{ item }}
-        </a>
+        </Button>
       </div>
 
       <div class="grid content-start gap-3">
         <h3 class="font-bold">Empresa</h3>
-        <a
+        <Button
           v-for="item in company"
           :key="item"
-          :class="['text-sm transition', isDark ? 'text-white/70 hover:text-white' : 'text-[#52657A] hover:text-[#07152B]']"
-          href="#"
+          class="h-auto justify-start p-0 font-normal"
+          :class="isDark ? 'text-white/70 hover:text-white' : 'text-[#52657A] hover:text-[#07152B]'"
+          variant="link"
+          type="button"
         >
           {{ item }}
-        </a>
+        </Button>
       </div>
 
       <div class="grid content-start gap-3">
@@ -84,7 +89,7 @@ const company = ['Inicio', 'Cursos', 'Oportunidades', 'Beneficios', 'Contacto']
           isDark ? 'text-white/65' : 'text-[#52657A]',
         ]"
       >
-        <span>© 2026 Tukuy Academy & Jobs. Simulación funcional.</span>
+        <span>© 2026 Tukuy Academy & Jobs.</span>
         <span>Aprende · Certifícate · Postula</span>
       </div>
     </div>

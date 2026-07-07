@@ -1,24 +1,28 @@
 <script setup lang="ts">
 import { Award, BookOpen, BriefcaseBusiness, ChevronRight, Mail, MapPin, Phone, Search } from 'lucide-vue-next'
-import { computed, ref } from 'vue'
+import { useRouter } from 'vue-router'
 
+import AppHeader from '@/components/shared/AppHeader.vue'
+import CarouselSkeleton from '@/components/shared/CarouselSkeleton.vue'
+import CourseCarousel from '@/components/shared/CourseCarousel.vue'
+import CourseTrendCard from '@/components/shared/CourseTrendCard.vue'
+import CourseTrendCardSkeleton from '@/components/shared/CourseTrendCardSkeleton.vue'
 import SiteFooter from '@/components/shared/SiteFooter.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { carouselSlides, courses, heroImage, tukuyModules } from '@/data/academy'
+import { useContent } from '@/composables/useContent'
+import { useCourseFilter, useCourses } from '@/composables/useCourses'
 
-defineEmits<{ login: [] }>()
+const router = useRouter()
+const { carouselSlides, heroImage, loading: contentLoading } = useContent()
+const { courses, loading: coursesLoading } = useCourses()
+const { searchTerm, filteredCourses } = useCourseFilter(() => courses.value)
 
-const searchTerm = ref('')
-const filteredCourses = computed(() => {
-  const term = searchTerm.value.trim().toLowerCase()
-  if (!term) return courses
-  return courses.filter((course) =>
-    [course.title, course.category, course.level, course.mode].some((value) => value.toLowerCase().includes(term)),
-  )
-})
+function goToLogin() {
+  router.push('/login')
+}
 
 function scrollToSection(id: string) {
   const section = document.querySelector<HTMLElement>(id)
@@ -50,29 +54,7 @@ function scrollToSection(id: string) {
 </script>
 
 <template>
-  <header class="sticky top-0 z-20 border-b border-[#D6E2EF] bg-[#EAF1F8]/95 text-[#07152B] shadow-sm backdrop-blur">
-    <div class="mx-auto flex max-w-7xl items-center justify-between gap-4 px-5 py-4">
-      <button class="flex cursor-pointer items-center gap-3 text-left" type="button">
-        <img class="h-11 w-auto object-contain" src="/img/iconoTukuyAcademy.png" alt="Tukuy Academy" />
-        <div>
-          <strong class="block text-xl leading-none tracking-normal text-[#07152B]">
-            <span class="font-black">Tukuy</span>
-            <span class="font-light"> Academy</span>
-          </strong>
-          <span class="text-sm text-[#52657A]">Formación y empleabilidad</span>
-        </div>
-      </button>
-
-      <nav class="hidden items-center gap-1 md:flex">
-        <button class="rounded-md px-3 py-2 text-sm font-semibold text-[#52657A] transition hover:bg-[#DDEAF7] hover:text-[#07152B]" type="button" @click="scrollToSection('#cursos')">Cursos</button>
-        <button class="rounded-md px-3 py-2 text-sm font-semibold text-[#52657A] transition hover:bg-[#DDEAF7] hover:text-[#07152B]" type="button" @click="scrollToSection('#modulos')">Módulos</button>
-        <button class="rounded-md px-3 py-2 text-sm font-semibold text-[#52657A] transition hover:bg-[#DDEAF7] hover:text-[#07152B]" type="button" @click="scrollToSection('#oportunidades')">Oportunidades</button>
-        <button class="rounded-md px-3 py-2 text-sm font-semibold text-[#52657A] transition hover:bg-[#DDEAF7] hover:text-[#07152B]" type="button" @click="scrollToSection('#contacto')">Contacto</button>
-      </nav>
-
-      <Button @click="$emit('login')">Acceder</Button>
-    </div>
-  </header>
+  <AppHeader mode="public" @scroll-to="scrollToSection" />
 
   <main class="bg-slate-950 text-white">
     <section class="relative overflow-hidden">
@@ -105,7 +87,7 @@ function scrollToSection(id: string) {
           </div>
 
           <div class="flex flex-wrap gap-3">
-            <Button size="lg" @click="$emit('login')">
+            <Button size="lg" @click="goToLogin">
               Acceder al portal <ChevronRight class="h-4 w-4" />
             </Button>
             <Button class="border-white/20 bg-white/10 text-white hover:bg-white/15" variant="outline" size="lg" @click="scrollToSection('#cursos')">
@@ -114,45 +96,54 @@ function scrollToSection(id: string) {
           </div>
 
           <div class="grid gap-3 sm:grid-cols-3">
-            <div class="rounded-lg border border-white/10 bg-white/8 p-4 backdrop-blur">
-              <strong class="block text-2xl">9</strong>
-              <span class="text-sm text-white/65">cursos simulados de obra</span>
-            </div>
-            <div class="rounded-lg border border-white/10 bg-white/8 p-4 backdrop-blur">
-              <strong class="block text-2xl">91%</strong>
-              <span class="text-sm text-white/65">matching laboral demo</span>
-            </div>
-            <div class="rounded-lg border border-white/10 bg-white/8 p-4 backdrop-blur">
-              <strong class="block text-2xl">3</strong>
-              <span class="text-sm text-white/65">certificados simulados</span>
-            </div>
+            <Card class="border-white/10 bg-white/8 text-white backdrop-blur">
+              <CardContent class="p-4">
+                <strong class="block text-2xl">9</strong>
+                <span class="text-sm text-white/65">Cursos de obra</span>
+              </CardContent>
+            </Card>
+            <Card class="border-white/10 bg-white/8 text-white backdrop-blur">
+              <CardContent class="p-4">
+                <strong class="block text-2xl">91%</strong>
+                <span class="text-sm text-white/65">Matching laboral</span>
+              </CardContent>
+            </Card>
+            <Card class="border-white/10 bg-white/8 text-white backdrop-blur">
+              <CardContent class="p-4">
+                <strong class="block text-2xl">3</strong>
+                <span class="text-sm text-white/65">Certificados</span>
+              </CardContent>
+            </Card>
           </div>
         </div>
 
         <div class="grid gap-4">
-          <div class="relative overflow-hidden rounded-lg border border-white/15 bg-white/10 shadow-2xl backdrop-blur">
-            <div class="flex animate-[academy-slide_14s_ease-in-out_infinite]">
-              <article v-for="slide in carouselSlides" :key="slide.title" class="relative min-h-[440px] min-w-full overflow-hidden">
-                <img :src="slide.image" :alt="slide.title" class="absolute inset-0 h-full w-full object-cover" />
-                <div class="absolute inset-0 bg-gradient-to-t from-slate-950/92 via-slate-950/28 to-transparent" />
-                <div class="absolute inset-x-0 bottom-0 grid gap-3 p-6">
-                  <Badge class="w-fit border-white/20 bg-white/90 text-slate-950" variant="outline">{{ slide.label }}</Badge>
-                  <h2 class="text-3xl font-black tracking-normal">{{ slide.title }}</h2>
-                  <p class="max-w-md text-sm leading-6 text-white/75">{{ slide.description }}</p>
-                </div>
-              </article>
+          <CarouselSkeleton v-if="contentLoading" variant="dark" />
+          <template v-else>
+            <div class="relative overflow-hidden rounded-lg border border-white/15 bg-white/10 shadow-2xl backdrop-blur">
+              <div class="flex animate-[academy-slide_14s_ease-in-out_infinite]">
+                <article v-for="slide in carouselSlides" :key="slide.title" class="relative min-h-[440px] min-w-full overflow-hidden">
+                  <img :src="slide.image" :alt="slide.title" class="absolute inset-0 h-full w-full object-cover" />
+                  <div class="absolute inset-0 bg-gradient-to-t from-slate-950/92 via-slate-950/28 to-transparent" />
+                  <div class="absolute inset-x-0 bottom-0 grid gap-3 p-6">
+                    <Badge class="w-fit border-white/20 bg-white/90 text-slate-950" variant="outline">{{ slide.label }}</Badge>
+                    <h2 class="text-3xl font-black tracking-normal">{{ slide.title }}</h2>
+                    <p class="max-w-md text-sm leading-6 text-white/75">{{ slide.description }}</p>
+                  </div>
+                </article>
+              </div>
             </div>
-          </div>
-          <div class="grid grid-cols-3 gap-2">
-            <div v-for="slide in carouselSlides" :key="slide.label" class="h-1.5 overflow-hidden rounded-full bg-white/15">
-              <span class="block h-full rounded-full bg-white/80" />
+            <div class="grid grid-cols-3 gap-2">
+              <div v-for="slide in carouselSlides" :key="slide.label" class="h-1.5 overflow-hidden rounded-full bg-white/15">
+                <span class="block h-full rounded-full bg-white/80" />
+              </div>
             </div>
-          </div>
+          </template>
         </div>
       </div>
     </section>
 
-    <section id="beneficios" class="mx-auto grid max-w-7xl gap-4 px-5 py-10 md:grid-cols-3">
+    <section id="modulos" class="mx-auto grid max-w-7xl gap-4 px-5 py-10 md:grid-cols-3">
       <Card class="border-white/10 bg-white/8 text-white backdrop-blur">
         <CardHeader>
           <BookOpen class="h-5 w-5 text-blue-300" />
@@ -174,42 +165,6 @@ function scrollToSection(id: string) {
           <CardDescription class="text-white/65">Tu experiencia usando el sistema alimenta tu CV inteligente y mejora el matching laboral.</CardDescription>
         </CardHeader>
       </Card>
-    </section>
-
-    <section id="modulos" class="mx-auto grid max-w-7xl gap-6 px-5 pb-14">
-      <div class="grid gap-3 md:grid-cols-[1fr_0.75fr] md:items-end">
-        <div>
-          <p class="text-xs font-bold uppercase text-teal-300 ">Ecosistema Tukuy Obra</p>
-          <h2 class="mt-2 max-w-3xl text-3xl font-black tracking-normal">Todo lo que tu obra necesita</h2>
-        </div>
-      </div>
-
-      <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-        <Card v-for="module in tukuyModules" :key="module.title" class="group overflow-hidden border-white/10 bg-white/8 text-white backdrop-blur">
-          <div class="relative h-24 overflow-hidden border-b border-white/10 bg-gradient-to-br from-white/16 via-blue-400/12 to-teal-400/14">
-            <div class="absolute left-4 top-4 grid h-12 w-12 place-items-center rounded-lg border border-white/15 bg-white/12 text-2xl backdrop-blur transition group-hover:scale-105">
-              {{ module.icon }}
-            </div>
-            <div class="absolute bottom-3 right-3 rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-white/75">
-              Curso módulo
-            </div>
-          </div>
-          <CardHeader>
-            <CardTitle class="text-lg">{{ module.title }}</CardTitle>
-            <CardDescription class="min-h-12 text-white/65">{{ module.description }}</CardDescription>
-          </CardHeader>
-          <CardContent class="grid gap-4">
-            <div class="flex flex-wrap gap-2">
-              <Badge v-for="tag in module.tags" :key="tag" class="border-white/20 bg-white/90 text-slate-950" variant="outline">
-                {{ tag }}
-              </Badge>
-            </div>
-            <Button class="w-full border-white/20 bg-white/10 text-white hover:bg-white/15" variant="outline" @click="$emit('login')">
-              Ver ruta
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
     </section>
 
     <section id="oportunidades" class="mx-auto grid max-w-7xl gap-5 px-5 pb-14">
@@ -265,32 +220,30 @@ function scrollToSection(id: string) {
       </div>
     </section>
 
-    <section id="cursos" class="mx-auto grid max-w-7xl gap-5 px-5 pb-14">
-      <div class="flex items-end justify-between gap-4">
-        <div>
-          <p class="text-xs font-bold uppercase text-teal-300">Cursos destacados</p>
-          <h2 class="text-3xl font-black tracking-normal">Empieza con una ruta práctica</h2>
-        </div>
-        <Button class="hidden border-white/20 bg-white/10 text-white hover:bg-white/15 sm:inline-flex" variant="outline" @click="$emit('login')">
-          Ingresar y ver todo
-        </Button>
-      </div>
+    <section id="cursos" class="mx-auto max-w-7xl px-5 pb-14">
+      <CourseCarousel
+        dark
+        subtitle="Cursos destacados"
+        title="Cursos en tendencia"
+      >
+        <template v-if="coursesLoading">
+          <CourseTrendCardSkeleton v-for="i in 6" :key="i" variant="dark" />
+        </template>
+        <CourseTrendCard
+          v-for="course in filteredCourses"
+          v-else
+          :key="course.id"
+          :course="course"
+          variant="dark"
+          :show-actions="false"
+          @select="goToLogin"
+        />
+      </CourseCarousel>
 
-      <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <Card v-for="course in filteredCourses" :key="course.id" class="group overflow-hidden border-white/10 bg-white/8 text-white backdrop-blur">
-          <div class="relative h-36 overflow-hidden">
-            <img :src="course.image" :alt="course.title" class="h-full w-full object-cover transition duration-500 group-hover:scale-105" />
-            <div :class="['absolute inset-0 bg-gradient-to-br opacity-50', course.imageTone]" />
-            <Badge class="absolute left-4 top-4 border-white/20 bg-white/90 text-slate-950" variant="outline">{{ course.level }}</Badge>
-          </div>
-          <CardHeader>
-            <CardTitle>{{ course.title }}</CardTitle>
-            <CardDescription class="text-white/65">{{ course.category }} · {{ course.duration }} · {{ course.mode }}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Button class="w-full bg-white text-slate-950 hover:bg-white/90" @click="$emit('login')">Comenzar gratis</Button>
-          </CardContent>
-        </Card>
+      <div class="mt-6 flex justify-end">
+        <Button class="border-white/20 bg-white/10 text-white hover:bg-white/15" variant="outline" @click="goToLogin">
+          Ingresar y ver todo el catálogo
+        </Button>
       </div>
     </section>
 
@@ -307,19 +260,25 @@ function scrollToSection(id: string) {
           </div>
 
           <div class="grid gap-3 text-sm">
-            <div class="flex items-center gap-3 rounded-lg border border-white/10 bg-white/8 p-3">
-              <MapPin class="h-4 w-4 text-teal-300" />
-              <span>Cusco, Perú</span>
-            </div>
-            <div class="flex items-center gap-3 rounded-lg border border-white/10 bg-white/8 p-3">
-              <Phone class="h-4 w-4 text-teal-300" />
-              <span>+51 930 804 475</span>
-            </div>
-            <div class="flex items-center gap-3 rounded-lg border border-white/10 bg-white/8 p-3">
-              <Mail class="h-4 w-4 text-teal-300" />
-              <span>academy@tukuyobra.com</span>
-            </div>
-            <Button class="mt-2 bg-white text-slate-950 hover:bg-white/90" @click="$emit('login')">Solicitar demo de capacitación</Button>
+            <Card class="border-white/10 bg-white/8 shadow-none">
+              <CardContent class="flex items-center gap-3 p-3">
+                <MapPin class="h-4 w-4 text-teal-300" />
+                <span>Cusco, Perú</span>
+              </CardContent>
+            </Card>
+            <Card class="border-white/10 bg-white/8 shadow-none">
+              <CardContent class="flex items-center gap-3 p-3">
+                <Phone class="h-4 w-4 text-teal-300" />
+                <span>+51 930 804 475</span>
+              </CardContent>
+            </Card>
+            <Card class="border-white/10 bg-white/8 shadow-none">
+              <CardContent class="flex items-center gap-3 p-3">
+                <Mail class="h-4 w-4 text-teal-300" />
+                <span>academy@tukuyobra.com</span>
+              </CardContent>
+            </Card>
+            <Button class="mt-2 bg-white text-slate-950 hover:bg-white/90" @click="goToLogin">Solicitar demo de capacitación</Button>
           </div>
         </CardContent>
       </Card>
