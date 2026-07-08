@@ -3,7 +3,6 @@ import { computed, ref, watch } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
 
 import AppHeader from '@/components/shared/AppHeader.vue'
-import CourseSimulator from '@/components/shared/CourseSimulator.vue'
 import PortalPageSkeleton from '@/components/shared/PortalPageSkeleton.vue'
 import SiteFooter from '@/components/shared/SiteFooter.vue'
 import { useAuth } from '@/composables/useAuth'
@@ -126,11 +125,7 @@ function saveProgress() {
 }
 
 function openCourseSimulator(course: Course) {
-  activeCourseToSimulate.value = course
-}
-
-function closeCourseSimulator() {
-  activeCourseToSimulate.value = null
+  router.push(`/tukuy-academy/aprendizaje/${course.id}`)
 }
 
 function updateCourseProgress(courseId: string, progress: number, status: Course['status']) {
@@ -197,7 +192,7 @@ providePortalContext(portalContext)
 
 <template>
   <AppHeader
-    v-if="user"
+    v-if="user && !route.meta.hideHeaderFooter"
     mode="portal"
     :user="user"
     :nav-items="navItems"
@@ -213,15 +208,8 @@ providePortalContext(portalContext)
 
   <PortalPageSkeleton v-if="isPageLoading" />
 
-  <main v-else-if="user" class="bg-background">
+  <main v-else-if="user" :class="route.meta.hideHeaderFooter ? '' : 'bg-background min-h-[calc(100vh-4rem)] flex flex-col justify-between'">
     <RouterView />
-    <SiteFooter variant="light" />
+    <SiteFooter v-if="!route.meta.hideHeaderFooter" variant="light" />
   </main>
-
-  <CourseSimulator
-    :course="activeCourseToSimulate"
-    :open="!!activeCourseToSimulate"
-    @close="closeCourseSimulator"
-    @update-progress="updateCourseProgress"
-  />
 </template>

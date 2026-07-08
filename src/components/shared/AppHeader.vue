@@ -2,13 +2,18 @@
 import {
   Award,
   Bell,
+  BookOpen,
   BriefcaseBusiness,
   ChevronDown,
+  FileText,
+  GraduationCap,
   Heart,
   LogOut,
+  Menu,
   Settings,
   ShoppingCart,
   UserRound,
+  X,
 } from 'lucide-vue-next'
 import {
   DropdownMenuContent,
@@ -81,6 +86,30 @@ function favoriteLabel(course: Course) {
   return 'Pendiente de inscripción'
 }
 
+const mobileMenuOpen = ref(false)
+
+function getNavIcon(id: ViewId) {
+  if (id === 'courses') return GraduationCap
+  if (id === 'learning') return BookOpen
+  if (id === 'favorites') return Heart
+  if (id === 'jobs') return BriefcaseBusiness
+  if (id === 'cv') return FileText
+  if (id === 'certificates') return Award
+  if (id === 'profile') return UserRound
+  if (id === 'settings') return Settings
+  return GraduationCap
+}
+
+function handleMobileNavigate(view: ViewId) {
+  mobileMenuOpen.value = false
+  emit('navigate', view)
+}
+
+function handleMobileScroll(sectionId: string) {
+  mobileMenuOpen.value = false
+  emit('scrollTo', sectionId)
+}
+
 async function goHome() {
   if (isPortal.value) {
     emit('navigate', 'courses')
@@ -107,6 +136,20 @@ function goToLogin() {
     "
   >
     <div class="mx-auto flex max-w-7xl items-center gap-3 px-4 py-3 lg:gap-4 lg:px-5">
+      <!-- Mobile sandwich menu button -->
+      <Button
+        class="inline-flex mr-1"
+        :class="isPortal ? 'lg:hidden' : 'md:hidden'"
+        variant="ghost"
+        size="icon"
+        type="button"
+        @click="mobileMenuOpen = !mobileMenuOpen"
+        :aria-label="mobileMenuOpen ? 'Cerrar menú' : 'Abrir menú'"
+      >
+        <Menu v-if="!mobileMenuOpen" class="h-6 w-6" />
+        <X v-else class="h-6 w-6" />
+      </Button>
+
       <Button
         class="h-auto shrink-0 gap-2.5 p-0 hover:bg-transparent"
         variant="ghost"
@@ -332,6 +375,40 @@ function goToLogin() {
 
         <Button v-else @click="goToLogin">Acceder</Button>
       </div>
+    </div>
+
+    <!-- Mobile dropdown panel -->
+    <div
+      v-if="mobileMenuOpen"
+      class="absolute top-full left-0 right-0 z-40 border-b border-border bg-card/98 px-4 py-3 shadow-md flex flex-col gap-1 lg:hidden"
+      :class="isPortal ? 'lg:hidden' : 'md:hidden'"
+    >
+      <template v-if="isPortal">
+        <Button
+          v-for="item in props.navItems"
+          :key="item.id"
+          class="w-full justify-start font-semibold text-muted-foreground hover:text-foreground h-10 px-3"
+          :class="activeView === item.id ? 'bg-blue-50 text-blue-700 hover:bg-blue-50' : ''"
+          variant="ghost"
+          type="button"
+          @click="handleMobileNavigate(item.id)"
+        >
+          <component :is="getNavIcon(item.id)" class="mr-2 h-4 w-4 shrink-0" />
+          {{ item.label }}
+        </Button>
+      </template>
+      <template v-else>
+        <Button
+          v-for="item in publicNavItems"
+          :key="item.id"
+          class="w-full justify-start text-[#52657A] hover:bg-[#DDEAF7] hover:text-[#07152B] h-10 px-3"
+          variant="ghost"
+          type="button"
+          @click="handleMobileScroll(item.id)"
+        >
+          {{ item.label }}
+        </Button>
+      </template>
     </div>
   </header>
 </template>

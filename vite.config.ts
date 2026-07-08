@@ -20,5 +20,13 @@ export default defineConfig({
   },
   build: {
     sourcemap: false,
+    rollupOptions: {
+      onwarn(warning, defaultHandler) {
+        if (warning.code === 'INVALID_ANNOTATION') {
+          return
+        }
+        defaultHandler(warning)
+      },
+    },
   },
 })

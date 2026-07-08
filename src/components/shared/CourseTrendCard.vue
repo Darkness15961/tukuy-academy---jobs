@@ -308,7 +308,7 @@ function calculatePanelPosition() {
 
 .course-trend-card:hover,
 .course-trend-card--active {
-  z-index: 50;
+  z-index: 20;
   transform: translateY(-4px);
   box-shadow:
     0 10px 15px -3px rgb(0 0 0 / 0.1),

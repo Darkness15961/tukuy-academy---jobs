@@ -35,6 +35,12 @@ const router = createRouter({
       meta: { requiresAuth: true },
       children: [
         {
+          path: 'aprendizaje/:courseId',
+          name: 'portal-learning-player',
+          component: () => import('@/views/portal/course-player/CoursePlayerView.vue'),
+          meta: { requiresAuth: true, hideHeaderFooter: true },
+        },
+        {
           path: 'cursos',
           name: 'portal-courses',
           component: () => import('@/views/portal/courses/CoursesView.vue'),
