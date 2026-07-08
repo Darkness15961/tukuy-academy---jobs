@@ -207,19 +207,33 @@ function goToLogin() {
               align="center"
             >
               <div class="grid gap-1">
-                <button
+                <div
                   v-for="course in enrolledCourses.slice(0, 4)"
                   :key="course.id"
-                  type="button"
-                  class="grid grid-cols-[56px_1fr] gap-3 rounded-md p-2 text-left transition hover:bg-muted"
-                  @click="emit('navigate', 'learning')"
+                  class="flex items-center justify-between gap-3 rounded-md p-2 hover:bg-muted/70 transition"
                 >
-                  <img :src="course.image" :alt="course.title" class="h-14 w-14 rounded-md object-cover" />
-                  <div class="min-w-0 grid gap-1.5">
-                    <span class="line-clamp-2 text-sm font-semibold leading-snug">{{ course.title }}</span>
-                    <Progress :model-value="course.progress" class="h-1.5" />
+                  <div
+                    class="flex flex-1 items-center gap-3 cursor-pointer min-w-0"
+                    @click="router.push(`/tukuy-academy/aprendizaje/${course.id}`)"
+                  >
+                    <img :src="course.image" :alt="course.title" class="h-12 w-12 rounded-md object-cover shrink-0" />
+                    <div class="min-w-0 flex-1 grid gap-1">
+                      <span class="line-clamp-1 text-sm font-semibold leading-snug">{{ course.title }}</span>
+                      <div class="flex items-center gap-2">
+                        <Progress :model-value="course.progress" class="h-1.5 flex-1" />
+                        <span class="text-[10px] text-muted-foreground font-bold">{{ course.progress }}%</span>
+                      </div>
+                    </div>
                   </div>
-                </button>
+                  <Button
+                    size="sm"
+                    variant="default"
+                    class="h-8 shrink-0 bg-[#0B3A78] hover:bg-[#072d5e] text-white text-xs px-3 font-semibold rounded"
+                    @click="router.push(`/tukuy-academy/aprendizaje/${course.id}`)"
+                  >
+                    Continuar
+                  </Button>
+                </div>
               </div>
               <Button class="mt-2 w-full" size="sm" @click="emit('navigate', 'learning')">
                 Ir a Mi aprendizaje
