@@ -23,6 +23,19 @@ export type Course = {
   bestseller?: boolean
 }
 
+export type CourseLesson = {
+  id: string
+  title: string
+  duration: string
+  type: 'video' | 'lectura' | 'quiz'
+}
+
+export type CourseSection = {
+  id: string
+  title: string
+  lessons: CourseLesson[]
+}
+
 export type Job = {
   id: string
   title: string
