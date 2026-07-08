@@ -108,11 +108,11 @@ function scrollToSection(id: string) {
   <AppHeader mode="public" @scroll-to="scrollToSection" />
 
   <main class="bg-slate-950 text-white">
-    <section class="relative overflow-hidden">
+    <section class="relative overflow-hidden min-h-[calc(100vh-5.5rem)] flex items-center">
       <img :src="heroImage" alt="Formación laboral para personas de obra" class="absolute inset-0 h-full w-full object-cover opacity-45" />
       <div class="absolute inset-0 bg-gradient-to-br from-slate-950 via-slate-950/82 to-blue-950/70" />
 
-      <div class="relative mx-auto grid max-w-7xl gap-10 px-5 py-12 lg:grid-cols-[1.05fr_0.95fr] lg:items-center lg:py-20">
+      <div class="relative mx-auto grid max-w-7xl gap-10 px-5 py-12 lg:grid-cols-[1.05fr_0.95fr] lg:items-center w-full">
         <div class="grid gap-7">
           <Badge class="w-fit border-white/20 bg-white/10 text-white" variant="outline">Academy & Jobs</Badge>
 
@@ -120,7 +120,6 @@ function scrollToSection(id: string) {
             <h1 class="max-w-4xl text-4xl font-black tracking-normal sm:text-6xl">
               Aprende a gestionar obras con Tukuy Obra y potencia tu perfil
             </h1>
-            <p>Conecta con oportunidades laborales y amplía tu red de contactos</p>
           </div>
 
 
