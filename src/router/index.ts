@@ -60,6 +60,10 @@ const router = createRouter({
         },
         {
           path: 'cv-inteligente',
+          redirect: portalPathByView.cv,
+        },
+        {
+          path: 'cv',
           name: 'portal-cv',
           component: () => import('@/views/portal/cv/CvView.vue'),
           meta: { requiresAuth: true, view: 'cv' },
@@ -75,6 +79,12 @@ const router = createRouter({
           name: 'portal-profile',
           component: () => import('@/views/portal/profile/ProfileView.vue'),
           meta: { requiresAuth: true, view: 'profile' },
+        },
+        {
+          path: 'configuracion',
+          name: 'portal-settings',
+          component: () => import('@/views/portal/settings/SettingsView.vue'),
+          meta: { requiresAuth: true, view: 'settings' },
         },
       ],
     },

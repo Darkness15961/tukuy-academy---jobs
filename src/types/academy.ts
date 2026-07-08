@@ -1,6 +1,6 @@
 import type { Component } from 'vue'
 
-export type ViewId = 'courses' | 'learning' | 'favorites' | 'jobs' | 'cv' | 'certificates' | 'profile'
+export type ViewId = 'courses' | 'learning' | 'favorites' | 'jobs' | 'cv' | 'certificates' | 'profile' | 'settings'
 
 export type CoursePricing = 'free' | 'paid'
 

@@ -5,9 +5,10 @@ export const portalPathByView: Record<ViewId, string> = {
   learning: '/tukuy-academy/mi-aprendizaje',
   favorites: '/tukuy-academy/favoritos',
   jobs: '/tukuy-academy/bolsa-tukuy',
-  cv: '/tukuy-academy/cv-inteligente',
+  cv: '/tukuy-academy/cv',
   certificates: '/tukuy-academy/certificados',
   profile: '/tukuy-academy/perfil',
+  settings: '/tukuy-academy/configuracion',
 }
 
 export function resolvePortalView(value: unknown): ViewId {
@@ -18,7 +19,8 @@ export function resolvePortalView(value: unknown): ViewId {
     value === 'jobs' ||
     value === 'cv' ||
     value === 'certificates' ||
-    value === 'profile'
+    value === 'profile' ||
+    value === 'settings'
   ) {
     return value
   }

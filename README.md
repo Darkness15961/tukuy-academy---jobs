@@ -25,16 +25,10 @@ Variables en `.env` (ver `.env.example`):
 ## Build
 
 ```sh
-# Desarrollo / preview local (usa mock)
-bun run build-only
-
-# Producción (variables requeridas)
-VITE_API_URL=https://api.tudominio.com VITE_USE_MOCK=false bun run build
-
-# O crea .env.production (no se sube a git):
-cp .env.production.example .env.production
 bun run build
 ```
+
+El script de build fuerza `VITE_USE_MOCK=false` para evitar datos mock en producción. Para desarrollo local, `bun dev` sigue usando el valor de `.env`.
 
 ```sh
 bun run preview   # sirve dist/ localmente
@@ -82,11 +76,11 @@ server {
 
 ### Archivos que NO deben subirse a git
 
-- `.env`, `.env.local`, `.env.production` (secretos y URLs reales)
+- `.env`, `.env.local` (secretos y URLs reales)
 - Certificados `*.pem`, `*.key`
 - Carpetas `.vercel/`, `.netlify/` (pueden contener IDs de proyecto)
 
-El `.gitignore` ya cubre estos casos. Usa `.env.example` y `.env.production.example` como plantillas.
+El `.gitignore` ya cubre estos casos. Usa `.env.example` como plantilla.
 
 ### Validaciones en producción
 

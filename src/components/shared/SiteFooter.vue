@@ -1,14 +1,29 @@
 <script setup lang="ts">
 import { Button } from '@/components/ui/button'
 import { computed } from 'vue'
+import { useRouter } from 'vue-router'
 
-const props = withDefaults(defineProps<{ variant?: 'dark' | 'light' }>(), {
-  variant: 'light',
-})
+const props = withDefaults(
+  defineProps<{
+    variant?: 'dark' | 'light'
+    linksToLogin?: boolean
+  }>(),
+  {
+    variant: 'light',
+    linksToLogin: false,
+  },
+)
 
+const router = useRouter()
 const isDark = computed(() => props.variant === 'dark')
 const modules = ['Academy Cursos', 'CV Inteligente', 'Bolsa Jobs', 'Certificados', 'Perfil Laboral']
 const company = ['Inicio', 'Cursos', 'Oportunidades', 'Beneficios', 'Contacto']
+
+function handleFooterLink() {
+  if (props.linksToLogin) {
+    router.push('/login')
+  }
+}
 </script>
 
 <template>
@@ -54,6 +69,7 @@ const company = ['Inicio', 'Cursos', 'Oportunidades', 'Beneficios', 'Contacto']
           :class="isDark ? 'text-white/70 hover:text-white' : 'text-[#52657A] hover:text-[#07152B]'"
           variant="link"
           type="button"
+          @click="handleFooterLink"
         >
           {{ item }}
         </Button>
@@ -68,6 +84,7 @@ const company = ['Inicio', 'Cursos', 'Oportunidades', 'Beneficios', 'Contacto']
           :class="isDark ? 'text-white/70 hover:text-white' : 'text-[#52657A] hover:text-[#07152B]'"
           variant="link"
           type="button"
+          @click="handleFooterLink"
         >
           {{ item }}
         </Button>

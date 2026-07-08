@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
 
 import AppHeader from '@/components/shared/AppHeader.vue'
+import CourseSimulator from '@/components/shared/CourseSimulator.vue'
 import PortalPageSkeleton from '@/components/shared/PortalPageSkeleton.vue'
 import SiteFooter from '@/components/shared/SiteFooter.vue'
 import { useAuth } from '@/composables/useAuth'
@@ -97,10 +98,67 @@ async function handleDownloadCertificate(course: Course) {
   }
 }
 
-providePortalContext({
+// Course Simulation & Persistence
+const activeCourseToSimulate = ref<Course | null>(null)
+
+// Watch courses load and restore progress from localStorage
+watch(courses, (newCourses) => {
+  if (newCourses.length > 0) {
+    const saved = localStorage.getItem('tukuy_academy_progress')
+    if (saved) {
+      const progressMap = JSON.parse(saved)
+      newCourses.forEach((c) => {
+        if (progressMap[c.id]) {
+          c.progress = progressMap[c.id].progress
+          c.status = progressMap[c.id].status
+        }
+      })
+    }
+  }
+}, { immediate: true })
+
+function saveProgress() {
+  const progressMap: Record<string, { progress: number; status: Course['status'] }> = {}
+  courses.value.forEach((c) => {
+    progressMap[c.id] = { progress: c.progress, status: c.status }
+  })
+  localStorage.setItem('tukuy_academy_progress', JSON.stringify(progressMap))
+}
+
+function openCourseSimulator(course: Course) {
+  activeCourseToSimulate.value = course
+}
+
+function closeCourseSimulator() {
+  activeCourseToSimulate.value = null
+}
+
+function updateCourseProgress(courseId: string, progress: number, status: Course['status']) {
+  const course = courses.value.find((c) => c.id === courseId)
+  if (course) {
+    course.progress = progress
+    course.status = status
+    saveProgress()
+    // Sync current active simulation course ref to keep modal updated
+    if (activeCourseToSimulate.value && activeCourseToSimulate.value.id === courseId) {
+      activeCourseToSimulate.value = { ...course }
+    }
+  }
+}
+
+// Compute dynamic user profile with real-time certificate count
+const computedUser = computed(() => {
+  if (!user.value) return null
+  return {
+    ...user.value,
+    certificates: completedCourses.value.length,
+  }
+})
+
+const portalContext = {
   activeView,
   navItems,
-  user,
+  user: computedUser,
   courses,
   completedCourses,
   enrolledCourses,
@@ -131,7 +189,10 @@ providePortalContext({
   toggleFavorite,
   handleViewCertificate,
   handleDownloadCertificate,
-})
+  openCourseSimulator,
+}
+
+providePortalContext(portalContext)
 </script>
 
 <template>
@@ -156,4 +217,11 @@ providePortalContext({
     <RouterView />
     <SiteFooter variant="light" />
   </main>
+
+  <CourseSimulator
+    :course="activeCourseToSimulate"
+    :open="!!activeCourseToSimulate"
+    @close="closeCourseSimulator"
+    @update-progress="updateCourseProgress"
+  />
 </template>

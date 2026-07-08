@@ -20,7 +20,7 @@ const portal = usePortalContext()
       :courses="portal.topCourses.value"
       :interval-ms="5000"
       @add-to-cart="portal.handleAddToCart"
-      @continue-course="portal.navigate('learning')"
+      @continue-course="(id) => { const c = portal.courses.value.find(x => x.id === id); if (c) portal.openCourseSimulator(c) }"
     />
 
     <CourseCarousel title="Cursos Destacados">
@@ -32,10 +32,12 @@ const portal = usePortalContext()
         v-else
         :key="course.id"
         :course="course"
+        :show-detail="false"
         :in-cart="portal.isInCart(course.id)"
         :is-favorite="portal.isFavorite(course.id)"
         @add-to-cart="portal.handleAddToCart(course.id)"
-        @continue-course="portal.navigate('learning')"
+        @continue-course="portal.openCourseSimulator(course)"
+        @select="portal.openCourseSimulator(course)"
         @toggle-favorite="portal.toggleFavorite(course.id)"
       />
     </CourseCarousel>
@@ -92,7 +94,8 @@ const portal = usePortalContext()
           :in-cart="portal.isInCart(course.id)"
           :is-favorite="portal.isFavorite(course.id)"
           @add-to-cart="portal.handleAddToCart(course.id)"
-          @continue-course="portal.navigate('learning')"
+          @continue-course="portal.openCourseSimulator(course)"
+          @select="portal.openCourseSimulator(course)"
           @toggle-favorite="portal.toggleFavorite(course.id)"
         />
       </div>

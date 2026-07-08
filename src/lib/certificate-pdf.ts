@@ -50,60 +50,81 @@ async function createCertificateDocument(data: CertificateData) {
   const pageWidth = doc.internal.pageSize.getWidth()
   const pageHeight = doc.internal.pageSize.getHeight()
   const centerX = pageWidth / 2
+  const navy = { r: 7, g: 21, b: 43 }
+  const blue = { r: 11, g: 58, b: 120 }
+  const teal = { r: 14, g: 116, b: 144 }
+  const slate = { r: 71, g: 85, b: 105 }
+  const yellow = { r: 245, g: 180, b: 0 }
 
   doc.setFillColor(248, 250, 252)
   doc.rect(0, 0, pageWidth, pageHeight, 'F')
 
-  doc.setDrawColor(14, 116, 144)
-  doc.setLineWidth(1.2)
-  doc.rect(12, 12, pageWidth - 24, pageHeight - 24)
-  doc.setLineWidth(0.4)
+  doc.setDrawColor(teal.r, teal.g, teal.b)
+  doc.setLineWidth(1)
+  doc.rect(11, 11, pageWidth - 22, pageHeight - 22)
+  doc.setDrawColor(125, 170, 190)
+  doc.setLineWidth(0.35)
   doc.rect(16, 16, pageWidth - 32, pageHeight - 32)
 
+  doc.setFillColor(240, 247, 251)
+  doc.rect(16.5, 16.5, pageWidth - 33, 23, 'F')
+  doc.setFillColor(blue.r, blue.g, blue.b)
+  doc.rect(16.5, 16.5, 8, pageHeight - 33, 'F')
+  doc.setFillColor(yellow.r, yellow.g, yellow.b)
+  doc.rect(24.5, 16.5, 2, pageHeight - 33, 'F')
+
   try {
-    const logo = await loadImageAsDataUrl('/img/logotukuyAcademyF.png')
-    doc.addImage(logo, 'PNG', centerX - 22, 22, 44, 18)
+    const logo = await loadImageAsDataUrl('/img/iconoTukuyAcademy.png')
+    doc.addImage(logo, 'PNG', centerX - 26, 22.5, 12, 10)
   } catch {
-    doc.setFont('helvetica', 'bold')
-    doc.setFontSize(18)
-    doc.setTextColor(7, 21, 43)
-    doc.text('Tukuy Academy', centerX, 30, { align: 'center' })
+    doc.setFillColor(blue.r, blue.g, blue.b)
+    doc.roundedRect(centerX - 26, 22.5, 12, 10, 1.2, 1.2, 'F')
   }
 
   doc.setFont('helvetica', 'bold')
-  doc.setFontSize(11)
-  doc.setTextColor(14, 116, 144)
-  doc.text('CERTIFICADO DE RECONOCIMIENTO', centerX, 52, { align: 'center' })
+  doc.setFontSize(9.5)
+  doc.setTextColor(navy.r, navy.g, navy.b)
+  doc.text('Tukuy', centerX - 12, 28.8)
+  doc.setFont('helvetica', 'normal')
+  doc.text('Academy', centerX - 1.5, 28.8)
+  doc.setFontSize(5.8)
+  doc.setTextColor(slate.r, slate.g, slate.b)
+  doc.text('Formación, certificación y empleabilidad', centerX - 12, 32.7)
+
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(12)
+  doc.setTextColor(teal.r, teal.g, teal.b)
+  doc.text('CERTIFICADO DE RECONOCIMIENTO', centerX, 51, { align: 'center' })
 
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(10)
-  doc.setTextColor(71, 85, 105)
+  doc.setTextColor(slate.r, slate.g, slate.b)
   doc.text('Tukuy Academy certifica que', centerX, 64, { align: 'center' })
 
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(24)
-  doc.setTextColor(15, 23, 42)
-  doc.text(data.holderName, centerX, 78, { align: 'center' })
+  doc.setTextColor(navy.r, navy.g, navy.b)
+  doc.text(data.holderName, centerX, 78.5, { align: 'center' })
 
   doc.setDrawColor(203, 213, 225)
   doc.setLineWidth(0.3)
-  doc.line(centerX - 70, 82, centerX + 70, 82)
+  doc.line(centerX - 72, 84, centerX + 72, 84)
 
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(11)
   doc.setTextColor(51, 65, 85)
-  doc.text('ha completado satisfactoriamente el curso', centerX, 92, { align: 'center' })
+  doc.text('ha completado satisfactoriamente el curso', centerX, 96, { align: 'center' })
 
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(15)
-  doc.setTextColor(7, 21, 43)
+  doc.setTextColor(navy.r, navy.g, navy.b)
   const titleLines = doc.splitTextToSize(data.courseTitle, pageWidth - 70)
-  doc.text(titleLines, centerX, 102, { align: 'center' })
+  doc.text(titleLines, centerX, 106, { align: 'center' })
 
-  const detailsY = titleLines.length > 1 ? 118 : 112
+  const detailsY = titleLines.length > 1 ? 122 : 116
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(10)
-  doc.setTextColor(71, 85, 105)
+  doc.setTextColor(slate.r, slate.g, slate.b)
   doc.text(
     `${data.category} · ${data.duration} · Nivel ${data.level} · Modalidad ${data.mode}`,
     centerX,
@@ -116,37 +137,47 @@ async function createCertificateDocument(data: CertificateData) {
   doc.text(
     'Por su dedicación, desempeño y cumplimiento de los requisitos académicos del programa.',
     centerX,
-    detailsY + 10,
+    detailsY + 11,
     { align: 'center' },
   )
 
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(9)
   doc.setTextColor(100, 116, 139)
-  doc.text(`Emitido el ${data.issuedAt} · Cusco, Perú`, centerX, detailsY + 22, { align: 'center' })
+  doc.text(`Emitido el ${data.issuedAt} · Cusco, Perú`, centerX, detailsY + 24, { align: 'center' })
 
+  const footerTop = pageHeight - 45
   doc.setDrawColor(226, 232, 240)
-  doc.line(30, pageHeight - 42, pageWidth - 30, pageHeight - 42)
+  doc.line(30, footerTop, pageWidth - 30, footerTop)
 
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(9)
-  doc.setTextColor(15, 23, 42)
-  doc.text('Dirección Académica', 52, pageHeight - 28)
-  doc.text('Tukuy Academy', pageWidth - 52, pageHeight - 28, { align: 'right' })
+  doc.setTextColor(navy.r, navy.g, navy.b)
+  doc.text('Dirección Académica', 52, footerTop + 15)
+  doc.text('Tukuy Academy', pageWidth - 52, footerTop + 15, { align: 'right' })
 
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(8)
   doc.setTextColor(100, 116, 139)
-  doc.text('Constancia verificable', 52, pageHeight - 22)
-  doc.text('Plataforma Tukuy Academy & Jobs', pageWidth - 52, pageHeight - 22, { align: 'right' })
+  doc.text('Constancia verificable', 52, footerTop + 21)
+  doc.text('Plataforma Tukuy Academy & Jobs', pageWidth - 52, footerTop + 21, { align: 'right' })
+
+  doc.setDrawColor(203, 213, 225)
+  doc.line(52, footerTop + 8, 96, footerTop + 8)
+  doc.line(pageWidth - 96, footerTop + 8, pageWidth - 52, footerTop + 8)
+
+  doc.setFillColor(248, 250, 252)
+  doc.roundedRect(centerX - 40, footerTop + 9, 80, 16, 2, 2, 'F')
+  doc.setDrawColor(226, 232, 240)
+  doc.roundedRect(centerX - 40, footerTop + 9, 80, 16, 2, 2, 'S')
 
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(8)
-  doc.setTextColor(14, 116, 144)
-  doc.text(`Código: ${data.certificateCode}`, centerX, pageHeight - 16, { align: 'center' })
+  doc.setTextColor(teal.r, teal.g, teal.b)
+  doc.text(`Código: ${data.certificateCode}`, centerX, footerTop + 15, { align: 'center' })
   doc.setFont('helvetica', 'normal')
   doc.setTextColor(100, 116, 139)
-  doc.text('Verificación: academy.tukuyobra.com/verificar', centerX, pageHeight - 10, { align: 'center' })
+  doc.text('Verificación: academy.tukuyobra.com/verificar', centerX, footerTop + 21, { align: 'center' })
 
   return doc
 }

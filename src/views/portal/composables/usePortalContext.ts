@@ -8,7 +8,7 @@ export type PricingFilter = 'all' | 'free' | 'paid'
 export type PortalContext = {
   activeView: ComputedRef<ViewId>
   navItems: Ref<{ id: ViewId; label: string }[]>
-  user: Ref<UserProfile | null>
+  user: Readonly<Ref<UserProfile | null>>
   courses: Ref<Course[]>
   completedCourses: ComputedRef<Course[]>
   enrolledCourses: ComputedRef<Course[]>
@@ -39,6 +39,7 @@ export type PortalContext = {
   toggleFavorite: (courseId: string) => void
   handleViewCertificate: (course: Course) => Promise<void>
   handleDownloadCertificate: (course: Course) => Promise<void>
+  openCourseSimulator: (course: Course) => void
 }
 
 const portalContextKey: InjectionKey<PortalContext> = Symbol('portal-context')

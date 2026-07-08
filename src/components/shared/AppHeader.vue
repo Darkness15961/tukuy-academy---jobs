@@ -18,7 +18,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from 'reka-ui'
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -61,6 +61,8 @@ const emit = defineEmits<{
 const router = useRouter()
 
 const isPortal = computed(() => props.mode === 'portal')
+const profilePhotoSrc = '/img/vistasimg/perfilfoto.png'
+const profilePhotoFailed = ref(false)
 
 const mainNavItems = computed(() =>
   props.navItems.filter((item) => item.id !== 'learning'),
@@ -69,7 +71,7 @@ const mainNavItems = computed(() =>
 const publicNavItems = [
   { id: '#cursos', label: 'Cursos' },
   { id: '#modulos', label: 'Módulos' },
-  { id: '#oportunidades', label: 'Oportunidades' },
+  { id: '#beneficios', label: 'Beneficios' },
   { id: '#contacto', label: 'Contacto' },
 ]
 
@@ -266,8 +268,15 @@ function goToLogin() {
           <DropdownMenuRoot>
             <DropdownMenuTrigger as-child>
               <Button class="h-auto rounded-full p-1" variant="ghost" type="button" aria-label="Menú de usuario">
-                <Avatar class="h-8 w-8">
-                  <AvatarFallback class="text-xs">{{ user.initials }}</AvatarFallback>
+                <Avatar class="h-9 w-9 rounded-full border border-border bg-white shadow-sm">
+                  <img
+                    v-if="!profilePhotoFailed"
+                    class="h-full w-full object-cover"
+                    :src="profilePhotoSrc"
+                    :alt="`Foto de ${user.name}`"
+                    @error="profilePhotoFailed = true"
+                  />
+                  <AvatarFallback v-else class="text-xs">{{ user.initials }}</AvatarFallback>
                 </Avatar>
               </Button>
             </DropdownMenuTrigger>
@@ -302,7 +311,10 @@ function goToLogin() {
                 <Award class="h-4 w-4" />
                 Mis certificados
               </DropdownMenuItem>
-              <DropdownMenuItem class="flex cursor-pointer items-center gap-2 rounded-md px-2 py-2 text-sm outline-none hover:bg-muted">
+              <DropdownMenuItem
+                class="flex cursor-pointer items-center gap-2 rounded-md px-2 py-2 text-sm outline-none hover:bg-muted"
+                @select="emit('navigate', 'settings')"
+              >
                 <Settings class="h-4 w-4" />
                 Configuración
               </DropdownMenuItem>

@@ -1,122 +1,263 @@
 <script setup lang="ts">
+import {
+  Award,
+  BriefcaseBusiness,
+  CheckCircle2,
+  ClipboardCheck,
+  FileText,
+  MapPin,
+  RefreshCw,
+  ShieldCheck,
+  Sparkles,
+  UserRound,
+} from 'lucide-vue-next'
+import { computed } from 'vue'
+
 import PageTitle from '@/components/shared/PageTitle.vue'
 import PortalSection from '@/components/shared/PortalSection.vue'
-import ProfileRow from '@/components/shared/ProfileRow.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
+import type { WorkExperience } from '@/types/academy'
 import { usePortalContext } from '../composables/usePortalContext'
 
 const portal = usePortalContext()
+const profilePhotoSrc = '/img/vistasimg/perfilfoto.png'
+
+const profileStats = computed(() => [
+  {
+    label: 'Perfil',
+    value: `${portal.user.value?.profileProgress ?? 0}%`,
+    helper: 'completado',
+    icon: ClipboardCheck,
+    class: 'bg-blue-50 text-blue-700',
+  },
+  {
+    label: 'Empleabilidad',
+    value: `${portal.user.value?.employabilityScore ?? 0}%`,
+    helper: 'score actual',
+    icon: Sparkles,
+    class: 'bg-amber-50 text-amber-700',
+  },
+  {
+    label: 'Certificados',
+    value: String(portal.user.value?.certificates ?? 0),
+    helper: 'validados',
+    icon: Award,
+    class: 'bg-emerald-50 text-emerald-700',
+  },
+  {
+    label: 'Postulaciones',
+    value: String(portal.user.value?.applications ?? 0),
+    helper: 'activas',
+    icon: BriefcaseBusiness,
+    class: 'bg-slate-100 text-slate-700',
+  },
+])
+
+const profileDetails = computed(() => [
+  { label: 'Oficio', value: portal.user.value?.trade ?? '-' },
+  { label: 'Especialidad', value: portal.user.value?.specialty ?? '-' },
+  { label: 'Ubicación', value: portal.user.value?.location ?? '-' },
+  { label: 'Disponibilidad', value: 'Inmediata' },
+  { label: 'Pretensión', value: 'S/ 1,800' },
+  { label: 'Estado', value: 'Verificado' },
+])
+
+function statusVariant(status: WorkExperience['status']) {
+  if (status === 'Verificado') return 'success'
+  if (status === 'Declarado') return 'warning'
+  return 'default'
+}
 </script>
 
 <template>
   <PortalSection v-if="portal.user.value" wide :centered="false">
     <PageTitle
-      eyebrow="Perfil"
-      title="Tu información laboral"
-      description="Mientras más completo esté tu perfil, mejores recomendaciones recibirás."
+      eyebrow="Perfil laboral"
+      title="Datos listos para postular"
+      description="Gestiona tu información, experiencia conectada y evidencias laborales."
     />
 
-    <div class="grid gap-5 lg:grid-cols-[380px_1fr]">
-      <Card>
-        <CardHeader>
-          <CardTitle>{{ portal.user.value.name }}</CardTitle>
-          <CardDescription>{{ portal.user.value.trade }}</CardDescription>
-        </CardHeader>
-        <CardContent class="grid gap-4">
-          <div class="grid gap-2 text-sm">
-            <ProfileRow label="Especialidad" :value="portal.user.value.specialty" />
-            <ProfileRow label="Ubicación" :value="portal.user.value.location" />
+    <section class="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+      <div class="grid gap-0 lg:grid-cols-[0.95fr_1.05fr]">
+        <div class="relative bg-slate-950 p-6 text-white sm:p-8">
+          <div class="absolute inset-0 bg-[radial-gradient(circle_at_20%_15%,rgba(37,99,235,0.32),transparent_34%),radial-gradient(circle_at_80%_20%,rgba(245,158,11,0.18),transparent_28%)]" />
+          <div class="relative flex flex-col gap-6">
+            <div class="flex items-start gap-4">
+              <img
+                class="h-24 w-24 rounded-2xl border border-white/20 object-cover shadow-xl sm:h-28 sm:w-28"
+                :src="profilePhotoSrc"
+                :alt="`Foto de ${portal.user.value.name}`"
+              />
+              <div class="min-w-0 pt-1">
+                <Badge class="bg-white/10 text-white ring-1 ring-white/15" variant="secondary">
+                  Perfil verificado
+                </Badge>
+                <h2 class="mt-3 text-3xl font-bold tracking-tight sm:text-4xl">
+                  {{ portal.user.value.name }}
+                </h2>
+                <p class="mt-2 text-sm text-white/75">
+                  {{ portal.user.value.trade }} · {{ portal.user.value.location }}
+                </p>
+              </div>
+            </div>
+
+            <div class="grid gap-3 sm:grid-cols-2">
+              <div class="rounded-xl border border-white/10 bg-white/8 p-4">
+                <div class="flex items-center gap-2 text-sm text-white/70">
+                  <ShieldCheck class="h-4 w-4 text-emerald-300" />
+                  Experiencia conectada
+                </div>
+                <strong class="mt-2 block text-2xl">{{ portal.workExperiences.value.length }}</strong>
+              </div>
+              <div class="rounded-xl border border-white/10 bg-white/8 p-4">
+                <div class="flex items-center gap-2 text-sm text-white/70">
+                  <MapPin class="h-4 w-4 text-amber-300" />
+                  Zona principal
+                </div>
+                <strong class="mt-2 block text-2xl">Lima Este</strong>
+              </div>
+            </div>
           </div>
+        </div>
+
+        <div class="grid content-between gap-6 p-6 sm:p-8">
           <div>
-            <div class="mb-2 flex justify-between text-sm">
-              <span class="text-muted-foreground">Completitud del perfil</span>
-              <strong>{{ portal.user.value.profileProgress }}%</strong>
+            <div class="mb-3 flex items-center justify-between gap-4">
+              <div>
+                <span class="text-xs font-bold uppercase text-primary">Completitud del perfil</span>
+                <h3 class="mt-1 text-xl font-bold text-slate-950">Base profesional actualizada</h3>
+              </div>
+              <strong class="text-3xl text-slate-950">{{ portal.user.value.profileProgress }}%</strong>
             </div>
             <Progress :model-value="portal.user.value.profileProgress" class="h-3" />
           </div>
-          <Button>Completar perfil laboral</Button>
+
+          <div class="grid gap-3 sm:grid-cols-2">
+            <Button class="justify-start gap-2" type="button">
+              <RefreshCw class="h-4 w-4" />
+              Importar experiencia
+            </Button>
+            <Button class="justify-start gap-2" variant="outline" type="button" @click="portal.navigate('cv')">
+              <FileText class="h-4 w-4" />
+              Ver CV inteligente
+            </Button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <Card v-for="stat in profileStats" :key="stat.label" class="border-border shadow-sm">
+        <CardContent class="flex items-center gap-4 p-5">
+          <div :class="['flex h-12 w-12 items-center justify-center rounded-xl', stat.class]">
+            <component :is="stat.icon" class="h-5 w-5" />
+          </div>
+          <div>
+            <span class="text-xs font-semibold uppercase text-muted-foreground">{{ stat.label }}</span>
+            <div class="mt-1 flex items-end gap-2">
+              <strong class="text-2xl leading-none text-slate-950">{{ stat.value }}</strong>
+              <span class="text-xs text-muted-foreground">{{ stat.helper }}</span>
+            </div>
+          </div>
         </CardContent>
       </Card>
+    </section>
 
-      <Card>
+    <section class="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
+      <Card class="shadow-sm">
         <CardHeader>
-          <CardTitle>Datos principales</CardTitle>
-          <CardDescription>Información visible para oportunidades laborales.</CardDescription>
+          <CardTitle class="flex items-center gap-2 text-xl">
+            <UserRound class="h-5 w-5 text-primary" />
+            Información laboral
+          </CardTitle>
         </CardHeader>
-        <CardContent class="grid gap-3 text-sm md:grid-cols-2">
-          <ProfileRow label="Oficio" :value="portal.user.value.trade" />
-          <ProfileRow label="Especialidad" :value="portal.user.value.specialty" />
-          <ProfileRow label="Ubicación" :value="portal.user.value.location" />
-          <ProfileRow label="Disponibilidad" value="Inmediata" />
-          <ProfileRow label="Pretensión" value="S/ 1,800" />
-          <ProfileRow label="Estado" value="Perfil verificado" />
+        <CardContent class="grid gap-3 sm:grid-cols-2">
+          <div
+            v-for="detail in profileDetails"
+            :key="detail.label"
+            class="rounded-xl border border-border bg-slate-50/80 p-4"
+          >
+            <span class="text-xs font-semibold uppercase text-muted-foreground">{{ detail.label }}</span>
+            <strong class="mt-1 block text-sm text-slate-950">{{ detail.value }}</strong>
+          </div>
         </CardContent>
       </Card>
-    </div>
 
-    <div class="grid gap-5 lg:grid-cols-[0.85fr_1.15fr]">
-      <Card>
+      <Card class="shadow-sm">
         <CardHeader>
-          <Badge class="w-fit" variant="default">Completar perfil</Badge>
-          <CardTitle>Importa o registra tu experiencia</CardTitle>
-          <CardDescription>
-            Si trabajaste usando Tukuy Obra o SIADEG, Academy puede simular la extracción de cargos, obras y módulos
-            usados para alimentar tu CV.
-          </CardDescription>
+          <CardTitle class="flex items-center gap-2 text-xl">
+            <ShieldCheck class="h-5 w-5 text-primary" />
+            Fuentes conectadas
+          </CardTitle>
         </CardHeader>
         <CardContent class="grid gap-3">
-          <Button class="h-auto flex-col items-start gap-2 whitespace-normal p-4 text-left" variant="outline" type="button">
-            <div class="flex w-full items-center justify-between gap-3">
-              <strong>Importar desde Tukuy Obra / SIADEG</strong>
-              <Badge variant="success">Recomendado</Badge>
+          <button
+            class="group flex items-center justify-between gap-4 rounded-xl border border-blue-100 bg-blue-50/70 p-4 text-left transition hover:-translate-y-0.5 hover:border-blue-200 hover:bg-blue-50 hover:shadow-md"
+            type="button"
+          >
+            <div>
+              <strong class="block text-sm text-slate-950">Tukuy Obra / SIADEG</strong>
+              <span class="text-xs text-muted-foreground">Cargos, obras, módulos y evidencias.</span>
             </div>
-            <p class="text-sm font-normal text-muted-foreground">
-              Extrae obras donde participaste, cargo desempeñado, fechas, módulos utilizados y evidencias disponibles.
-            </p>
-          </Button>
+            <Badge variant="success">Conectado</Badge>
+          </button>
 
-          <Button class="h-auto flex-col items-start gap-2 whitespace-normal p-4 text-left" variant="outline" type="button">
-            <div class="flex w-full items-center justify-between gap-3">
-              <strong>Registrar experiencia manual</strong>
-              <Badge variant="outline">Usuario</Badge>
+          <button
+            class="group flex items-center justify-between gap-4 rounded-xl border border-border bg-card p-4 text-left transition hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-md"
+            type="button"
+          >
+            <div>
+              <strong class="block text-sm text-slate-950">Registro manual</strong>
+              <span class="text-xs text-muted-foreground">Experiencia adicional para validar.</span>
             </div>
-            <p class="text-sm font-normal text-muted-foreground">
-              Agrega experiencias que no estén conectadas al sistema para que también se consideren en tu CV y matching laboral.
-            </p>
-          </Button>
+            <Badge variant="outline">Editar</Badge>
+          </button>
         </CardContent>
       </Card>
+    </section>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Experiencia laboral detectada</CardTitle>
-          <CardDescription>Simulación de historial importado y declarado por el usuario.</CardDescription>
-        </CardHeader>
-        <CardContent class="grid gap-4">
-          <Card v-for="experience in portal.workExperiences.value" :key="experience.id" class="shadow-none">
-            <CardContent class="p-4">
-              <div class="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <strong class="block">{{ experience.role }}</strong>
-                  <span class="text-sm text-muted-foreground">{{ experience.project }} · {{ experience.location }}</span>
-                </div>
-                <Badge :variant="experience.status === 'Verificado' ? 'success' : experience.status === 'Declarado' ? 'warning' : 'default'">
+    <Card class="shadow-sm">
+      <CardHeader class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <CardTitle class="flex items-center gap-2 text-xl">
+          <BriefcaseBusiness class="h-5 w-5 text-primary" />
+          Experiencia laboral
+        </CardTitle>
+        <Button variant="outline" type="button" @click="portal.navigate('jobs')">
+          Ver oportunidades
+        </Button>
+      </CardHeader>
+      <CardContent class="grid gap-4">
+        <article
+          v-for="experience in portal.workExperiences.value"
+          :key="experience.id"
+          class="rounded-2xl border border-border bg-white p-4 transition hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-md"
+        >
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div class="flex flex-wrap items-center gap-2">
+                <strong class="text-base text-slate-950">{{ experience.role }}</strong>
+                <Badge :variant="statusVariant(experience.status)">
                   {{ experience.status }}
                 </Badge>
               </div>
-              <p class="mt-3 text-sm text-muted-foreground">{{ experience.summary }}</p>
-              <div class="mt-3 flex flex-wrap gap-2">
-                <Badge variant="outline">{{ experience.source }}</Badge>
-                <Badge variant="outline">{{ experience.period }}</Badge>
-                <Badge v-for="module in experience.modules" :key="module" variant="outline">{{ module }}</Badge>
-              </div>
-            </CardContent>
-          </Card>
-        </CardContent>
-      </Card>
-    </div>
+              <p class="mt-1 text-sm text-muted-foreground">
+                {{ experience.project }} · {{ experience.location }}
+              </p>
+            </div>
+            <span class="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
+              {{ experience.period }}
+            </span>
+          </div>
+
+          <div class="mt-4 flex flex-wrap gap-2">
+            <Badge variant="outline">{{ experience.source }}</Badge>
+            <Badge v-for="module in experience.modules" :key="module" variant="outline">{{ module }}</Badge>
+          </div>
+        </article>
+      </CardContent>
+    </Card>
   </PortalSection>
 </template>

@@ -34,7 +34,12 @@ export const heroImage =
   'https://images.unsplash.com/photo-1504917595217-d4dc5ebe6122?auto=format&fit=crop&w=1600&q=80'
 
 export const carouselSlides: CarouselSlide[] = [
-
+  {
+    title: 'Domina la gestión digital de obra',
+    description: 'Aprende a registrar avances, reportes y evidencias dentro de Tukuy Obra.',
+    image: 'https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?auto=format&fit=crop&w=1200&q=80',
+    label: 'Tukuy Obra',
+  },
   {
     title: 'Perfil laboral siempre actualizado',
     description: 'Datos, certificados, CV y experiencia reunidos para postular mejor.',
@@ -42,10 +47,28 @@ export const carouselSlides: CarouselSlide[] = [
     label: 'Empleabilidad',
   },
   {
+    title: 'Capacitación para equipos de campo',
+    description: 'Rutas prácticas para asistencia, almacén, tareos, pedidos y control diario.',
+    image: 'https://images.unsplash.com/photo-1504917595217-d4dc5ebe6122?auto=format&fit=crop&w=1200&q=80',
+    label: 'Operaciones',
+  },
+  {
     title: 'Oportunidades compatibles',
     description: 'Matching entre tu especialidad, cursos aprobados y ofertas disponibles.',
     image: 'https://images.unsplash.com/photo-1522202176988-66273c2fd55f?auto=format&fit=crop&w=1200&q=80',
     label: 'Jobs',
+  },
+  {
+    title: 'Decisiones con datos e IA',
+    description: 'Interpreta indicadores, reportes y análisis para mejorar la gestión de obra.',
+    image: 'https://images.unsplash.com/photo-1551434678-e076c223a692?auto=format&fit=crop&w=1200&q=80',
+    label: 'Tukuy IA',
+  },
+  {
+    title: 'Certifica habilidades para obra pública',
+    description: 'Convierte tus cursos y experiencia de sistema en evidencias verificables.',
+    image: 'https://images.unsplash.com/photo-1554224155-6726b3ff858f?auto=format&fit=crop&w=1200&q=80',
+    label: 'Certificación',
   },
 ]
 

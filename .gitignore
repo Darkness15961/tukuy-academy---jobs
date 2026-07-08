@@ -10,7 +10,6 @@ dist-ssr/
 .env
 .env.*
 !.env.example
-!.env.production.example
 
 # Secrets & credentials
 *.pem
