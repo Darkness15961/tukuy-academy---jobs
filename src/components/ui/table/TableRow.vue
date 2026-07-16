@@ -1,11 +1,18 @@
 <script setup lang="ts">
-import { cn } from '@/lib/utils'
+import { cn } from "@/lib/utils";
 
-defineProps<{ class?: string }>()
+defineProps<{ class?: string }>();
 </script>
 
 <template>
-  <tr :class="cn('border-b border-border transition-colors hover:bg-muted/60', $props.class)">
+  <tr
+    :class="
+      cn(
+        'border-b border-border transition-colors hover:bg-muted/60',
+        $props.class,
+      )
+    "
+  >
     <slot />
   </tr>
 </template>

@@ -1,25 +1,67 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
-  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-sans:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
   --color-background: #f5f8fc;
-  --color-foreground: #111827;
+  --color-foreground: #07152b;
   --color-card: #ffffff;
-  --color-card-foreground: #111827;
+  --color-card-foreground: #07152b;
   --color-muted: #f1f5f9;
-  --color-muted-foreground: #64748b;
-  --color-border: #e5eaf2;
+  --color-muted-foreground: #52657a;
+  --color-border: #d7e0ec;
   --color-input: #d1d5db;
-  --color-primary: #2563eb;
+  --color-primary: #0b3a78;
   --color-primary-foreground: #ffffff;
-  --color-secondary: #0f766e;
+  --color-secondary: #0b3a78;
   --color-secondary-foreground: #ffffff;
+  --color-accent: #f5b400;
+  --color-accent-foreground: #07152b;
   --color-destructive: #dc2626;
   --color-destructive-foreground: #ffffff;
-  --color-ring: #2563eb;
-  --radius-lg: 0.5rem;
-  --radius-md: 0.375rem;
-  --radius-sm: 0.25rem;
+  --color-ring: #0b3a78;
+  /* La familia azul fuerte de Tailwind se alinea al navy de marca para
+     conservar la armonía en los portales (docente y estudiante). */
+  --color-blue-500: #1e4d8c;
+  --color-blue-600: #123f80;
+  --color-blue-700: #0b3a78;
+  /* Lenguaje visual editorial: las superficies estructurales no usan boleado. */
+  --radius: 0rem;
+  --radius-sm: 0rem;
+  --radius-md: 0rem;
+  --radius-lg: 0rem;
+  --radius-xl: 0rem;
+  --radius-2xl: 0rem;
+  --radius-3xl: 0rem;
+}
+
+/* Tokens de modo oscuro — solo activos cuando <html> tiene .dark
+   (se aplica únicamente en rutas de portales autenticados). */
+.dark {
+  --color-background: #0a1220;
+  --color-foreground: #e8eef7;
+  --color-card: #121c2e;
+  --color-card-foreground: #e8eef7;
+  --color-muted: #1a2538;
+  --color-muted-foreground: #94a3b8;
+  --color-border: #243247;
+  --color-input: #2a3a52;
+  --color-primary: #3b6cb5;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #1e4d8c;
+  --color-secondary-foreground: #ffffff;
+  --color-accent: #f5b400;
+  --color-accent-foreground: #07152b;
+  --color-destructive: #ef4444;
+  --color-destructive-foreground: #ffffff;
+  --color-ring: #3b6cb5;
+  --color-blue-500: #5b8fd4;
+  --color-blue-600: #3b6cb5;
+  --color-blue-700: #2d5a9e;
+  color-scheme: dark;
 }
 
 @layer base {
@@ -32,44 +74,442 @@
     font-family: var(--font-sans);
   }
 
+  ::selection {
+    background: #f5b400;
+    color: #07152b;
+  }
+
   button,
   input {
     font: inherit;
   }
 }
 
-@keyframes academy-slide {
-  0%,
-  10% {
-    transform: translateX(0);
+@layer components {
+  .tukuy-prime-skeleton > .p-skeleton {
+    height: 100% !important;
+    width: 100% !important;
+    border-radius: 0 !important;
+    background: inherit !important;
   }
 
-  16%,
-  26% {
-    transform: translateX(-100%);
+  .tukuy-prime-skeleton > .p-skeleton::after {
+    border-radius: 0 !important;
   }
 
-  32%,
-  42% {
-    transform: translateX(-200%);
+  .tabla-administracion .p-datatable-table-container,
+  .tabla-estudiantes .p-datatable-table-container {
+    scrollbar-color: #aebdd1 #eef3f9;
   }
 
-  48%,
-  58% {
-    transform: translateX(-300%);
+  .tabla-administracion .p-datatable-thead > tr > th,
+  .tabla-estudiantes .p-datatable-thead > tr > th {
+    border-width: 0 0 1px;
+    border-color: #dce5f0;
+    background: #f7f9fc;
+    padding: 0.9rem 1rem;
+    color: #3d5270;
+    font-size: 0.6875rem;
+    font-weight: 900;
+    letter-spacing: 0.055em;
+    text-transform: uppercase;
   }
 
-  64%,
-  74% {
-    transform: translateX(-400%);
+  .tabla-administracion .p-datatable-tbody > tr,
+  .tabla-estudiantes .p-datatable-tbody > tr {
+    background: #ffffff;
+    transition: background-color 160ms ease;
   }
 
-  80%,
-  94% {
-    transform: translateX(-500%);
+  .tabla-administracion .p-datatable-tbody > tr:hover,
+  .tabla-estudiantes .p-datatable-tbody > tr:hover {
+    background: #f5f8fc;
   }
 
-  100% {
-    transform: translateX(0);
+  .tabla-administracion .p-datatable-tbody > tr > td,
+  .tabla-estudiantes .p-datatable-tbody > tr > td {
+    border-width: 0 0 1px;
+    border-color: #e2e8f0;
+    padding: 0.9rem 1rem;
+    color: #07152e;
+    font-size: 0.8125rem;
   }
+
+  .tabla-administracion .p-datatable-sort-icon,
+  .tabla-estudiantes .p-datatable-sort-icon {
+    width: 0.75rem;
+    color: #7990ad;
+  }
+
+  .tabla-administracion .p-paginator,
+  .tabla-estudiantes .p-paginator {
+    justify-content: flex-end;
+    border-top: 1px solid #e2e8f0;
+    border-radius: 0;
+    padding: 0.75rem 1rem;
+    background: #ffffff;
+  }
+
+  .tabla-administracion .p-paginator-element,
+  .tabla-administracion .p-paginator .p-select,
+  .tabla-administracion .p-tag,
+  .tabla-estudiantes .p-paginator-element,
+  .tabla-estudiantes .p-select,
+  .tabla-estudiantes .p-tag {
+    border-radius: 0;
+  }
+
+  .tabla-estudiantes .p-progressbar {
+    overflow: hidden;
+    border-radius: 0;
+    background: #dfe6ef;
+  }
+
+  .tabla-estudiantes .p-progressbar-value {
+    border-radius: 0;
+    background: #0b3a78;
+  }
+
+  .tabla-estudiantes .etiqueta-estado {
+    border-radius: 0;
+    padding: 0.3rem 0.55rem;
+    font-size: 0.625rem;
+    font-weight: 900;
+    letter-spacing: 0.035em;
+  }
+}
+
+/* Filtros PrimeVue — fuera de @layer para ganar al tema Aura (esquinas rectas) */
+.filtro-control {
+  --p-form-field-border-radius: 0;
+  --p-inputtext-border-radius: 0;
+  --p-select-border-radius: 0;
+  --p-datepicker-border-radius: 0;
+}
+
+.filtro-control.p-inputtext,
+.filtro-control.p-select,
+.filtro-control.p-datepicker,
+.filtro-control .p-inputtext,
+.filtro-control .p-datepicker-input,
+.filtro-control.p-select .p-select-label {
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+.filtro-control.p-inputtext,
+.filtro-control.p-select,
+.filtro-control.p-datepicker {
+  width: 100%;
+  min-height: 2.75rem;
+  border-color: #cfd9e7 !important;
+}
+
+.filtro-control.p-inputtext,
+.filtro-control.p-select .p-select-label,
+.filtro-control.p-datepicker .p-datepicker-input {
+  color: #07152e !important;
+  font-size: 0.875rem;
+}
+
+.filtro-control.p-inputtext {
+  padding-top: 0.65rem;
+  padding-bottom: 0.65rem;
+}
+
+.filtro-control.p-select .p-select-label {
+  display: flex;
+  align-items: center;
+  padding: 0.65rem 0.8rem;
+}
+
+.filtro-control.p-select .p-select-dropdown {
+  width: 2.75rem;
+  color: #0b3a78;
+}
+
+.filtro-control.p-datepicker .p-datepicker-input {
+  min-height: 2.75rem;
+}
+
+.filtro-control.p-datepicker .p-datepicker-input-icon-container {
+  color: #0b3a78;
+}
+
+.filtro-control:focus,
+.filtro-control.p-focus,
+.filtro-control.p-select:not(.p-disabled).p-focus,
+.filtro-control .p-inputtext:focus {
+  border-color: #0b3a78 !important;
+  box-shadow: 0 0 0 1px #0b3a78 !important;
+}
+
+.tukuy-filtro-panel,
+.tukuy-calendario-panel {
+  border-color: #cfd9e7 !important;
+  border-radius: 0 !important;
+  box-shadow: 0 18px 45px rgb(7 21 46 / 16%) !important;
+}
+
+.tukuy-filtro-panel .p-select-option,
+.tukuy-calendario-panel .p-datepicker-day {
+  border-radius: 0 !important;
+}
+
+.filtro-label {
+  display: block;
+  margin-bottom: 0.45rem;
+  color: #52627a;
+  font-size: 0.6875rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  line-height: 1rem;
+  text-transform: uppercase;
+}
+
+.dark .filtro-label {
+  color: #94a3b8;
+}
+
+.tabla-administracion .p-inputnumber-input,
+.tabla-estudiantes .p-inputnumber-input {
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+/* Tablas PrimeVue en modo oscuro (fuera de @layer para ganar a tokens de PrimeVue) */
+.dark .tabla-administracion .p-datatable-table-container,
+.dark .tabla-estudiantes .p-datatable-table-container {
+  scrollbar-color: #4a5d78 #1a2538;
+}
+
+.dark .tabla-administracion,
+.dark .tabla-estudiantes {
+  --p-datatable-header-cell-background: #1a2538;
+  --p-datatable-header-cell-color: #94a3b8;
+  --p-datatable-row-background: #121c2e;
+  --p-datatable-row-color: #e8eef7;
+  --p-datatable-body-cell-border-color: #2a3a52;
+  --p-datatable-row-hover-background: #1a2538;
+  --p-datatable-row-hover-color: #e8eef7;
+  --p-paginator-background: #121c2e;
+  --p-paginator-color: #e8eef7;
+  --p-datatable-header-cell-border-color: #2a3a52;
+  background: #121c2e !important;
+  color: #e8eef7;
+}
+
+.dark .tabla-administracion .p-datatable-table,
+.dark .tabla-administracion .p-datatable-wrapper,
+.dark .tabla-administracion .p-datatable-table-container,
+.dark .tabla-estudiantes .p-datatable-table,
+.dark .tabla-estudiantes .p-datatable-wrapper,
+.dark .tabla-estudiantes .p-datatable-table-container {
+  background: #121c2e !important;
+}
+
+.dark .tabla-administracion .p-datatable-thead > tr > th,
+.dark .tabla-estudiantes .p-datatable-thead > tr > th {
+  border-color: #2a3a52 !important;
+  background: #1a2538 !important;
+  color: #94a3b8 !important;
+}
+
+.dark .tabla-administracion .p-datatable-tbody > tr,
+.dark .tabla-estudiantes .p-datatable-tbody > tr {
+  background: #121c2e !important;
+}
+
+.dark .tabla-administracion .p-datatable-tbody > tr:hover,
+.dark .tabla-estudiantes .p-datatable-tbody > tr:hover {
+  background: #1a2538 !important;
+}
+
+.dark .tabla-administracion .p-datatable-tbody > tr > td,
+.dark .tabla-estudiantes .p-datatable-tbody > tr > td {
+  border-color: #2a3a52 !important;
+  background: transparent !important;
+  color: #e8eef7 !important;
+}
+
+.dark .tabla-administracion .p-datatable-sort-icon,
+.dark .tabla-estudiantes .p-datatable-sort-icon {
+  color: #64748b !important;
+}
+
+.dark .tabla-administracion .p-paginator,
+.dark .tabla-estudiantes .p-paginator {
+  border-top-color: #2a3a52 !important;
+  background: #121c2e !important;
+  color: #e8eef7 !important;
+}
+
+.dark .tabla-estudiantes .p-progressbar {
+  background: #2a3a52 !important;
+}
+
+.dark .tabla-estudiantes .p-progressbar-value {
+  background: #3b82f6 !important;
+}
+
+.dark .tabla-estudiantes .p-tag.p-tag-success {
+  background: rgb(16 185 129 / 22%) !important;
+  color: #6ee7b7 !important;
+}
+
+.dark .tabla-estudiantes .p-tag.p-tag-info {
+  background: rgb(59 130 246 / 22%) !important;
+  color: #93c5fd !important;
+}
+
+.dark .tabla-estudiantes .p-tag.p-tag-warn,
+.dark .tabla-estudiantes .p-tag.p-tag-warning {
+  background: rgb(245 180 0 / 22%) !important;
+  color: #f5b400 !important;
+}
+
+.dark .tabla-estudiantes .p-tag.p-tag-danger {
+  background: rgb(239 68 68 / 22%) !important;
+  color: #fca5a5 !important;
+}
+
+/* Controles PrimeVue genéricos en dark (inputs/selects sin clase filtro-control) */
+.dark .p-inputtext,
+.dark .p-select,
+.dark .p-datepicker,
+.dark .p-datepicker .p-datepicker-input {
+  background: #0a1220;
+  border-color: #2a3a52;
+  color: #e8eef7;
+}
+
+.dark .p-inputtext::placeholder,
+.dark .p-datepicker .p-datepicker-input::placeholder {
+  color: #64748b;
+}
+
+.dark .p-select .p-select-label {
+  color: #e8eef7;
+}
+
+.dark .p-select .p-select-label.p-placeholder {
+  color: #64748b;
+}
+
+.dark .p-select .p-select-dropdown {
+  color: #94a3b8;
+}
+
+.dark .p-dialog,
+.dark .p-dialog .p-dialog-header,
+.dark .p-dialog .p-dialog-content,
+.dark .p-dialog .p-dialog-footer {
+  background: #121c2e;
+  color: #e8eef7;
+  border-color: #2a3a52;
+}
+
+.dark .filtro-control.p-inputtext,
+.dark .filtro-control.p-select,
+.dark .filtro-control.p-datepicker,
+.dark .filtro-control .p-inputtext,
+.dark .filtro-control .p-datepicker-input,
+.dark .filtro-control.p-select .p-select-label {
+  border-color: #2a3a52 !important;
+  border-radius: 0 !important;
+  background: #0a1220 !important;
+  color: #e8eef7 !important;
+  box-shadow: none !important;
+}
+
+.dark .tabla-administracion .p-inputnumber-input,
+.dark .tabla-estudiantes .p-inputnumber-input {
+  border-color: #2a3a52 !important;
+  border-radius: 0 !important;
+  background: #0a1220 !important;
+  color: #e8eef7 !important;
+}
+
+.dark .filtro-control.p-inputtext::placeholder,
+.dark .filtro-control .p-inputtext::placeholder,
+.dark .filtro-control .p-datepicker-input::placeholder {
+  color: #64748b !important;
+}
+
+.dark .filtro-control.p-select .p-select-label,
+.dark .filtro-control.p-select .p-select-label.p-placeholder {
+  color: #e8eef7 !important;
+}
+
+.dark .filtro-control.p-select .p-select-label.p-placeholder {
+  color: #64748b !important;
+}
+
+.dark .filtro-control.p-select .p-select-dropdown,
+.dark .filtro-control.p-datepicker .p-datepicker-input-icon-container,
+.dark .filtro-control .p-datepicker-input-icon-container {
+  color: #94a3b8 !important;
+}
+
+.dark .filtro-control.p-select:not(.p-disabled).p-focus,
+.dark .filtro-control.p-inputtext:focus,
+.dark .filtro-control.p-datepicker.p-focus,
+.dark .filtro-control .p-inputtext:focus {
+  border-color: #3b6cb5 !important;
+  box-shadow: 0 0 0 1px #3b6cb5 !important;
+}
+
+.dark .tukuy-filtro-panel,
+.dark .tukuy-calendario-panel {
+  --p-select-overlay-background: #121c2e;
+  --p-select-overlay-border-color: #2a3a52;
+  --p-select-option-color: #e8eef7;
+  --p-select-option-focus-background: #1a2538;
+  --p-select-option-selected-background: rgb(59 108 181 / 25%);
+  --p-select-option-selected-color: #e8eef7;
+  --p-datepicker-panel-background: #121c2e;
+  --p-datepicker-panel-border-color: #2a3a52;
+  --p-datepicker-header-background: #121c2e;
+  --p-datepicker-header-color: #e8eef7;
+  --p-datepicker-date-color: #e8eef7;
+  --p-datepicker-date-hover-background: #1a2538;
+  --p-datepicker-select-month-color: #e8eef7;
+  --p-datepicker-select-year-color: #e8eef7;
+  border-color: #2a3a52 !important;
+  background: #121c2e !important;
+  color: #e8eef7 !important;
+  box-shadow: 0 18px 45px rgb(0 0 0 / 45%) !important;
+}
+
+.dark .tukuy-filtro-panel .p-select-option,
+.dark .tukuy-filtro-panel .p-select-option-label {
+  color: #e8eef7 !important;
+}
+
+.dark .tukuy-filtro-panel .p-select-option:not(.p-select-option-selected):not(.p-disabled).p-focus {
+  background: #1a2538 !important;
+  color: #e8eef7 !important;
+}
+
+.dark .tukuy-filtro-panel .p-select-option.p-select-option-selected {
+  background: rgb(59 108 181 / 25%) !important;
+  color: #e8eef7 !important;
+}
+
+.dark .tukuy-calendario-panel .p-datepicker-header,
+.dark .tukuy-calendario-panel .p-datepicker-title,
+.dark .tukuy-calendario-panel .p-datepicker-select-month,
+.dark .tukuy-calendario-panel .p-datepicker-select-year,
+.dark .tukuy-calendario-panel .p-datepicker-weekday,
+.dark .tukuy-calendario-panel .p-datepicker-day {
+  color: #e8eef7 !important;
+}
+
+.dark .tukuy-calendario-panel .p-datepicker-day:not(.p-datepicker-day-selected):not(.p-disabled):hover {
+  background: #1a2538 !important;
+}
+
+.dark .tukuy-calendario-panel .p-datepicker-day-selected {
+  background: #0b3a78 !important;
+  color: #ffffff !important;
 }

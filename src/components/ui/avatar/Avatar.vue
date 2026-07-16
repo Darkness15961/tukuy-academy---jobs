@@ -1,11 +1,18 @@
 <script setup lang="ts">
-import { cn } from '@/lib/utils'
+import { cn } from "@/lib/utils";
 
-defineProps<{ class?: string }>()
+defineProps<{ class?: string }>();
 </script>
 
 <template>
-  <div :class="cn('relative flex h-10 w-10 shrink-0 overflow-hidden rounded-md', $props.class)">
+  <div
+    :class="
+      cn(
+        'relative flex h-10 w-10 shrink-0 overflow-hidden rounded-md',
+        $props.class,
+      )
+    "
+  >
     <slot />
   </div>
 </template>

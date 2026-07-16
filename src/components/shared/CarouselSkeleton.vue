@@ -1,14 +1,21 @@
 <script setup lang="ts">
-import { cn } from '@/lib/utils'
-import { Skeleton } from '@/components/ui/skeleton'
+import { cn } from "@/lib/utils";
+import { Skeleton } from "@/components/ui/skeleton";
 
-withDefaults(defineProps<{ variant?: 'light' | 'dark' }>(), { variant: 'light' })
+withDefaults(defineProps<{ variant?: "light" | "dark" }>(), {
+  variant: "light",
+});
 </script>
 
 <template>
   <div class="grid gap-4">
     <Skeleton
-      :class="cn('min-h-[520px] w-full rounded-lg', variant === 'dark' && 'bg-white/10')"
+      :class="
+        cn(
+          'min-h-[520px] w-full rounded-lg',
+          variant === 'dark' && 'bg-white/10',
+        )
+      "
     />
     <div class="grid grid-cols-3 gap-2">
       <Skeleton

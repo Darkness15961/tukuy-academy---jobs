@@ -1,38 +1,38 @@
-import { onMounted, ref } from 'vue'
+import { onMounted, ref } from "vue";
 
-import { contentService } from '@/api/services/content.service'
-import type { CarouselSlide, TukuyModule, ViewId } from '@/types/academy'
+import { contentService } from "@/api/services/content.service";
+import type { CarouselSlide, TukuyModule, ViewId } from "@/types/academia";
 
 export function useContent() {
-  const navItems = ref<{ id: ViewId; label: string }[]>([])
-  const carouselSlides = ref<CarouselSlide[]>([])
-  const tukuyModules = ref<TukuyModule[]>([])
-  const heroImage = ref('')
-  const loading = ref(false)
-  const error = ref<string | null>(null)
+  const navItems = ref<{ id: ViewId; label: string }[]>([]);
+  const carouselSlides = ref<CarouselSlide[]>([]);
+  const tukuyModules = ref<TukuyModule[]>([]);
+  const heroImage = ref("");
+  const loading = ref(false);
+  const error = ref<string | null>(null);
 
   async function fetchContent() {
-    loading.value = true
-    error.value = null
+    loading.value = true;
+    error.value = null;
     try {
       const [nav, carousel, modules, hero] = await Promise.all([
         contentService.getNavItems(),
         contentService.getCarouselSlides(),
         contentService.getTukuyModules(),
         contentService.getHeroImage(),
-      ])
-      navItems.value = nav
-      carouselSlides.value = carousel
-      tukuyModules.value = modules
-      heroImage.value = hero
+      ]);
+      navItems.value = nav;
+      carouselSlides.value = carousel;
+      tukuyModules.value = modules;
+      heroImage.value = hero;
     } catch {
-      error.value = 'No se pudo cargar el contenido'
+      error.value = "No se pudo cargar el contenido";
     } finally {
-      loading.value = false
+      loading.value = false;
     }
   }
 
-  onMounted(fetchContent)
+  onMounted(fetchContent);
 
   return {
     navItems,
@@ -42,5 +42,5 @@ export function useContent() {
     loading,
     error,
     refetch: fetchContent,
-  }
+  };
 }

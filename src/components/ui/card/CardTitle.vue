@@ -1,11 +1,15 @@
 <script setup lang="ts">
-import { cn } from '@/lib/utils'
+import { cn } from "@/lib/utils";
 
-defineProps<{ class?: string }>()
+defineProps<{ class?: string }>();
 </script>
 
 <template>
-  <h3 :class="cn('text-base font-semibold leading-none tracking-normal', $props.class)">
+  <h3
+    :class="
+      cn('text-base font-semibold leading-none tracking-normal', $props.class)
+    "
+  >
     <slot />
   </h3>
 </template>

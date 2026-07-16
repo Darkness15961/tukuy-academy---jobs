@@ -1,13 +1,13 @@
 <script setup lang="ts">
-import { cn } from '@/lib/utils'
+import { cn } from "@/lib/utils";
 
 withDefaults(
   defineProps<{
-    orientation?: 'horizontal' | 'vertical'
-    class?: string
+    orientation?: "horizontal" | "vertical";
+    class?: string;
   }>(),
-  { orientation: 'horizontal' },
-)
+  { orientation: "horizontal" },
+);
 </script>
 
 <template>

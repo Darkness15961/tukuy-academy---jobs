@@ -1,26 +1,31 @@
 <script setup lang="ts">
-import { ArrowLeft, Mail } from 'lucide-vue-next'
-import { ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { ArrowLeft, Mail } from "lucide-vue-next";
+import { ref } from "vue";
+import { useRoute, useRouter } from "vue-router";
 
-import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Separator } from '@/components/ui/separator'
-import { useAuth } from '@/composables/useAuth'
-import { env } from '@/lib/env'
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Separator } from "@/components/ui/separator";
+import { useAuth } from "@/composables/useAuth";
+import { env } from "@/lib/env";
 
-const router = useRouter()
-const { login, loading, error } = useAuth()
+const router = useRouter();
+const route = useRoute();
+const { login, loading, error } = useAuth();
 
-const dni = ref('')
-const password = ref('')
-const remember = ref(false)
+const dni = ref("");
+const password = ref("");
+const remember = ref(false);
 
 async function handleSubmit() {
   try {
-    await login(dni.value, password.value)
+    const continuar =
+      typeof route.query.continuar === "string"
+        ? route.query.continuar
+        : undefined;
+    await login(dni.value, password.value, continuar);
   } catch {
     // error handled in composable
   }
@@ -42,10 +47,18 @@ async function handleSubmit() {
 
         <div class="grid gap-7">
           <div class="grid justify-items-center gap-3 text-center">
-            <img class="h-12 w-auto object-contain" src="/img/iconoTukuyAcademy.png" alt="Tukuy Academy" />
+            <img
+              class="h-12 w-auto object-contain"
+              src="/img/iconoTukuyAcademy.png"
+              alt="Tukuy Academy"
+            />
             <div>
-              <h1 class="text-3xl font-black tracking-normal">Bienvenido de nuevo</h1>
-              <p class="mt-3 text-sm text-slate-400">Ingresa tu usuario y clave para continuar</p>
+              <h1 class="text-3xl font-black tracking-normal">
+                Bienvenido de nuevo
+              </h1>
+              <p class="mt-3 text-sm text-slate-400">
+                Ingresa tu usuario y clave para continuar
+              </p>
             </div>
           </div>
 
@@ -73,18 +86,34 @@ async function handleSubmit() {
 
             <div class="flex items-center justify-between text-xs">
               <label class="flex items-center gap-2 text-slate-300">
-                <Checkbox id="remember" v-model="remember" class="border-white/30 data-[state=checked]:bg-blue-600" />
-                <Label class="cursor-pointer font-normal text-slate-300" for="remember">Recuérdame</Label>
+                <Checkbox
+                  id="remember"
+                  v-model="remember"
+                  class="border-white/30 data-[state=checked]:bg-blue-600"
+                />
+                <Label
+                  class="cursor-pointer font-normal text-slate-300"
+                  for="remember"
+                  >Recuérdame</Label
+                >
               </label>
-              <Button class="h-auto p-0 text-blue-400 hover:text-blue-300" variant="link" type="button">
+              <Button
+                class="h-auto p-0 text-blue-400 hover:text-blue-300"
+                variant="link"
+                type="button"
+              >
                 ¿Olvidaste tu clave?
               </Button>
             </div>
 
             <p v-if="error" class="text-sm text-red-400">{{ error }}</p>
 
-            <Button class="h-11 bg-blue-600 text-white hover:bg-blue-700" type="submit" :disabled="loading">
-              {{ loading ? 'Ingresando...' : 'Iniciar Sesión' }}
+            <Button
+              class="h-11 bg-blue-600 text-white hover:bg-blue-700"
+              type="submit"
+              :disabled="loading"
+            >
+              {{ loading ? "Ingresando..." : "Iniciar Sesión" }}
             </Button>
 
             <div class="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
@@ -93,7 +122,11 @@ async function handleSubmit() {
               <Separator class="bg-white/10" />
             </div>
 
-            <Button class="border-white/15 bg-transparent text-slate-200 hover:bg-white/8" variant="outline" type="button">
+            <Button
+              class="border-white/15 bg-transparent text-slate-200 hover:bg-white/8"
+              variant="outline"
+              type="button"
+            >
               <Mail class="h-4 w-4" />
               Iniciar con Google
             </Button>

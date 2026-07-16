@@ -2,6 +2,15 @@
 
 Plataforma Vue 3 + Vite para capacitación, CV inteligente y bolsa laboral.
 
+Consulta la arquitectura en `docs/ARQUITECTURA-MODULAR.md` y el contrato seguro
+de la pasarela en `docs/INTEGRACION-PAGOS-IZIPAY.md`.
+
+El acceso transversal a Bolsa y Comunidad se documenta en
+`docs/ECOSISTEMA-BOLSA-COMUNIDAD.md`.
+
+La sustitución de los datos persistentes de demostración por la API real se
+documenta en `docs/INTEGRACION-BACKEND.md`.
+
 ## Requisitos
 
 - Node.js `^22.18.0` o `>=24.12.0`
@@ -125,3 +134,4 @@ src/
 | `bun run build-only` | Solo build Vite |
 | `bun run preview` | Preview del build |
 | `bun run type-check` | Verificación TypeScript |
+| `bun test` | Pruebas unitarias con el runner de Bun |

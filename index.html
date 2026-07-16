@@ -5,6 +5,38 @@
     <link rel="icon" href="/img/favicotukuy.ico">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Tukuy Academy & Jobs</title>
+    <script>
+      (function () {
+        try {
+          var key = "tukuy_tema";
+          var pref = localStorage.getItem(key) || "system";
+          var path = location.pathname;
+          var portales = [
+            "/tukuy-academy",
+            "/docente",
+            "/organizacion",
+            "/admin",
+            "/bolsa-tukuy",
+            "/comunidad",
+            "/perfil-profesional",
+            "/pago",
+          ];
+          var permitido = portales.some(function (p) {
+            return path === p || path.indexOf(p + "/") === 0;
+          });
+          var sistemaOscuro =
+            window.matchMedia &&
+            window.matchMedia("(prefers-color-scheme: dark)").matches;
+          var oscuro =
+            pref === "dark" || (pref === "system" && sistemaOscuro);
+          if (permitido && oscuro) {
+            document.documentElement.classList.add("dark");
+          } else {
+            document.documentElement.classList.remove("dark");
+          }
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="app"></div>

@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { Card, CardContent } from '@/components/ui/card'
-import { Skeleton } from '@/components/ui/skeleton'
+import { Card, CardContent } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 
-import CourseCardSkeleton from '@/components/shared/CourseCardSkeleton.vue'
+import EsqueletoTarjetaCurso from "@/components/shared/EsqueletoTarjetaCurso.vue";
 </script>
 
 <template>
@@ -47,7 +47,7 @@ import CourseCardSkeleton from '@/components/shared/CourseCardSkeleton.vue'
       <div class="grid gap-4">
         <Skeleton class="h-8 w-48" />
         <div class="grid gap-4 md:grid-cols-2">
-          <CourseCardSkeleton v-for="i in 4" :key="i" />
+          <EsqueletoTarjetaCurso v-for="i in 4" :key="i" />
         </div>
       </div>
       <div class="grid gap-4">
