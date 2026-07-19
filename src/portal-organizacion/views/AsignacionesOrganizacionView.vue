@@ -16,6 +16,10 @@ import {
   type PropuestaCursoOrganizacion,
   type UsuarioOrganizacion,
 } from "@/api/services/organizacion.service";
+import type {
+  UnidadOrganizacional,
+  VinculacionUnidad,
+} from "@/portal-organizacion/types/estructura-organizacional.types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -31,6 +35,8 @@ const lista = ref<AsignacionOrganizacion[]>([]);
 const areas = ref<AreaOrganizacion[]>([]);
 const usuarios = ref<UsuarioOrganizacion[]>([]);
 const catalogo = ref<PropuestaCursoOrganizacion[]>([]);
+const unidades = ref<UnidadOrganizacional[]>([]);
+const vinculaciones = ref<VinculacionUnidad[]>([]);
 const seleccionada = ref<AsignacionOrganizacion>();
 const busqueda = ref("");
 const filtroEstado = ref("TODOS");
@@ -53,6 +59,7 @@ const cursosDisponibles = computed(() =>
 const destinos = computed(() => [
   "Toda la organización",
   "Público externo",
+  ...unidades.value.map((unidad) => `Unidad ${unidad.nombre}`),
   ...areas.value.map((area) => `Área ${area.nombre}`),
   ...usuarios.value.map((usuario) => `Persona ${usuario.nombre}`),
 ]);
@@ -66,6 +73,7 @@ const alcances = [
   { label: "Todos los alcances", value: "TODOS" },
   { label: "Toda la organización", value: "ORGANIZACION" },
   { label: "Solo un área", value: "AREA" },
+  { label: "Unidad organizacional", value: "UNIDAD" },
   { label: "Público externo", value: "EXTERNO" },
   { label: "Persona", value: "PERSONA" },
 ];
@@ -109,12 +117,22 @@ const asignacionesFiltradas = computed(() => {
 
 const participantes = computed(() => {
   if (!seleccionada.value) return [];
-  const destino = seleccionada.value.destino.replace(/^Área |^Persona /, "");
+  const destino = seleccionada.value.destino.replace(/^Área |^Unidad |^Persona /, "");
+  const unidad = unidades.value.find((item) => item.nombre === destino);
+  const idsUnidad = unidad ? idsUnidadYDescendientes(unidad.id) : new Set<string>();
+  const usuariosUnidad = new Set(
+    vinculaciones.value
+      .filter((item) => item.estado === "ACTIVA" && idsUnidad.has(item.unidadId))
+      .map((item) => item.usuarioId),
+  );
   const filtrados = usuarios.value.filter((usuario) => {
     if (tipoAlcance(seleccionada.value?.destino ?? "") === "ORGANIZACION") {
       return true;
     }
     if (seleccionada.value?.destino.startsWith("Área ")) return usuario.area === destino;
+    if (seleccionada.value?.destino.startsWith("Unidad ")) {
+      return usuariosUnidad.has(String(usuario.id));
+    }
     return usuario.nombre === destino;
   });
   const proporcion = porcentaje(seleccionada.value) / 100;
@@ -126,11 +144,13 @@ const participantes = computed(() => {
 
 onMounted(async () => {
   try {
-    [lista.value, areas.value, usuarios.value, catalogo.value] = await Promise.all([
+    [lista.value, areas.value, usuarios.value, catalogo.value, unidades.value, vinculaciones.value] = await Promise.all([
       organizacionService.asignaciones.listar(),
       organizacionService.areas.listar(),
       organizacionService.usuarios.listar(),
       organizacionService.catalogoCursos.listar(),
+      organizacionService.estructura.unidades.listar(),
+      organizacionService.estructura.vinculaciones.listar(),
     ]);
     nuevaAsignacion.curso = cursosDisponibles.value[0] ?? "";
   } finally {
@@ -143,6 +163,16 @@ function cantidadDestino(destino: string) {
   if (destino.startsWith("Área ")) {
     return usuarios.value.filter((usuario) => usuario.area === destino.slice(5)).length;
   }
+  if (destino.startsWith("Unidad ")) {
+    const unidad = unidades.value.find((item) => item.nombre === destino.slice(7));
+    if (!unidad) return 0;
+    const ids = idsUnidadYDescendientes(unidad.id);
+    return new Set(
+      vinculaciones.value
+        .filter((item) => item.estado === "ACTIVA" && ids.has(item.unidadId))
+        .map((item) => item.usuarioId),
+    ).size;
+  }
   if (destino.startsWith("Persona ")) {
     return usuarios.value.some((usuario) => usuario.nombre === destino.slice(8))
       ? 1
@@ -152,6 +182,7 @@ function cantidadDestino(destino: string) {
 }
 
 function tipoAlcance(destino: string) {
+  if (destino.startsWith("Unidad ")) return "UNIDAD";
   if (destino.startsWith("Área ")) return "AREA";
   if (destino.startsWith("Persona ")) return "PERSONA";
   if (destino === "Público externo") return "EXTERNO";
@@ -162,9 +193,47 @@ function etiquetaAlcance(destino: string) {
   return {
     ORGANIZACION: "Toda la organización",
     AREA: "Solo un área",
+    UNIDAD: "Unidad organizacional",
     EXTERNO: "Público externo",
     PERSONA: "Persona",
   }[tipoAlcance(destino)];
+}
+
+function idsUnidadYDescendientes(unidadId: string) {
+  const ids = new Set([unidadId]);
+  let cambio = true;
+  while (cambio) {
+    cambio = false;
+    unidades.value.forEach((unidad) => {
+      if (unidad.unidadPadreId && ids.has(unidad.unidadPadreId) && !ids.has(unidad.id)) {
+        ids.add(unidad.id);
+        cambio = true;
+      }
+    });
+  }
+  return ids;
+}
+
+function usuariosDestino(destino: string) {
+  if (destino === "Toda la organización") return usuarios.value;
+  if (destino.startsWith("Área ")) {
+    return usuarios.value.filter((usuario) => usuario.area === destino.slice(5));
+  }
+  if (destino.startsWith("Unidad ")) {
+    const unidad = unidades.value.find((item) => item.nombre === destino.slice(7));
+    if (!unidad) return [];
+    const ids = idsUnidadYDescendientes(unidad.id);
+    const usuariosIds = new Set(
+      vinculaciones.value
+        .filter((item) => item.estado === "ACTIVA" && ids.has(item.unidadId))
+        .map((item) => item.usuarioId),
+    );
+    return usuarios.value.filter((usuario) => usuariosIds.has(String(usuario.id)));
+  }
+  if (destino.startsWith("Persona ")) {
+    return usuarios.value.filter((usuario) => usuario.nombre === destino.slice(8));
+  }
+  return [];
 }
 
 function cursoCatalogo(titulo: string) {
@@ -216,6 +285,23 @@ async function crear() {
       creadaEn: new Date().toISOString(),
     });
     lista.value.unshift(asignacion);
+    const curso = cursoCatalogo(nuevaAsignacion.curso);
+    const unidad = nuevaAsignacion.destino.startsWith("Unidad ")
+      ? unidades.value.find((item) => item.nombre === nuevaAsignacion.destino.slice(7))
+      : undefined;
+    if (curso) {
+      await Promise.all(
+        usuariosDestino(nuevaAsignacion.destino).map((usuario) =>
+          organizacionService.matricularUsuarioEnCurso({
+            usuarioId: String(usuario.id),
+            cursoId: curso.cursoDocenteId,
+            curso: curso.titulo,
+            unidadOrigenId: unidad?.id,
+            modalidad: "ASIGNADA",
+          }),
+        ),
+      );
+    }
     modal.value = false;
     mensaje.value = "El curso fue asignado correctamente.";
   } finally {

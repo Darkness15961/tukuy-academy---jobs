@@ -40,10 +40,19 @@ import {
 } from "@/api/services/organizacion.service";
 import { useAuth } from "@/composables/useAuth";
 import { useContextoSesion } from "@/composables/useContextoSesion";
+import {
+  etiquetaRol,
+  rutaInicioPortal,
+} from "@/composables/useContextoSesion";
 const route = useRoute(),
   router = useRouter();
 const { logout, currentUser, restaurarUsuario } = useAuth();
-const { contextoActivo } = useContextoSesion();
+const {
+  contextoActivo,
+  funcionesEntidadActiva,
+  cambiarFuncion,
+  tienePermiso,
+} = useContextoSesion();
 const abierto = ref(false);
 const panelAvisos = ref(false);
 const avisos = ref<NotificacionOrganizacion[]>([]);
@@ -52,6 +61,14 @@ const nombreUsuario = computed(
 );
 const inicialesUsuario = computed(
   () => currentUser.value?.initials ?? "AO",
+);
+const nombreFuncionActiva = computed(() =>
+  contextoActivo.value ? etiquetaRol(contextoActivo.value.rol) : "Administración",
+);
+const logoEntidad = computed(
+  () =>
+    funcionesEntidadActiva.value.find((item) => item.organizacion?.logo)
+      ?.organizacion?.logo ?? "/img/LogoColegioING.png",
 );
 onMounted(() => {
   void restaurarUsuario();
@@ -82,23 +99,35 @@ async function marcarLeidas() {
 function fechaAviso(valor: string) {
   return new Intl.DateTimeFormat("es-PE", { dateStyle: "short", timeStyle: "short" }).format(new Date(valor));
 }
-const items = [
+const itemsBase = [
   { e: "Inicio", r: "/organizacion/inicio", i: Home },
-  { e: "Usuarios", r: "/organizacion/usuarios", i: UsersRound },
-  { e: "Alumnos", r: "/organizacion/alumnos", i: GraduationCap },
-  { e: "Certificados", r: "/organizacion/certificados", i: Award },
-  { e: "Equipos y áreas", r: "/organizacion/equipos", i: Network },
-  { e: "Catálogo de cursos", r: "/organizacion/cursos", i: BookOpen },
-  { e: "Asignaciones", r: "/organizacion/asignaciones", i: ClipboardList },
-  { e: "Rutas de aprendizaje", r: "/organizacion/rutas", i: Route },
-  { e: "Reportes", r: "/organizacion/reportes", i: BarChart3 },
-  { e: "Licencia y consumo", r: "/organizacion/licencia", i: ShieldCheck },
-  { e: "Facturación", r: "/organizacion/facturacion", i: CreditCard },
+  { e: "Usuarios", r: "/organizacion/usuarios", i: UsersRound, p: "usuarios.ver" },
+  { e: "Alumnos", r: "/organizacion/alumnos", i: GraduationCap, p: "estudiantes.ver" },
+  { e: "Certificados", r: "/organizacion/certificados", i: Award, p: "certificados.ver" },
+  { e: "Equipos y áreas", r: "/organizacion/equipos", i: Network, p: "equipos.administrar" },
+  { e: "Cursos institucionales", r: "/organizacion/cursos/gestion", i: BookOpen, p: "cursos.crear" },
+  { e: "Catálogo y revisión", r: "/organizacion/cursos", i: BookOpen, p: "cursos.ver" },
+  { e: "Asignaciones", r: "/organizacion/asignaciones", i: ClipboardList, p: "asignaciones.crear" },
+  { e: "Rutas de aprendizaje", r: "/organizacion/rutas", i: Route, p: "rutas.administrar" },
+  { e: "Reportes", r: "/organizacion/reportes", i: BarChart3, p: "reportes.ver" },
+  { e: "Licencia y consumo", r: "/organizacion/licencia", i: ShieldCheck, p: "licencias.ver" },
+  { e: "Facturación", r: "/organizacion/facturacion", i: CreditCard, p: "facturacion.ver" },
 ];
-const itemsEcosistema = [
-  { e: "Bolsa Tukuy", r: "/bolsa-tukuy", i: BriefcaseBusiness },
-  { e: "Comunidad", r: "/comunidad", i: UsersRound },
+const items = computed(() =>
+  itemsBase.filter((item) => !item.p || tienePermiso(item.p)),
+);
+const itemsEcosistemaBase = [
+  { e: "Bolsa Tukuy", r: "/bolsa-tukuy", i: BriefcaseBusiness, p: "bolsa.ver" },
+  { e: "Comunidad", r: "/comunidad", i: UsersRound, p: "comunidad.ver" },
 ];
+const itemsEcosistema = computed(() =>
+  itemsEcosistemaBase.filter((item) => tienePermiso(item.p)),
+);
+const otrasFunciones = computed(() =>
+  funcionesEntidadActiva.value.filter(
+    (item) => item.id !== contextoActivo.value?.membresiaId,
+  ),
+);
 const titulo = computed(() =>
   String(route.meta.titulo ?? "Portal de organización"),
 );
@@ -106,6 +135,10 @@ const activa = (r: string) => route.path === r;
 async function ir(r: string) {
   abierto.value = false;
   await router.push(r);
+}
+async function activarFuncion(membresiaId: string) {
+  const contexto = cambiarFuncion(membresiaId);
+  if (contexto) await router.replace(rutaInicioPortal(contexto.portal));
 }
 </script>
 <template>
@@ -153,8 +186,8 @@ async function ir(r: string) {
       >
         <span class="grid h-14 w-14 shrink-0 place-items-center bg-white p-1">
           <img
-            src="/img/LogoColegioING.png"
-            alt="Logo del Colegio de Ingenieros Cusco"
+            :src="logoEntidad"
+            :alt="`Logo de ${contextoActivo?.organizacionNombre ?? 'la entidad'}`"
             class="h-full w-full object-contain"
           />
         </span>
@@ -163,7 +196,7 @@ async function ir(r: string) {
             {{ contextoActivo?.organizacionNombre ?? "COLEGIO DE INGENIEROS CUSCO" }}
           </p>
           <p class="mt-1 text-xs text-muted-foreground">
-            Administrador de organización
+            {{ nombreFuncionActiva }} · Contexto activo
           </p>
         </div>
       </div>
@@ -207,6 +240,7 @@ async function ir(r: string) {
       </div>
       <div class="border-t border-border p-3">
         <button
+          v-if="tienePermiso('configuracion.editar')"
           class="flex w-full gap-3 border-l-[3px] border-l-transparent p-3 text-sm font-semibold text-muted-foreground hover:border-l-border hover:bg-muted hover:text-foreground"
           @click="ir('/organizacion/configuracion')"
         >
@@ -270,7 +304,7 @@ async function ir(r: string) {
               <span class="hidden sm:block"
                 ><b class="block max-w-36 truncate text-xs">{{ nombreUsuario }}</b
                 ><span class="text-[10px] text-muted-foreground"
-                  >Administrador</span
+                  >{{ nombreFuncionActiva }}</span
                 ></span
               >
               <ChevronDown class="h-4 w-4 text-muted-foreground" />
@@ -287,16 +321,34 @@ async function ir(r: string) {
                 {{ contextoActivo?.organizacionNombre ?? "COLEGIO DE INGENIEROS CUSCO" }}
               </p>
               <p class="mt-0.5 text-xs font-normal text-muted-foreground">
-                Administrador de organización
+                {{ nombreFuncionActiva }} de organización
               </p>
             </DropdownMenuLabel>
             <DropdownMenuSeparator class="my-1 h-px bg-border" />
+            <template v-if="otrasFunciones.length">
+              <DropdownMenuLabel
+                class="px-3 pb-1 pt-2 text-[10px] font-black uppercase tracking-[.16em] text-muted-foreground"
+              >
+                Cambiar función en esta entidad
+              </DropdownMenuLabel>
+              <DropdownMenuItem
+                v-for="funcion in otrasFunciones"
+                :key="funcion.id"
+                class="flex cursor-pointer items-center gap-2 px-3 py-2.5 text-sm outline-none hover:bg-muted"
+                @select="activarFuncion(funcion.id)"
+              >
+                <ArrowLeftRight class="h-4 w-4" />
+                {{ etiquetaRol(funcion.rol) }}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator class="my-1 h-px bg-border" />
+            </template>
             <DropdownMenuItem
+              v-if="tienePermiso('configuracion.editar')"
               class="flex cursor-pointer items-center gap-2 px-3 py-2.5 text-sm outline-none hover:bg-muted"
               @select="router.push('/seleccionar-contexto')"
             >
               <ArrowLeftRight class="h-4 w-4" />
-              Cambiar organización o perfil
+              Cambiar entidad o espacio
             </DropdownMenuItem>
             <DropdownMenuItem
               class="flex cursor-pointer items-center gap-2 px-3 py-2.5 text-sm outline-none hover:bg-muted"

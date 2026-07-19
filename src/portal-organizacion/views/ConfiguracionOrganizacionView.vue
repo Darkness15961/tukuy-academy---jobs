@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { Building2, Link2, Save, ShieldCheck } from "lucide-vue-next";
+import { Building2, ImageUp, Link2, Save, ShieldCheck } from "lucide-vue-next";
 import Dialog from "primevue/dialog";
 import Skeleton from "primevue/skeleton";
 import ToggleSwitch from "primevue/toggleswitch";
-import { onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
 import {
   organizacionService,
   type IntegracionOrganizacion,
@@ -17,9 +17,22 @@ const guardado = ref(false);
 const error = ref("");
 const mostrarIntegraciones = ref(false);
 const integraciones = ref<IntegracionOrganizacion[]>([]);
-const { actualizarNombreOrganizacion } = useContextoSesion();
+const selectorLogo = ref<HTMLInputElement | null>(null);
+const { contextoActivo, funcionesEntidadActiva, actualizarIdentidadOrganizacion } =
+  useContextoSesion();
+const puedePersonalizarEntidad = computed(() =>
+  ["ORGANIZATION_OWNER", "ORGANIZATION_ADMIN"].includes(
+    contextoActivo.value?.rol ?? "",
+  ),
+);
+const logoMembresia = computed(
+  () =>
+    funcionesEntidadActiva.value.find((item) => item.organizacion?.logo)
+      ?.organizacion?.logo ?? "",
+);
 const configuracion = reactive({
   nombre: "",
+  logo: "",
   ruc: "",
   dominio: "",
   zonaHoraria: "America/Lima",
@@ -32,7 +45,9 @@ onMounted(async () => {
       organizacionService.obtenerConfiguracion(),
       organizacionService.obtenerIntegraciones(),
     ]);
-    Object.assign(configuracion, datos);
+    Object.assign(configuracion, datos, {
+      logo: datos.logo || logoMembresia.value,
+    });
     integraciones.value = conexiones;
   } finally {
     cargando.value = false;
@@ -41,6 +56,10 @@ onMounted(async () => {
 
 async function guardar() {
   error.value = "";
+  if (!puedePersonalizarEntidad.value) {
+    error.value = "Solo Dirección o Administración pueden modificar la identidad institucional.";
+    return;
+  }
   if (!configuracion.nombre.trim()) {
     error.value = "El nombre de la organización es obligatorio.";
     return;
@@ -50,9 +69,47 @@ async function guardar() {
     return;
   }
   await organizacionService.guardarConfiguracion({ ...configuracion });
-  actualizarNombreOrganizacion(configuracion.nombre);
+  actualizarIdentidadOrganizacion({
+    nombre: configuracion.nombre,
+    logo: configuracion.logo,
+  });
   guardado.value = true;
   setTimeout(() => (guardado.value = false), 2000);
+}
+
+async function seleccionarLogo(evento: Event) {
+  error.value = "";
+  const entrada = evento.target as HTMLInputElement;
+  const archivo = entrada.files?.[0];
+  if (!archivo) return;
+  const formatos = ["image/png", "image/jpeg", "image/webp"];
+  if (!formatos.includes(archivo.type)) {
+    error.value = "Selecciona un archivo PNG, JPG, JPEG o WEBP.";
+    entrada.value = "";
+    return;
+  }
+  if (archivo.size > 3 * 1024 * 1024) {
+    error.value = "El logo no debe superar los 3 MB.";
+    entrada.value = "";
+    return;
+  }
+  try {
+    const imagen = await createImageBitmap(archivo);
+    const limite = 360;
+    const escala = Math.min(1, limite / Math.max(imagen.width, imagen.height));
+    const lienzo = document.createElement("canvas");
+    lienzo.width = Math.max(1, Math.round(imagen.width * escala));
+    lienzo.height = Math.max(1, Math.round(imagen.height * escala));
+    const contexto = lienzo.getContext("2d");
+    if (!contexto) throw new Error("No se pudo preparar la imagen.");
+    contexto.drawImage(imagen, 0, 0, lienzo.width, lienzo.height);
+    imagen.close();
+    configuracion.logo = lienzo.toDataURL("image/webp", 0.88);
+  } catch {
+    error.value = "No fue posible procesar el logo seleccionado.";
+  } finally {
+    entrada.value = "";
+  }
 }
 
 async function guardarIntegraciones() {
@@ -83,6 +140,57 @@ async function guardarIntegraciones() {
       <Skeleton v-for="item in 3" :key="item" class="h-44 w-full" />
     </div>
     <template v-else>
+    <Card class="overflow-hidden border-border bg-card">
+      <CardContent class="p-0">
+        <div class="border-b border-border bg-primary px-6 py-5 text-white">
+          <p class="text-[11px] font-black uppercase tracking-[.2em] text-amber-400">
+            Identidad institucional
+          </p>
+          <h2 class="mt-1 text-xl font-black">Marca visible para toda la entidad</h2>
+          <p class="mt-1 text-sm text-white/75">
+            El logo se mostrará a estudiantes, docentes, Dirección y Administración.
+          </p>
+        </div>
+        <div class="grid gap-6 p-6 sm:grid-cols-[12rem_1fr] sm:items-center">
+          <div class="grid h-40 place-items-center border border-border bg-white p-4">
+            <img
+              v-if="configuracion.logo"
+              :src="configuracion.logo"
+              :alt="`Logo de ${configuracion.nombre || 'la entidad'}`"
+              class="h-full w-full object-contain"
+            />
+            <Building2 v-else class="h-14 w-14 text-slate-300" />
+          </div>
+          <div>
+            <h3 class="font-black">Logo de la entidad</h3>
+            <p class="mt-1 max-w-xl text-sm text-muted-foreground">
+              Usa una imagen cuadrada o apaisada con fondo transparente. Se optimizará automáticamente para no ralentizar el sistema.
+            </p>
+            <p class="mt-3 text-xs font-bold text-muted-foreground">
+              PNG, JPG, JPEG o WEBP · máximo 3 MB
+            </p>
+            <input
+              ref="selectorLogo"
+              type="file"
+              accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp"
+              class="sr-only"
+              @change="seleccionarLogo"
+            />
+            <Button
+              class="mt-4"
+              variant="outline"
+              :disabled="!puedePersonalizarEntidad"
+              @click="selectorLogo?.click()"
+            >
+              <ImageUp class="h-4 w-4" />Seleccionar imagen
+            </Button>
+            <p v-if="!puedePersonalizarEntidad" class="mt-3 text-xs text-amber-700 dark:text-amber-400">
+              Solo los perfiles de Dirección y Administración pueden cambiar esta identidad.
+            </p>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
     <Card class="border-border bg-card"
       ><CardContent class="p-6"
         ><div class="flex gap-3">
@@ -140,7 +248,7 @@ async function guardarIntegraciones() {
       <span v-if="error" class="self-center text-sm text-red-600">{{ error }}</span>
       <span v-if="guardado" class="self-center text-sm text-emerald-700"
         >Cambios guardados</span
-      ><Button @click="guardar"><Save class="h-4 w-4" />Guardar cambios</Button>
+      ><Button :disabled="!puedePersonalizarEntidad" @click="guardar"><Save class="h-4 w-4" />Guardar cambios</Button>
     </div>
     </template>
 

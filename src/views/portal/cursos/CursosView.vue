@@ -27,6 +27,14 @@ const portal = usePortalContext();
       "
     />
 
+    <div
+      v-if="portal.mensajeAccesoCurso.value"
+      class="border-l-4 border-l-accent bg-accent/10 px-5 py-4 text-sm font-semibold text-foreground"
+      role="status"
+    >
+      {{ portal.mensajeAccesoCurso.value }}
+    </div>
+
     <CarruselCursos
       subtitle="Formación especializada"
       title="Cursos destacados"

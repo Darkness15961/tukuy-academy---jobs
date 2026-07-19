@@ -35,7 +35,11 @@ import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import SelectorTema from "@/components/shared/SelectorTema.vue";
 import { portalPathByView } from "@/lib/portal-routes";
-import { useContextoSesion } from "@/composables/useContextoSesion";
+import {
+  etiquetaRol,
+  rutaInicioPortal,
+  useContextoSesion,
+} from "@/composables/useContextoSesion";
 import { cn } from "@/lib/utils";
 import type { Course, UserProfile, ViewId } from "@/types/academia";
 
@@ -69,13 +73,25 @@ const emit = defineEmits<{
 
 const route = useRoute();
 const router = useRouter();
-const { contextoActivo } = useContextoSesion();
+const {
+  contextoActivo,
+  funcionesEntidadActiva,
+  cambiarFuncion,
+} = useContextoSesion();
 const isDropdownOpen = ref(false);
 const mobileMenuOpen = ref(false);
 
 const isPortal = computed(() => props.mode === "portal");
 const profilePhotoSrc = "/img/vistasimg/perfilfoto.png";
 const profilePhotoFailed = ref(false);
+const otrasFunciones = computed(() =>
+  contextoActivo.value?.organizacionId &&
+  !contextoActivo.value.organizacionId.startsWith("org-personal-")
+    ? funcionesEntidadActiva.value.filter(
+        (item) => item.id !== contextoActivo.value?.membresiaId,
+      )
+    : [],
+);
 
 /** Portal: colapsa bajo lg (1024px). Público: bajo md (768px). */
 const navBreakpoint = computed(() => (isPortal.value ? "lg" : "md"));
@@ -148,6 +164,11 @@ async function goHome() {
 
 function goToLogin() {
   router.push("/login");
+}
+
+async function activarFuncion(membresiaId: string) {
+  const contexto = cambiarFuncion(membresiaId);
+  if (contexto) await router.replace(rutaInicioPortal(contexto.portal));
 }
 </script>
 
@@ -459,6 +480,23 @@ function goToLogin() {
                 </p>
               </DropdownMenuLabel>
               <DropdownMenuSeparator class="my-1 h-px bg-border" />
+              <template v-if="otrasFunciones.length">
+                <DropdownMenuLabel
+                  class="px-2 pb-1 pt-2 text-[10px] font-black uppercase tracking-[.16em] text-muted-foreground"
+                >
+                  Cambiar función en esta entidad
+                </DropdownMenuLabel>
+                <DropdownMenuItem
+                  v-for="funcion in otrasFunciones"
+                  :key="funcion.id"
+                  class="flex cursor-pointer items-center gap-2 px-2 py-2 text-sm outline-none hover:bg-muted"
+                  @select="activarFuncion(funcion.id)"
+                >
+                  <ArrowLeftRight class="h-4 w-4 shrink-0" />
+                  {{ etiquetaRol(funcion.rol) }}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator class="my-1 h-px bg-border" />
+              </template>
               <DropdownMenuItem
                 v-if="contextoActivo"
                 class="flex cursor-pointer items-center gap-2 px-2 py-2 text-sm outline-none hover:bg-muted"
@@ -467,7 +505,7 @@ function goToLogin() {
                 <ArrowLeftRight class="h-4 w-4 shrink-0" />
                 <span class="min-w-0">
                   <span class="block font-semibold"
-                    >Cambiar organización o perfil</span
+                    >Cambiar entidad o espacio</span
                   >
                   <span
                     class="block truncate text-[11px] font-normal text-muted-foreground"

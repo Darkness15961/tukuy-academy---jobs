@@ -13,6 +13,7 @@ import {
   planesAdministracion,
   usuariosAdministracion,
 } from "@/administracion-tukuy/data/administracion.mock";
+import type { OrganizacionAdministrada } from "@/administracion-tukuy/data/administracion.mock";
 
 export type UsuarioAdministrado = (typeof usuariosAdministracion)[number];
 export type CursoAdministrado = (typeof cursosRevisionAdministracion)[number];
@@ -56,6 +57,113 @@ const auditoria = crearRepositorioLocal({
   semilla: eventosAuditoria,
 });
 
+export interface ResponsableInicialOrganizacion {
+  nombre: string;
+  correo: string;
+}
+
+export interface AltaOrganizacion {
+  organizacion: OrganizacionAdministrada;
+  direccion: ResponsableInicialOrganizacion;
+  administracion: ResponsableInicialOrganizacion;
+}
+
+interface InvitacionInicialOrganizacion {
+  id: string;
+  organizacionId: string;
+  organizacionNombre: string;
+  nombre: string;
+  correo: string;
+  perfil: "DIRECCION" | "ADMINISTRACION";
+  contrasenaTemporal: string;
+  debeCambiarContrasena: true;
+  estadoCorreo: "ENVIADO";
+  enviadoEn: string;
+}
+
+const invitacionesIniciales = crearRepositorioLocal<InvitacionInicialOrganizacion>({
+  clave: "tukuy_demo_admin_invitaciones_iniciales",
+  ruta: `${API.administracion.organizaciones}/invitaciones-iniciales`,
+  semilla: [],
+});
+
+function generarContrasenaTemporal() {
+  const caracteres = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%";
+  const valores = new Uint32Array(14);
+  crypto.getRandomValues(valores);
+  return Array.from(valores, (valor) => caracteres[valor % caracteres.length]).join("");
+}
+
+async function registrarOrganizacionConResponsables(alta: AltaOrganizacion) {
+  if (!apiConfig.useMock) {
+    const { data } = await api.post<{
+      organizacion: OrganizacionAdministrada;
+      invitacionesEnviadas: number;
+    }>(API.administracion.organizaciones, alta);
+    return data;
+  }
+
+  const [organizacionesActuales, usuariosActuales] = await Promise.all([
+    organizaciones.listar(),
+    usuarios.listar(),
+  ]);
+  if (organizacionesActuales.some((item) => item.ruc === alta.organizacion.ruc)) {
+    throw new Error("Ya existe una organización registrada con este RUC.");
+  }
+  const correosNuevos = [alta.direccion.correo, alta.administracion.correo].map(
+    (correo) => correo.trim().toLowerCase(),
+  );
+  if (new Set(correosNuevos).size !== 2) {
+    throw new Error("Dirección y Administración deben tener correos diferentes.");
+  }
+  if (
+    usuariosActuales.some((usuario) =>
+      correosNuevos.includes(usuario.correo.trim().toLowerCase()),
+    )
+  ) {
+    throw new Error("Uno de los correos ya pertenece a una cuenta registrada.");
+  }
+
+  const organizacionCreada = await organizaciones.crear(alta.organizacion);
+  const ahora = new Date().toISOString();
+  const responsables = [
+    { ...alta.direccion, perfil: "DIRECCION" as const },
+    { ...alta.administracion, perfil: "ADMINISTRACION" as const },
+  ];
+
+  await Promise.all(
+    responsables.flatMap((responsable, indice) => [
+      usuarios.crear({
+        id: `usr-${alta.organizacion.id}-${indice + 1}`,
+        nombre: responsable.nombre,
+        correo: responsable.correo,
+        organizacion: alta.organizacion.nombre,
+        perfiles: [
+          responsable.perfil === "DIRECCION"
+            ? "Dirección"
+            : "Administración de organización",
+        ],
+        ultimoAcceso: "Invitación enviada",
+        estado: "INVITADO",
+      }),
+      invitacionesIniciales.crear({
+        id: `inv-${alta.organizacion.id}-${responsable.perfil.toLowerCase()}`,
+        organizacionId: alta.organizacion.id,
+        organizacionNombre: alta.organizacion.nombre,
+        nombre: responsable.nombre,
+        correo: responsable.correo,
+        perfil: responsable.perfil,
+        contrasenaTemporal: generarContrasenaTemporal(),
+        debeCambiarContrasena: true,
+        estadoCorreo: "ENVIADO",
+        enviadoEn: ahora,
+      }),
+    ]),
+  );
+
+  return { organizacion: organizacionCreada, invitacionesEnviadas: 2 };
+}
+
 const configuracionLocal = crearAlmacenDocumento("tukuy_demo_admin_config", {
   nombre: "Tukuy Academy",
   correoSoporte: "soporte@tukuy.pe",
@@ -75,6 +183,9 @@ export const administracionService = {
   planes,
   facturas,
   auditoria,
+  invitacionesIniciales,
+
+  registrarOrganizacionConResponsables,
 
   async obtenerConfiguracion() {
     if (apiConfig.useMock) return configuracionLocal.leer();

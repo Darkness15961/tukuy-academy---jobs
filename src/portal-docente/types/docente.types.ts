@@ -20,6 +20,10 @@ export interface CursoDocente {
   progreso: number;
   valoracion: number;
   actualizado: string;
+  docenteResponsableId?: string;
+  docenteResponsableNombre?: string;
+  cargadoPorNombre?: string;
+  origenCarga?: "DOCENTE" | "ADMINISTRACION";
 }
 
 export interface EstudianteDocente {
@@ -215,6 +219,9 @@ export interface BorradorCursoDocente {
   subtitulo: string;
   descripcion: string;
   publico: string;
+  alcanceDirigido?: "TODOS" | "ORGANIZACION" | "UNIDADES";
+  unidadesDestinoIds?: string[];
+  unidadesDestinoNombres?: string[];
   objetivos: string[];
   requisitos: string[];
   categoria: string;
@@ -230,5 +237,41 @@ export interface BorradorCursoDocente {
   nombreCertificado: string;
   notaMinima: number;
   vigenciaMeses: number;
-  secciones: Array<{ titulo: string; clases: string[] }>;
+  firmasCertificado?: FirmaCertificadoCurso[];
+  docenteResponsableId?: string;
+  docenteResponsableNombre?: string;
+  docenteResponsablePerfil?: DocenteResponsableCurso;
+  cargadoPorNombre?: string;
+  origenCarga?: "DOCENTE" | "ADMINISTRACION";
+  secciones: Array<{
+    titulo: string;
+    clases: string[];
+    recursos?: Array<{
+      id: string;
+      nombre: string;
+      tipo: string;
+      tamanio: number;
+      contenido: string;
+    }>;
+  }>;
+}
+
+export interface DocenteResponsableCurso {
+  id: string;
+  nombre: string;
+  correo: string;
+  cargo: string;
+  especialidad: string;
+  foto: string;
+  biografia: string;
+  experiencia: string[];
+  origen: "ENTIDAD" | "MANUAL";
+}
+
+export interface FirmaCertificadoCurso {
+  id: string;
+  personaId: string;
+  nombre: string;
+  cargo: string;
+  tipo: "DIGITAL" | "ELECTRONICA";
 }

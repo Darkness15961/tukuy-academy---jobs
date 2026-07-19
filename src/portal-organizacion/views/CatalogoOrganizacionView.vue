@@ -5,6 +5,7 @@ import {
   CircleUserRound,
   Clock3,
   MessageSquareWarning,
+  Plus,
   Search,
   Trash2,
   UsersRound,
@@ -14,6 +15,7 @@ import InputNumber from "primevue/inputnumber";
 import Select from "primevue/select";
 import Textarea from "primevue/textarea";
 import { computed, onMounted, reactive, ref, watch } from "vue";
+import { useRouter } from "vue-router";
 
 import {
   calcularPrecioConDescuento,
@@ -31,9 +33,20 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useContextoSesion } from "@/composables/useContextoSesion";
 
 type Pestaña = "REVISION" | "CATALOGO";
 type ModoModal = "APROBAR" | "REASIGNAR";
+
+const router = useRouter();
+const { tienePermiso } = useContextoSesion();
+
+function crearCursoInstitucional() {
+  void router.push({
+    path: "/organizacion/cursos/nuevo",
+    query: { borrador: `curso-institucional-${Date.now()}` },
+  });
+}
 
 const buscar = ref("");
 const pestana = ref<Pestaña>("REVISION");
@@ -427,12 +440,17 @@ async function quitarAsignacion(titulo: string) {
           (colaboradores, un área o externos).
         </p>
       </div>
-      <Badge
-        v-if="pendientesRevision"
-        class="border-transparent bg-amber-500 text-slate-950"
-      >
-        {{ pendientesRevision }} por revisar
-      </Badge>
+      <div class="flex flex-wrap items-center gap-2">
+        <Badge
+          v-if="pendientesRevision"
+          class="border-transparent bg-amber-500 text-slate-950"
+        >
+          {{ pendientesRevision }} por revisar
+        </Badge>
+        <Button v-if="tienePermiso('cursos.crear')" @click="crearCursoInstitucional">
+          <Plus class="h-4 w-4" />Crear curso institucional
+        </Button>
+      </div>
     </div>
 
     <Card class="border-border bg-card">
@@ -537,6 +555,12 @@ async function quitarAsignacion(titulo: string) {
             <CircleUserRound class="h-3.5 w-3.5 shrink-0 text-primary" />
             Propuesto por
             <span class="text-foreground">{{ curso.docente }}</span>
+          </p>
+          <p
+            v-if="curso.origenCarga === 'ADMINISTRACION' && curso.cargadoPor"
+            class="mt-1 text-xs text-muted-foreground"
+          >
+            Material cargado por <strong class="text-foreground">{{ curso.cargadoPor }}</strong>
           </p>
           <div class="mt-3 grid gap-1 text-xs text-muted-foreground">
             <span>{{ curso.lecciones }} lecciones · {{ curso.duracion }}</span>

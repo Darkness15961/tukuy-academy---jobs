@@ -618,6 +618,10 @@ export const docenteService = {
       progreso: progresoBorrador(borrador),
       valoracion: existente?.valoracion ?? 0,
       actualizado: "Ahora",
+      docenteResponsableId: borrador.docenteResponsableId,
+      docenteResponsableNombre: borrador.docenteResponsableNombre,
+      cargadoPorNombre: borrador.cargadoPorNombre,
+      origenCarga: borrador.origenCarga,
     };
 
     const guardado = existente
@@ -650,6 +654,26 @@ export const docenteService = {
       progreso: 100,
       actualizado: "Enviado ahora",
     });
+    if (actualizado.ambito === "ORGANIZACION") {
+      const { organizacionService } = await import(
+        "@/api/services/organizacion.service"
+      );
+      await organizacionService.catalogoCursos.registrarParaRevision({
+        cursoDocenteId: actualizado.id,
+        titulo: borrador.titulo,
+        imagen: borrador.imagen,
+        docenteResponsableId: borrador.docenteResponsableId,
+        docenteResponsableNombre:
+          borrador.docenteResponsableNombre || "Docente por asignar",
+        cargadoPor: borrador.cargadoPorNombre,
+        origenCarga: borrador.origenCarga,
+        categoria: borrador.categoria,
+        lecciones: borrador.secciones.reduce(
+          (total, seccion) => total + seccion.clases.length,
+          0,
+        ),
+      });
+    }
     await registrarActividad("Curso enviado a revisión", actualizado.titulo);
     await registrarNotificacion({
       titulo: "Curso recibido para revisión",

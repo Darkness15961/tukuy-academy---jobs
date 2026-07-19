@@ -17,6 +17,7 @@ import {
 } from "@/composables/useContextoSesion";
 import { membresiasMock } from "@/data/contextos-sesion.mock";
 import { env } from "@/lib/env";
+import { ULTIMAS_FUNCIONES_ENTIDAD_KEY } from "@/lib/constants";
 import type {
   MembresiaOrganizacion,
   TipoPortal,
@@ -27,6 +28,7 @@ const { logout } = useAuth();
 const {
   membresias,
   membresiasActivas,
+  contextoActivo,
   configurarMembresias,
   seleccionarContexto,
 } = useContextoSesion();
@@ -99,7 +101,72 @@ const presentacionPortal: Record<
   },
 };
 
-const contextosDisponibles = computed(() => membresiasActivas.value);
+const prioridadRol: Record<string, number> = {
+  ORGANIZATION_OWNER: 60,
+  ORGANIZATION_ADMIN: 50,
+  TRAINING_MANAGER: 40,
+  SUPERVISOR: 30,
+  INSTRUCTOR: 20,
+  STUDENT: 10,
+};
+
+function ultimasFuncionesGuardadas() {
+  try {
+    return JSON.parse(
+      localStorage.getItem(ULTIMAS_FUNCIONES_ENTIDAD_KEY) ?? "{}",
+    ) as Record<string, string>;
+  } catch {
+    return {};
+  }
+}
+
+function esAccesoInstitucional(membresia: MembresiaOrganizacion) {
+  return Boolean(
+    membresia.organizacion &&
+      membresia.organizacion.tipo !== "PERSONAL" &&
+      membresia.portal !== "admin" &&
+      !esDocenciaIndependiente(membresia),
+  );
+}
+
+const contextosDisponibles = computed(() => {
+  const personales = membresiasActivas.value.filter(
+    (membresia) =>
+      !esAccesoInstitucional(membresia) && membresia.portal !== "admin",
+  );
+  const administracionTukuy = membresiasActivas.value.filter(
+    (membresia) => membresia.portal === "admin",
+  );
+  const porEntidad = new Map<string, MembresiaOrganizacion[]>();
+
+  membresiasActivas.value
+    .filter(esAccesoInstitucional)
+    .forEach((membresia) => {
+      const id = membresia.organizacion!.id;
+      porEntidad.set(id, [...(porEntidad.get(id) ?? []), membresia]);
+    });
+
+  const entidades = [...porEntidad.values()].flatMap((funciones) => {
+    const organizacionId = funciones[0]?.organizacion?.id ?? "";
+    const membresiaPreferida = ultimasFuncionesGuardadas()[organizacionId];
+    const activa = funciones.find(
+      (item) => item.id === contextoActivo.value?.membresiaId,
+    );
+    const guardada = funciones.find(
+      (item) => item.id === membresiaPreferida,
+    );
+    const principal =
+      activa ??
+      guardada ??
+      [...funciones].sort(
+        (a, b) =>
+          (prioridadRol[b.rol] ?? 0) - (prioridadRol[a.rol] ?? 0),
+      )[0];
+    return principal ? [principal] : [];
+  });
+
+  return [...personales, ...entidades, ...administracionTukuy];
+});
 
 async function ingresar(membresia: MembresiaOrganizacion) {
   const contexto = seleccionarContexto(membresia);
@@ -115,17 +182,24 @@ function esDocenciaIndependiente(membresia: MembresiaOrganizacion) {
 
 function nombreContexto(membresia: MembresiaOrganizacion) {
   if (esDocenciaIndependiente(membresia)) return "Espacio profesional propio";
+  if (esAccesoInstitucional(membresia)) return "Entidad vinculada";
   return membresia.organizacion?.nombre ?? "Tukuy Academy";
 }
 
 function tituloContexto(membresia: MembresiaOrganizacion) {
-  if (esDocenciaIndependiente(membresia)) return "Docencia independiente";
+  if (esDocenciaIndependiente(membresia)) return "Portal docente";
+  if (esAccesoInstitucional(membresia)) {
+    return membresia.organizacion?.nombre ?? "Organización";
+  }
   return presentacionPortal[membresia.portal].etiqueta;
 }
 
 function imagenContexto(membresia: MembresiaOrganizacion) {
   if (esDocenciaIndependiente(membresia)) {
     return "/img/portal-docente-independiente.png";
+  }
+  if (esAccesoInstitucional(membresia)) {
+    return "/img/portal-organizacion.png";
   }
   return presentacionPortal[membresia.portal].imagen;
 }
@@ -134,12 +208,18 @@ function textoAlternativoImagen(membresia: MembresiaOrganizacion) {
   if (esDocenciaIndependiente(membresia)) {
     return "Docente independiente preparando un curso desde su espacio profesional";
   }
+  if (esAccesoInstitucional(membresia)) {
+    return `Espacio institucional de ${membresia.organizacion?.nombre}`;
+  }
   return presentacionPortal[membresia.portal].imagenAlt;
 }
 
 function descripcionContexto(membresia: MembresiaOrganizacion) {
   if (esDocenciaIndependiente(membresia)) {
     return "Crea y comercializa cursos propios, administra tus estudiantes y controla tus ingresos personales.";
+  }
+  if (esAccesoInstitucional(membresia)) {
+    return "Ingresa a tu espacio institucional. Tus módulos y datos se adaptarán automáticamente a la función que tengas autorizada.";
   }
   return presentacionPortal[membresia.portal].descripcion;
 }
@@ -150,6 +230,13 @@ function funcionesContexto(membresia: MembresiaOrganizacion) {
       "Cursos propios y catálogo público",
       "Estudiantes de matrícula individual",
       "Ventas e ingresos personales",
+    ];
+  }
+  if (esAccesoInstitucional(membresia)) {
+    return [
+      "Una sola entrada para toda la entidad",
+      "Funciones internas según tus permisos",
+      "Información aislada de otras organizaciones",
     ];
   }
   return presentacionPortal[membresia.portal].funciones;
@@ -190,19 +277,19 @@ function funcionesContexto(membresia: MembresiaOrganizacion) {
           <p
             class="text-sm font-black uppercase tracking-[.25em] text-[#F5B400]"
           >
-            Acceso multiperfil
+            Espacios de trabajo
           </p>
           <h1
             class="mt-3 text-4xl font-black tracking-normal text-white sm:text-5xl"
           >
-            Selecciona tu perfil
+            Selecciona tu espacio
           </h1>
         </div>
       </div>
 
       <div
         v-if="contextosDisponibles.length"
-        class="grid gap-2 md:grid-cols-2 xl:min-h-[calc(100svh-190px)] xl:grid-cols-5"
+        class="grid gap-2 md:grid-cols-2 xl:min-h-[calc(100svh-190px)] xl:grid-cols-4"
       >
         <Card
           v-for="membresia in contextosDisponibles"
@@ -210,6 +297,16 @@ function funcionesContexto(membresia: MembresiaOrganizacion) {
           class="group relative min-h-[640px] overflow-hidden border-white/20 bg-[#07152B] text-white shadow-[0_24px_60px_-36px_rgba(0,0,0,0.95)] transition duration-500 hover:z-10 hover:-translate-y-1 hover:shadow-[0_34px_80px_-34px_rgba(0,0,0,0.95)] xl:min-h-full"
           :class="presentacionPortal[membresia.portal].colorBorde"
         >
+          <div
+            v-if="esAccesoInstitucional(membresia)"
+            class="absolute left-6 top-6 z-10 grid h-20 w-20 place-items-center bg-white p-2 shadow-xl"
+          >
+            <img
+              :src="membresia.organizacion?.logo ?? '/img/iconoTukuyAcademy.png'"
+              :alt="`Logo de ${membresia.organizacion?.nombre}`"
+              class="h-full w-full object-contain"
+            />
+          </div>
           <img
             :src="imagenContexto(membresia)"
             :alt="textoAlternativoImagen(membresia)"
@@ -259,7 +356,7 @@ function funcionesContexto(membresia: MembresiaOrganizacion) {
                     class="mt-5 h-12 w-full border border-white bg-white font-bold text-[#07152B] hover:bg-[#F5B400]"
                     @click="ingresar(membresia)"
                   >
-                    Ingresar al portal
+                    Ingresar al espacio
                     <ArrowRight
                       class="h-4 w-4 transition group-hover:translate-x-1"
                     />

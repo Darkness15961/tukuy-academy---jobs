@@ -38,7 +38,12 @@ const props = withDefaults(
     alcance: "DOCENTE",
   },
 );
-const { contextoActivo } = useContextoSesion();
+const { contextoActivo, funcionesEntidadActiva } = useContextoSesion();
+const logoEntidad = computed(
+  () =>
+    funcionesEntidadActiva.value.find((item) => item.organizacion?.logo)
+      ?.organizacion?.logo,
+);
 const cargando = ref(true);
 const sincronizando = ref(false);
 const descargandoId = ref("");
@@ -236,7 +241,7 @@ function datosCertificado(certificado: CertificadoEmitidoDocente) {
       contextoActivo.value?.organizacionNombre ?? "Tukuy Academy",
     issuerLogoUrl:
       props.alcance === "ORGANIZACION" || contextoActivo.value?.organizacionId
-        ? "/img/LogoColegioING.png"
+        ? logoEntidad.value
         : undefined,
   };
 }

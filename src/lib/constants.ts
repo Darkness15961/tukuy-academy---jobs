@@ -2,6 +2,7 @@ export const AUTH_TOKEN_KEY = "auth_token";
 export const USUARIO_SESION_KEY = "tukuy_usuario_sesion";
 export const MEMBRESIAS_KEY = "tukuy_membresias";
 export const CONTEXTO_SESION_KEY = "tukuy_contexto_sesion";
+export const ULTIMAS_FUNCIONES_ENTIDAD_KEY = "tukuy_ultimas_funciones_entidad";
 export const CARRITO_KEY = "tukuy_academy_carrito";
 export const TEMA_KEY = "tukuy_tema";
 /** Contenidos de aprendizaje (módulos / lecciones / quizzes) en demo. */

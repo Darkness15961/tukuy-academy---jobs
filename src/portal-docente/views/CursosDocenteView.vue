@@ -11,7 +11,7 @@ import {
 } from "lucide-vue-next";
 import Skeleton from "primevue/skeleton";
 import { computed, onMounted, ref } from "vue";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 
 import {
   docenteService,
@@ -25,7 +25,8 @@ import { useContextoSesion } from "@/composables/useContextoSesion";
 import type { EstadoCursoDocente } from "@/portal-docente/types/docente.types";
 
 const router = useRouter();
-const { contextoActivo } = useContextoSesion();
+const route = useRoute();
+const { contextoActivo, tienePermiso } = useContextoSesion();
 const busqueda = ref("");
 const filtro = ref<"TODOS" | EstadoCursoDocente>("TODOS");
 const cargando = ref(true);
@@ -33,6 +34,17 @@ const cursos = ref<CursoDocente[]>([]);
 const menuCursoId = ref<string>();
 const cursoVistaPrevia = ref<CursoDocente>();
 const aviso = ref("");
+const esGestionOrganizacion = computed(() =>
+  route.path.startsWith("/organizacion/"),
+);
+const tituloPagina = computed(() =>
+  esGestionOrganizacion.value ? "Cursos institucionales" : "Mis cursos",
+);
+const descripcionPagina = computed(() =>
+  esGestionOrganizacion.value
+    ? "Crea y administra el material académico que la entidad carga por encargo de sus docentes."
+    : "Crea, publica y mejora tus experiencias de aprendizaje.",
+);
 
 const opcionesFiltro: Array<{
   valor: "TODOS" | EstadoCursoDocente;
@@ -75,14 +87,25 @@ const cursosDelContexto = computed(() =>
 
 function crearCurso() {
   router.push({
-    path: "/docente/cursos/nuevo",
-    query: { ambito: ambitoActivo.value.toLowerCase() },
+    path: esGestionOrganizacion.value
+      ? "/organizacion/cursos/nuevo"
+      : "/docente/cursos/nuevo",
+    query: {
+      ambito: ambitoActivo.value.toLowerCase(),
+      ...(esGestionOrganizacion.value
+        ? { borrador: `curso-institucional-${Date.now()}` }
+        : {}),
+    },
   });
 }
 
 function editarCurso(curso?: CursoDocente) {
   if (!curso) return;
-  router.push(`/docente/cursos/${curso.id}/constructor`);
+  router.push(
+    esGestionOrganizacion.value
+      ? `/organizacion/cursos/${curso.id}/constructor`
+      : `/docente/cursos/${curso.id}/constructor`,
+  );
 }
 
 const cursosFiltrados = computed(() =>
@@ -141,14 +164,18 @@ async function archivar(curso: CursoDocente) {
   <section class="mx-auto grid max-w-375 gap-6">
     <div class="flex flex-wrap items-end justify-between gap-4">
       <div>
-        <h1 class="text-2xl font-black">Mis cursos</h1>
+        <h1 class="text-2xl font-black">{{ tituloPagina }}</h1>
         <p class="mt-1 text-sm text-muted-foreground">
-          Crea, publica y mejora tus experiencias de aprendizaje.
+          {{ descripcionPagina }}
         </p>
       </div>
-      <Button class="bg-primary" @click="crearCurso">
+      <Button
+        v-if="!esGestionOrganizacion || tienePermiso('cursos.crear')"
+        class="bg-primary"
+        @click="crearCurso"
+      >
         <Plus class="h-4 w-4" />
-        Crear curso
+        {{ esGestionOrganizacion ? "Crear curso institucional" : "Crear curso" }}
       </Button>
     </div>
 

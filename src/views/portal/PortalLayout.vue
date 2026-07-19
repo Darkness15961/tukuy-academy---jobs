@@ -3,12 +3,14 @@ import { computed, ref, watch } from "vue";
 import { RouterView, useRoute, useRouter } from "vue-router";
 
 import { aprendizajeService } from "@/api/services/aprendizaje.service";
+import { organizacionService } from "@/api/services/organizacion.service";
 import AppHeader from "@/components/shared/AppHeader.vue";
 import PortalPageSkeleton from "@/components/shared/PortalPageSkeleton.vue";
 import SiteFooter from "@/components/shared/SiteFooter.vue";
 import { useAuth } from "@/composables/useAuth";
 import { useCarrito } from "@/composables/useCarrito";
 import { useContent } from "@/composables/useContent";
+import { useContextoSesion } from "@/composables/useContextoSesion";
 import { useFiltroCursos, useCursos } from "@/composables/useCursos";
 import { useFavoritos } from "@/composables/useFavoritos";
 import { useFiltroEmpleos } from "@/composables/useFiltroEmpleos";
@@ -27,6 +29,7 @@ const route = useRoute();
 const router = useRouter();
 const { logout } = useAuth();
 const { navItems, loading: contentLoading } = useContent();
+const { contextoActivo } = useContextoSesion();
 const { courses, completedCourses, loading: coursesLoading } = useCursos();
 const { searchTerm, filteredCourses } = useFiltroCursos(() => courses.value);
 const { jobs, loading: jobsLoading } = useEmpleos();
@@ -49,6 +52,7 @@ const { favoritesCount, isFavorite, toggleFavorite, favoriteCourseIds } =
 
 const pricingFilter = ref<"all" | "free" | "paid">("all");
 const openingCertificateId = ref<string | null>(null);
+const mensajeAccesoCurso = ref("");
 
 const activeView = computed(() => resolvePortalView(route.meta.view));
 
@@ -141,7 +145,52 @@ watch(
   { immediate: true },
 );
 
-function openSimuladorCurso(course: Course) {
+async function openSimuladorCurso(course: Course) {
+  mensajeAccesoCurso.value = "";
+  const contexto = contextoActivo.value;
+  const esEstudianteInstitucional =
+    contexto?.portal === "estudiante" &&
+    Boolean(contexto.organizacionId) &&
+    !contexto.organizacionId?.startsWith("org-personal-");
+
+  if (
+    course.status === "Disponible" &&
+    esEstudianteInstitucional &&
+    contexto?.personaEntidadId
+  ) {
+    const evaluacion = await organizacionService.estructura.evaluarAccesoCurso(
+      contexto.personaEntidadId,
+      course.id,
+    );
+    if (!evaluacion.disponible) {
+      mensajeAccesoCurso.value = evaluacion.motivo;
+      return;
+    }
+    if (evaluacion.requiereAprobacion) {
+      await organizacionService.solicitarMatriculaCurso({
+        usuarioId: contexto.personaEntidadId,
+        cursoId: course.id,
+        curso: course.title,
+        unidadOrigenId: evaluacion.unidadOrigenId,
+      });
+      mensajeAccesoCurso.value =
+        "Solicitud enviada. La entidad debe aprobarla antes de habilitar el curso.";
+      return;
+    }
+    await organizacionService.matricularUsuarioEnCurso({
+      usuarioId: contexto.personaEntidadId,
+      cursoId: course.id,
+      curso: course.title,
+      unidadOrigenId: evaluacion.unidadOrigenId,
+      modalidad: "LIBRE",
+    });
+    course.status = "En curso";
+    course.progress = 0;
+    await aprendizajeService.guardarProgreso(course.id, {
+      progreso: 0,
+      estado: "En curso",
+    });
+  }
   router.push(`/tukuy-academy/aprendizaje/${course.id}`);
 }
 
@@ -198,6 +247,7 @@ const portalContext = {
   jobsLoading,
   contentLoading,
   openingCertificateId,
+  mensajeAccesoCurso,
   cartCount,
   favoritesCount,
   navigate,

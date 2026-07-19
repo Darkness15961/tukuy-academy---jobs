@@ -34,7 +34,11 @@ import SelectorTema from "@/components/shared/SelectorTema.vue";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/composables/useAuth";
-import { useContextoSesion } from "@/composables/useContextoSesion";
+import {
+  etiquetaRol,
+  rutaInicioPortal,
+  useContextoSesion,
+} from "@/composables/useContextoSesion";
 import {
   docenteService,
   type NotificacionDocente,
@@ -44,7 +48,12 @@ import { academicoService } from "@/api/services/academico.service";
 const route = useRoute();
 const router = useRouter();
 const { logout, currentUser, restaurarUsuario } = useAuth();
-const { contextoActivo } = useContextoSesion();
+const {
+  contextoActivo,
+  funcionesEntidadActiva,
+  cambiarFuncion,
+  tienePermiso,
+} = useContextoSesion();
 const menuAbierto = ref(false);
 const evaluacionesPendientes = ref(0);
 const notificaciones = ref<NotificacionDocente[]>([]);
@@ -97,28 +106,43 @@ const detalleContextoDocente = computed(() =>
     ? "Cursos propios · Contexto activo"
     : "Docente institucional · Contexto activo",
 );
+const logoEntidad = computed(
+  () =>
+    funcionesEntidadActiva.value.find((item) => item.organizacion?.logo)
+      ?.organizacion?.logo ?? "/img/LogoColegioING.png",
+);
 
 const navegacion = computed(() => [
   { etiqueta: "Inicio", ruta: "/docente/inicio", icono: Home },
-  { etiqueta: "Mis cursos", ruta: "/docente/cursos", icono: BookOpen },
-  { etiqueta: "Estudiantes", ruta: "/docente/estudiantes", icono: UsersRound },
+  { etiqueta: "Mis cursos", ruta: "/docente/cursos", icono: BookOpen, permiso: "cursos.ver" },
+  { etiqueta: "Estudiantes", ruta: "/docente/estudiantes", icono: UsersRound, permiso: "estudiantes.ver" },
   {
     etiqueta: "Evaluaciones",
     ruta: "/docente/evaluaciones",
     icono: CheckSquare,
+    permiso: "evaluaciones.calificar",
     contador: evaluacionesPendientes.value,
   },
   {
     etiqueta: "Calificaciones",
     ruta: "/docente/calificaciones",
     icono: GraduationCap,
+    permiso: "calificaciones.gestionar",
   },
-  { etiqueta: "Certificados", ruta: "/docente/certificados", icono: Award },
-  { etiqueta: "Sesiones en vivo", ruta: "/docente/sesiones", icono: Video },
-  { etiqueta: "Mensajes", ruta: "/docente/mensajes", icono: MessageSquare },
-  { etiqueta: "Analítica", ruta: "/docente/analitica", icono: BarChart3 },
-  { etiqueta: "Ingresos", ruta: "/docente/ingresos", icono: DollarSign },
-]);
+  { etiqueta: "Certificados", ruta: "/docente/certificados", icono: Award, permiso: "certificados.emitir" },
+  { etiqueta: "Sesiones en vivo", ruta: "/docente/sesiones", icono: Video, permiso: "sesiones.gestionar" },
+  { etiqueta: "Mensajes", ruta: "/docente/mensajes", icono: MessageSquare, permiso: "mensajes.enviar" },
+  { etiqueta: "Analítica", ruta: "/docente/analitica", icono: BarChart3, permiso: "analitica.ver" },
+  { etiqueta: "Ingresos", ruta: "/docente/ingresos", icono: DollarSign, permiso: "ingresos.ver" },
+].filter((item) => !item.permiso || tienePermiso(item.permiso)));
+
+const otrasFunciones = computed(() =>
+  esDocenciaIndependiente.value
+    ? []
+    : funcionesEntidadActiva.value.filter(
+        (item) => item.id !== contextoActivo.value?.membresiaId,
+      ),
+);
 
 const tituloPagina = computed(() =>
   String(route.meta.titulo ?? "Portal docente"),
@@ -134,6 +158,11 @@ function estaActiva(ruta: string) {
 async function navegar(ruta: string) {
   menuAbierto.value = false;
   await router.push(ruta);
+}
+
+async function activarFuncion(membresiaId: string) {
+  const contexto = cambiarFuncion(membresiaId);
+  if (contexto) await router.replace(rutaInicioPortal(contexto.portal));
 }
 
 async function marcarAvisosLeidos() {
@@ -203,8 +232,8 @@ async function abrirAviso(aviso: NotificacionDocente) {
           class="grid h-14 w-14 shrink-0 place-items-center bg-white p-1"
         >
           <img
-            src="/img/LogoColegioING.png"
-            alt="Logo del Colegio de Ingenieros Cusco"
+            :src="logoEntidad"
+            :alt="`Logo de ${nombreContextoDocente || 'la entidad'}`"
             class="h-full w-full object-contain"
           />
         </span>
@@ -379,12 +408,29 @@ async function abrirAviso(aviso: NotificacionDocente) {
               </p>
             </DropdownMenuLabel>
             <DropdownMenuSeparator class="my-1 h-px bg-border" />
+            <template v-if="otrasFunciones.length">
+              <DropdownMenuLabel
+                class="px-3 pb-1 pt-2 text-[10px] font-black uppercase tracking-[.16em] text-muted-foreground"
+              >
+                Cambiar función en esta entidad
+              </DropdownMenuLabel>
+              <DropdownMenuItem
+                v-for="funcion in otrasFunciones"
+                :key="funcion.id"
+                class="flex cursor-pointer items-center gap-2 px-3 py-2.5 text-sm outline-none hover:bg-muted"
+                @select="activarFuncion(funcion.id)"
+              >
+                <ArrowLeftRight class="h-4 w-4" />
+                {{ etiquetaRol(funcion.rol) }}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator class="my-1 h-px bg-border" />
+            </template>
             <DropdownMenuItem
               class="flex cursor-pointer items-center gap-2 px-3 py-2.5 text-sm outline-none hover:bg-muted"
               @select="router.push('/seleccionar-contexto')"
             >
               <ArrowLeftRight class="h-4 w-4" />
-              Cambiar organización o perfil
+              Cambiar entidad o espacio
             </DropdownMenuItem>
             <DropdownMenuItem
               class="flex cursor-pointer items-center gap-2 px-3 py-2.5 text-sm outline-none hover:bg-muted"

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Building2, Plus, Search, ShieldCheck } from "lucide-vue-next";
+import { Building2, Mail, Plus, Search, UserCog } from "lucide-vue-next";
 import Column from "primevue/column";
 import DataTable from "primevue/datatable";
 import Dialog from "primevue/dialog";
@@ -22,6 +22,7 @@ const estado = ref("TODOS");
 const plan = ref("TODOS");
 const dialogoAbierto = ref(false);
 const mensaje = ref("");
+const errorRegistro = ref("");
 
 const nuevaOrganizacion = reactive({
   nombre: "",
@@ -29,7 +30,24 @@ const nuevaOrganizacion = reactive({
   tipo: "Empresa",
   plan: "Empresa Básica",
   limiteUsuarios: 200,
+  directorNombre: "",
+  directorCorreo: "",
+  administradorNombre: "",
+  administradorCorreo: "",
 });
+
+const correoValido = (correo: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(correo.trim());
+const formularioValido = computed(
+  () =>
+    nuevaOrganizacion.nombre.trim() &&
+    /^\d{11}$/.test(nuevaOrganizacion.ruc.trim()) &&
+    nuevaOrganizacion.directorNombre.trim() &&
+    correoValido(nuevaOrganizacion.directorCorreo) &&
+    nuevaOrganizacion.administradorNombre.trim() &&
+    correoValido(nuevaOrganizacion.administradorCorreo) &&
+    nuevaOrganizacion.directorCorreo.trim().toLowerCase() !==
+      nuevaOrganizacion.administradorCorreo.trim().toLowerCase(),
+);
 
 const opcionesEstado = [
   { label: "Todos los estados", value: "TODOS" },
@@ -100,28 +118,52 @@ async function alternarEstado(organizacion: OrganizacionAdministrada) {
 }
 
 async function registrarOrganizacion() {
-  if (!nuevaOrganizacion.nombre.trim() || !nuevaOrganizacion.ruc.trim()) return;
+  errorRegistro.value = "";
+  if (!formularioValido.value) {
+    errorRegistro.value = "Completa los datos requeridos. Dirección y Administración deben usar correos válidos y diferentes.";
+    return;
+  }
   const registrada: OrganizacionAdministrada = {
     id: `org-${Date.now()}`,
     nombre: nuevaOrganizacion.nombre.trim(),
     ruc: nuevaOrganizacion.ruc.trim(),
     tipo: nuevaOrganizacion.tipo,
     plan: nuevaOrganizacion.plan,
-    usuarios: 0,
+    usuarios: 2,
     limiteUsuarios: nuevaOrganizacion.limiteUsuarios,
     cursos: 0,
     vence: "2027-07-15",
     estado: "PRUEBA",
   };
-  await administracionService.organizaciones.crear(registrada);
-  organizaciones.value.unshift(registrada);
-  mensaje.value = `${nuevaOrganizacion.nombre} fue registrada con una licencia de prueba.`;
+  let resultado;
+  try {
+    resultado = await administracionService.registrarOrganizacionConResponsables({
+      organizacion: registrada,
+      direccion: {
+        nombre: nuevaOrganizacion.directorNombre.trim(),
+        correo: nuevaOrganizacion.directorCorreo.trim().toLowerCase(),
+      },
+      administracion: {
+        nombre: nuevaOrganizacion.administradorNombre.trim(),
+        correo: nuevaOrganizacion.administradorCorreo.trim().toLowerCase(),
+      },
+    });
+  } catch (error) {
+    errorRegistro.value = error instanceof Error ? error.message : "No se pudo registrar la organización.";
+    return;
+  }
+  organizaciones.value.unshift(resultado.organizacion);
+  mensaje.value = `${nuevaOrganizacion.nombre} fue registrada. Se enviaron ${resultado.invitacionesEnviadas} correos con accesos temporales.`;
   Object.assign(nuevaOrganizacion, {
     nombre: "",
     ruc: "",
     tipo: "Empresa",
     plan: "Empresa Básica",
     limiteUsuarios: 200,
+    directorNombre: "",
+    directorCorreo: "",
+    administradorNombre: "",
+    administradorCorreo: "",
   });
   dialogoAbierto.value = false;
 }
@@ -341,7 +383,7 @@ async function registrarOrganizacion() {
       v-model:visible="dialogoAbierto"
       modal
       header="Registrar organización"
-      :style="{ width: 'min(92vw, 40rem)' }"
+      :style="{ width: 'min(92vw, 52rem)' }"
     >
       <div class="grid gap-4 sm:grid-cols-2">
         <label class="sm:col-span-2"
@@ -400,21 +442,64 @@ async function registrarOrganizacion() {
             input-class="w-full"
         /></label>
       </div>
+      <div class="mt-6 border-t border-border pt-5">
+        <div class="flex items-start gap-3">
+          <span class="grid h-10 w-10 shrink-0 place-items-center bg-violet-100 text-violet-800">
+            <UserCog class="h-5 w-5" />
+          </span>
+          <div>
+            <h3 class="font-black">Responsables iniciales</h3>
+            <p class="mt-1 text-xs text-muted-foreground">
+              Se crearán las cuentas obligatorias de Dirección y Administración. Cada persona recibirá por correo una contraseña temporal que deberá cambiar en su primer ingreso.
+            </p>
+          </div>
+        </div>
+
+        <div class="mt-5 grid gap-5 md:grid-cols-2">
+          <div class="border border-border p-4">
+            <p class="text-xs font-black uppercase tracking-[.16em] text-violet-800">Dirección</p>
+            <p class="mt-1 text-xs text-muted-foreground">Máxima autoridad de la entidad.</p>
+            <label class="mt-4 block">
+              <span class="mb-2 block text-xs font-black uppercase tracking-wide text-muted-foreground">Nombre completo *</span>
+              <InputText v-model="nuevaOrganizacion.directorNombre" class="filtro-control w-full" placeholder="Nombre del director o directora" />
+            </label>
+            <label class="mt-4 block">
+              <span class="mb-2 block text-xs font-black uppercase tracking-wide text-muted-foreground">Correo de acceso *</span>
+              <InputText v-model="nuevaOrganizacion.directorCorreo" type="email" class="filtro-control w-full" placeholder="direccion@organizacion.com" />
+            </label>
+          </div>
+
+          <div class="border border-border p-4">
+            <p class="text-xs font-black uppercase tracking-[.16em] text-violet-800">Administración</p>
+            <p class="mt-1 text-xs text-muted-foreground">Gestionará estructura, personas y cursos.</p>
+            <label class="mt-4 block">
+              <span class="mb-2 block text-xs font-black uppercase tracking-wide text-muted-foreground">Nombre completo *</span>
+              <InputText v-model="nuevaOrganizacion.administradorNombre" class="filtro-control w-full" placeholder="Nombre del administrador o administradora" />
+            </label>
+            <label class="mt-4 block">
+              <span class="mb-2 block text-xs font-black uppercase tracking-wide text-muted-foreground">Correo de acceso *</span>
+              <InputText v-model="nuevaOrganizacion.administradorCorreo" type="email" class="filtro-control w-full" placeholder="administracion@organizacion.com" />
+            </label>
+          </div>
+        </div>
+      </div>
       <div
         class="mt-5 flex gap-3 border-l-4 border-l-violet-700 bg-violet-50 p-4 text-xs text-violet-950"
       >
-        <ShieldCheck class="h-5 w-5 shrink-0" />
+        <Mail class="h-5 w-5 shrink-0" />
         <p>
-          La organización iniciará en estado de prueba. Luego podrás completar
-          su licencia, responsables y facturación.
+          La organización iniciará en prueba. Por seguridad, las contraseñas temporales no se muestran en este panel y solo se entregan a los correos registrados.
         </p>
+      </div>
+      <div v-if="errorRegistro" class="mt-4 border-l-4 border-l-red-600 bg-red-50 p-3 text-xs font-semibold text-red-800">
+        {{ errorRegistro }}
       </div>
       <template #footer
         ><Button variant="outline" @click="dialogoAbierto = false"
           >Cancelar</Button
         ><Button
           class="bg-violet-800 hover:bg-violet-900"
-          :disabled="!nuevaOrganizacion.nombre || !nuevaOrganizacion.ruc"
+          :disabled="!formularioValido"
           @click="registrarOrganizacion"
           >Registrar organización</Button
         ></template

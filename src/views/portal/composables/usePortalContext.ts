@@ -35,6 +35,7 @@ export type PortalContext = {
   jobsLoading: Ref<boolean>;
   contentLoading: Ref<boolean>;
   openingCertificateId: Ref<string | null>;
+  mensajeAccesoCurso: Ref<string>;
   cartCount: Ref<number>;
   favoritesCount: Ref<number>;
   navigate: (view: ViewId) => void;
@@ -45,7 +46,7 @@ export type PortalContext = {
   toggleFavorite: (courseId: string) => void;
   handleViewCertificate: (course: Course) => Promise<void>;
   handleDownloadCertificate: (course: Course) => Promise<void>;
-  openSimuladorCurso: (course: Course) => void;
+  openSimuladorCurso: (course: Course) => void | Promise<void>;
   updateUserProfile?: (updates: Partial<UserProfile>) => void | Promise<void>;
 };
 

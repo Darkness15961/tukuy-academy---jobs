@@ -302,7 +302,7 @@ const router = createRouter({
             ),
           meta: {
             titulo: "Certificados institucionales",
-            requiredPermission: "certificados.emitir",
+            requiredPermission: "certificados.ver",
           },
         },
         {
@@ -338,6 +338,16 @@ const router = createRouter({
           },
         },
         {
+          path: "cursos/gestion",
+          name: "gestion-cursos-organizacion",
+          component: () =>
+            import("@/portal-docente/views/CursosDocenteView.vue"),
+          meta: {
+            titulo: "Cursos institucionales",
+            requiredPermission: "cursos.crear",
+          },
+        },
+        {
           path: "cursos",
           name: "cursos-organizacion",
           component: () =>
@@ -345,6 +355,26 @@ const router = createRouter({
           meta: {
             titulo: "Catálogo de cursos",
             requiredPermission: "cursos.ver",
+          },
+        },
+        {
+          path: "cursos/nuevo",
+          name: "crear-curso-organizacion",
+          component: () =>
+            import("@/portal-docente/views/ConstructorCursoView.vue"),
+          meta: {
+            titulo: "Crear curso institucional",
+            requiredPermission: "cursos.crear",
+          },
+        },
+        {
+          path: "cursos/:cursoId/constructor",
+          name: "constructor-curso-organizacion",
+          component: () =>
+            import("@/portal-docente/views/ConstructorCursoView.vue"),
+          meta: {
+            titulo: "Editar curso institucional",
+            requiredPermission: "cursos.editar",
           },
         },
         {

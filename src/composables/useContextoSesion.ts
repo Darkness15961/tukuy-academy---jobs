@@ -1,11 +1,55 @@
 import { computed, ref } from "vue";
 
-import { CONTEXTO_SESION_KEY, MEMBRESIAS_KEY } from "@/lib/constants";
+import {
+  CONTEXTO_SESION_KEY,
+  MEMBRESIAS_KEY,
+  ULTIMAS_FUNCIONES_ENTIDAD_KEY,
+} from "@/lib/constants";
 import type {
   ContextoSesion,
   MembresiaOrganizacion,
+  Rol,
   TipoPortal,
 } from "@/types/membresia.types";
+
+const etiquetasRol: Record<Rol, string> = {
+  SUPER_ADMIN: "Superadministración Tukuy",
+  PLATFORM_ADMIN: "Administración Tukuy",
+  PLATFORM_SUPPORT: "Soporte Tukuy",
+  COURSE_REVIEWER: "Revisión de cursos",
+  ORGANIZATION_OWNER: "Dirección",
+  ORGANIZATION_ADMIN: "Administración",
+  TRAINING_MANAGER: "Gestión de capacitación",
+  INSTRUCTOR: "Docencia",
+  SUPERVISOR: "Supervisión",
+  STUDENT: "Aprendizaje",
+};
+
+type IdentidadEntidad = { nombre?: string; logo?: string };
+
+function claveIdentidadEntidad(organizacionId: string) {
+  return `tukuy_identidad_entidad_${organizacionId}`;
+}
+
+function aplicarIdentidadGuardada(membresia: MembresiaOrganizacion) {
+  if (!membresia.organizacion) return membresia;
+  const identidad = leerJson<IdentidadEntidad>(
+    claveIdentidadEntidad(membresia.organizacion.id),
+  );
+  if (!identidad) return membresia;
+  return {
+    ...membresia,
+    organizacion: {
+      ...membresia.organizacion,
+      nombre: identidad.nombre?.trim() || membresia.organizacion.nombre,
+      logo: identidad.logo || membresia.organizacion.logo,
+    },
+  };
+}
+
+export function etiquetaRol(rol: Rol) {
+  return etiquetasRol[rol];
+}
 
 function leerJson<T>(clave: string): T | null {
   const valor = localStorage.getItem(clave);
@@ -42,6 +86,20 @@ if (
   );
 }
 
+if (
+  contextoActivo.value?.organizacionId === "org-empresa-abc" &&
+  !contextoActivo.value.personaEntidadId
+) {
+  contextoActivo.value = {
+    ...contextoActivo.value,
+    personaEntidadId: "15",
+  };
+  localStorage.setItem(
+    CONTEXTO_SESION_KEY,
+    JSON.stringify(contextoActivo.value),
+  );
+}
+
 const permisosAcademicosOrganizacion = [
   "estudiantes.ver",
   "certificados.ver",
@@ -55,6 +113,11 @@ if (contextoActivo.value?.portal === "organizacion") {
       ...new Set([
         ...contextoActivo.value.permisos,
         ...permisosAcademicosOrganizacion,
+        ...(["ORGANIZATION_OWNER", "ORGANIZATION_ADMIN"].includes(
+          contextoActivo.value.rol,
+        )
+          ? ["configuracion.editar", "cursos.crear", "cursos.editar"]
+          : []),
       ]),
     ],
   };
@@ -80,6 +143,12 @@ if (
 }
 
 membresias.value = membresias.value.map((membresia) => {
+  if (
+    membresia.organizacion?.id === "org-empresa-abc" &&
+    !membresia.personaEntidadId
+  ) {
+    membresia = { ...membresia, personaEntidadId: "15" };
+  }
   if (
     membresia.organizacion?.id === "org-empresa-abc" &&
     ["Empresa ABC", "Andina Constructora"].includes(
@@ -110,6 +179,7 @@ membresias.value = membresias.value.map((membresia) => {
   }
   return membresia;
 });
+membresias.value = membresias.value.map(aplicarIdentidadGuardada);
 membresias.value = membresias.value.map((membresia) =>
   membresia.portal === "organizacion"
     ? {
@@ -118,6 +188,11 @@ membresias.value = membresias.value.map((membresia) =>
           ...new Set([
             ...membresia.permisos,
             ...permisosAcademicosOrganizacion,
+            ...(["ORGANIZATION_OWNER", "ORGANIZATION_ADMIN"].includes(
+              membresia.rol,
+            )
+              ? ["configuracion.editar", "cursos.crear", "cursos.editar"]
+              : []),
           ]),
         ],
       }
@@ -172,10 +247,33 @@ export function useContextoSesion() {
     ),
   );
 
+  const funcionesEntidadActiva = computed(() => {
+    const organizacionId = contextoActivo.value?.organizacionId;
+    if (!organizacionId) return [];
+    return membresiasActivas.value.filter(
+      (membresia) => membresia.organizacion?.id === organizacionId,
+    );
+  });
+
   function configurarMembresias(nuevasMembresias?: MembresiaOrganizacion[]) {
-    const normalizadas = nuevasMembresias?.length
+    const base = nuevasMembresias?.length
       ? nuevasMembresias
       : [crearMembresiaPersonal()];
+    const normalizadas = base.map(aplicarIdentidadGuardada).map((membresia) =>
+      ["ORGANIZATION_OWNER", "ORGANIZATION_ADMIN"].includes(membresia.rol)
+        ? {
+            ...membresia,
+            permisos: [
+              ...new Set([
+                ...membresia.permisos,
+                "configuracion.editar",
+                "cursos.crear",
+                "cursos.editar",
+              ]),
+            ],
+          }
+        : membresia,
+    );
     membresias.value = normalizadas;
     localStorage.setItem(MEMBRESIAS_KEY, JSON.stringify(normalizadas));
 
@@ -193,6 +291,7 @@ export function useContextoSesion() {
     const contexto: ContextoSesion = {
       membresiaId: membresia.id,
       usuarioId: membresia.usuarioId,
+      personaEntidadId: membresia.personaEntidadId,
       organizacionId: membresia.organizacion?.id ?? null,
       organizacionNombre:
         membresia.organizacion?.nombre ??
@@ -201,13 +300,34 @@ export function useContextoSesion() {
           : "Tukuy Academy"),
       rol: membresia.rol,
       permisos: membresia.permisos,
+      alcance: membresia.alcance,
       portal: membresia.portal,
       ambitoDocencia: membresia.ambitoDocencia,
     };
 
     contextoActivo.value = contexto;
     localStorage.setItem(CONTEXTO_SESION_KEY, JSON.stringify(contexto));
+    if (
+      membresia.organizacion &&
+      membresia.organizacion.tipo !== "PERSONAL"
+    ) {
+      const guardadas =
+        leerJson<Record<string, string>>(ULTIMAS_FUNCIONES_ENTIDAD_KEY) ?? {};
+      guardadas[membresia.organizacion.id] = membresia.id;
+      localStorage.setItem(
+        ULTIMAS_FUNCIONES_ENTIDAD_KEY,
+        JSON.stringify(guardadas),
+      );
+    }
     return contexto;
+  }
+
+  function cambiarFuncion(membresiaId: string) {
+    const membresia = funcionesEntidadActiva.value.find(
+      (item) => item.id === membresiaId,
+    );
+    if (!membresia) return null;
+    return seleccionarContexto(membresia);
   }
 
   function tienePermiso(permiso: string) {
@@ -234,6 +354,28 @@ export function useContextoSesion() {
     localStorage.setItem(MEMBRESIAS_KEY, JSON.stringify(membresias.value));
   }
 
+  function actualizarIdentidadOrganizacion(identidad: IdentidadEntidad) {
+    const organizacionId = contextoActivo.value?.organizacionId;
+    if (!organizacionId) return;
+    const actual =
+      leerJson<IdentidadEntidad>(claveIdentidadEntidad(organizacionId)) ?? {};
+    const nueva = { ...actual, ...identidad };
+    localStorage.setItem(claveIdentidadEntidad(organizacionId), JSON.stringify(nueva));
+    if (nueva.nombre?.trim()) actualizarNombreOrganizacion(nueva.nombre);
+    membresias.value = membresias.value.map((membresia) =>
+      membresia.organizacion?.id === organizacionId
+        ? {
+            ...membresia,
+            organizacion: {
+              ...membresia.organizacion,
+              logo: nueva.logo || membresia.organizacion.logo,
+            },
+          }
+        : membresia,
+    );
+    localStorage.setItem(MEMBRESIAS_KEY, JSON.stringify(membresias.value));
+  }
+
   function limpiarContexto() {
     contextoActivo.value = null;
     localStorage.removeItem(CONTEXTO_SESION_KEY);
@@ -243,16 +385,20 @@ export function useContextoSesion() {
     limpiarContexto();
     membresias.value = [];
     localStorage.removeItem(MEMBRESIAS_KEY);
+    localStorage.removeItem(ULTIMAS_FUNCIONES_ENTIDAD_KEY);
   }
 
   return {
     membresias,
     membresiasActivas,
+    funcionesEntidadActiva,
     contextoActivo,
     configurarMembresias,
     seleccionarContexto,
+    cambiarFuncion,
     tienePermiso,
     actualizarNombreOrganizacion,
+    actualizarIdentidadOrganizacion,
     limpiarContexto,
     limpiarSesionMultiempresa,
   };

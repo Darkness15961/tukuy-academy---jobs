@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {
+  CheckCircle2,
   Download,
   FilterX,
   Search,
@@ -25,7 +26,7 @@ import {
 } from "@/api/services/docente.service";
 import { organizacionService } from "@/api/services/organizacion.service";
 import { useContextoSesion } from "@/composables/useContextoSesion";
-type SeveridadEstado = "success" | "danger" | "info";
+type SeveridadEstado = "success" | "danger" | "info" | "warn";
 
 const props = withDefaults(
   defineProps<{
@@ -108,6 +109,7 @@ const opcionesEstados = [
   { etiqueta: "Activo", valor: "ACTIVO" },
   { etiqueta: "Completado", valor: "COMPLETADO" },
   { etiqueta: "En riesgo", valor: "EN_RIESGO" },
+  { etiqueta: "Pendiente de aprobación", valor: "PENDIENTE" },
 ];
 
 const opcionesProgreso = [
@@ -241,7 +243,17 @@ function limpiarFiltros() {
 function severidadEstado(estado: string): SeveridadEstado {
   if (estado === "COMPLETADO") return "success";
   if (estado === "EN_RIESGO") return "danger";
+  if (estado === "PENDIENTE") return "warn";
   return "info";
+}
+
+async function aprobarMatricula(estudiante: EstudianteDocente) {
+  if (props.alcance !== "ORGANIZACION") return;
+  const actualizada = await organizacionService.aprobarSolicitudMatricula(
+    estudiante.id,
+  );
+  const indice = listado.value.findIndex((item) => item.id === actualizada.id);
+  if (indice >= 0) listado.value[indice] = actualizada;
 }
 
 function formatoEstado(estado: string) {
@@ -647,6 +659,22 @@ function exportarResultados() {
               :severity="severidadEstado(data.estado)"
               :value="formatoEstado(data.estado)"
             />
+          </template>
+        </Column>
+        <Column
+          v-if="props.alcance === 'ORGANIZACION'"
+          header="Acción"
+          style="min-width: 11rem"
+        >
+          <template #body="{ data }">
+            <Button
+              v-if="data.estado === 'PENDIENTE'"
+              size="sm"
+              variant="outline"
+              @click="aprobarMatricula(data)"
+            >
+              <CheckCircle2 class="h-4 w-4" />Aprobar matrícula
+            </Button>
           </template>
         </Column>
       </DataTable>

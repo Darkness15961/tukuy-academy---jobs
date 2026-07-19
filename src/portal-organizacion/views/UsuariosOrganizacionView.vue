@@ -6,68 +6,200 @@ import Dialog from "primevue/dialog";
 import InputText from "primevue/inputtext";
 import Select from "primevue/select";
 import Tag from "primevue/tag";
-import { computed, onMounted, reactive, ref } from "vue";
-import { useRoute } from "vue-router";
+import TreeSelect from "primevue/treeselect";
+import type { TreeNode } from "primevue/treenode";
+import { computed, onMounted, reactive, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 
 import {
   organizacionService,
+  type SedeOrganizacion,
   type UsuarioOrganizacion,
 } from "@/api/services/organizacion.service";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import Skeleton from "primevue/skeleton";
+import type {
+  PerfilEntidad,
+  UnidadOrganizacional,
+  VinculacionUnidad,
+} from "@/portal-organizacion/types/estructura-organizacional.types";
 
 const route = useRoute();
+const router = useRouter();
 const cargando = ref(true);
 const buscar = ref("");
 const modal = ref(false);
 const mensaje = ref("");
-const areaFiltro = ref("TODAS");
+const unidadFiltro = ref<string | Record<string, boolean> | null>(null);
+const alcanceUnidad = ref<"SOLO" | "DESCENDIENTES">("DESCENDIENTES");
 const estadoFiltro = ref("TODOS");
+const perfilFiltro = ref("TODOS");
+const sedeFiltro = ref("TODAS");
 const selectorCsv = ref<HTMLInputElement>();
 const lista = ref<UsuarioOrganizacion[]>([]);
+const unidades = ref<UnidadOrganizacional[]>([]);
+const sedes = ref<SedeOrganizacion[]>([]);
+const perfiles = ref<PerfilEntidad[]>([]);
+const vinculaciones = ref<VinculacionUnidad[]>([]);
 const nuevoUsuario = reactive({
   nombre: "",
   correo: "",
-  area: "Operaciones",
-  sede: "Lima",
-  rol: "Estudiante",
+  unidadId: null as string | Record<string, boolean> | null,
+  sedeId: "",
+  perfilId: "",
+  especialidad: "Ingeniería Civil",
 });
 
 onMounted(async () => {
   try {
-    lista.value = await organizacionService.usuarios.listar();
-    const areaQuery = String(route.query.area ?? "").trim();
-    if (areaQuery) {
-      areaFiltro.value = areaQuery;
-      mensaje.value = `Mostrando usuarios del área “${areaQuery}”.`;
+    [lista.value, unidades.value, sedes.value, perfiles.value, vinculaciones.value] =
+      await Promise.all([
+        organizacionService.usuarios.listar(),
+        organizacionService.estructura.unidades.listar(),
+        organizacionService.sedes.listar(),
+        organizacionService.estructura.perfiles.listar(),
+        organizacionService.estructura.vinculaciones.listar(),
+      ]);
+    nuevoUsuario.unidadId = unidades.value[0]?.id ?? null;
+    nuevoUsuario.sedeId = sedes.value[0]?.id ?? "";
+    nuevoUsuario.perfilId =
+      perfiles.value.find((perfil) => perfil.plantilla === "APRENDIZAJE")?.id ??
+      perfiles.value[0]?.id ??
+      "";
+    const unidadQuery = String(route.query.unidad ?? "").trim();
+    if (unidadQuery && unidades.value.some((unidad) => unidad.id === unidadQuery)) {
+      unidadFiltro.value = { [unidadQuery]: true };
+      alcanceUnidad.value = route.query.descendientes === "false" ? "SOLO" : "DESCENDIENTES";
+      mensaje.value = `Mostrando usuarios de “${unidades.value.find((unidad) => unidad.id === unidadQuery)?.nombre}”.`;
     }
   } finally {
     cargando.value = false;
   }
 });
 
+const unidadesPorId = computed(
+  () => new Map(unidades.value.map((unidad) => [unidad.id, unidad])),
+);
+
+const unidadSeleccionadaId = computed(() => {
+  return claveSeleccionArbol(unidadFiltro.value);
+});
+
+function claveSeleccionArbol(
+  seleccion: string | Record<string, boolean> | null,
+) {
+  if (typeof seleccion === "string") return seleccion;
+  return Object.keys(seleccion ?? {}).find(
+    (clave) => seleccion?.[clave],
+  ) ?? null;
+}
+
+const nodosUnidades = computed(() => {
+  const construir = (padreId: string | null): TreeNode[] =>
+    unidades.value
+      .filter((unidad) => unidad.unidadPadreId === padreId && unidad.estado === "ACTIVA")
+      .sort((a, b) => a.orden - b.orden)
+      .map((unidad) => {
+        const children = construir(unidad.id);
+        return {
+          key: unidad.id,
+          label: unidad.nombre,
+          ...(children.length ? { children } : {}),
+        };
+      });
+  return construir(null);
+});
+
+function idsDescendientes(unidadId: string) {
+  const resultado = new Set([unidadId]);
+  let cambio = true;
+  while (cambio) {
+    cambio = false;
+    unidades.value.forEach((unidad) => {
+      if (unidad.unidadPadreId && resultado.has(unidad.unidadPadreId) && !resultado.has(unidad.id)) {
+        resultado.add(unidad.id);
+        cambio = true;
+      }
+    });
+  }
+  return resultado;
+}
+
+function unidadPrincipalDe(usuario: UsuarioOrganizacion) {
+  const vinculacion = vinculaciones.value.find(
+    (item) => item.usuarioId === String(usuario.id) && item.tipo === "PRINCIPAL" && item.estado === "ACTIVA",
+  );
+  return vinculacion?.unidadId ?? usuario.unidadPrincipalId ?? null;
+}
+
+function rutaUnidad(unidadId: string | null) {
+  if (!unidadId) return "Sin unidad asignada";
+  const nombres: string[] = [];
+  const visitados = new Set<string>();
+  let actual = unidadesPorId.value.get(unidadId);
+  while (actual && !visitados.has(actual.id)) {
+    visitados.add(actual.id);
+    nombres.unshift(actual.nombre);
+    actual = actual.unidadPadreId
+      ? unidadesPorId.value.get(actual.unidadPadreId)
+      : undefined;
+  }
+  return nombres.join(" › ");
+}
+
+function nombreUnidadUsuario(usuario: UsuarioOrganizacion) {
+  const unidadId = unidadPrincipalDe(usuario);
+  return (unidadId ? unidadesPorId.value.get(unidadId)?.nombre : undefined) ?? usuario.area;
+}
+
 const visibles = computed(() => {
   const termino = buscar.value.trim().toLowerCase();
   return lista.value.filter((usuario) => {
-    const coincideArea =
-      areaFiltro.value === "TODAS" || usuario.area === areaFiltro.value;
+    const unidadId = unidadPrincipalDe(usuario);
+    const idsPermitidos = unidadSeleccionadaId.value
+      ? alcanceUnidad.value === "DESCENDIENTES"
+        ? idsDescendientes(unidadSeleccionadaId.value)
+        : new Set([unidadSeleccionadaId.value])
+      : null;
+    const coincideUnidad = !idsPermitidos || (unidadId ? idsPermitidos.has(unidadId) : false);
     const coincideEstado =
       estadoFiltro.value === "TODOS" || usuario.estado === estadoFiltro.value;
+    const coincidePerfil = perfilFiltro.value === "TODOS" || usuario.rol === perfilFiltro.value;
+    const coincideSede = sedeFiltro.value === "TODAS" || usuario.sede === sedeFiltro.value;
     const coincideBusqueda =
       !termino ||
       [usuario.nombre, usuario.correo, usuario.area, usuario.sede, usuario.rol]
         .join(" ")
         .toLowerCase()
         .includes(termino);
-    return coincideArea && coincideEstado && coincideBusqueda;
+    return coincideUnidad && coincideEstado && coincidePerfil && coincideSede && coincideBusqueda;
   });
 });
 
-const opcionesAreas = computed(() => [
-  "TODAS",
-  ...new Set(lista.value.map((usuario) => usuario.area)),
-]);
+const opcionesPerfiles = computed(() => ["TODOS", ...new Set(lista.value.map((usuario) => usuario.rol))]);
+const opcionesSedes = computed(() => ["TODAS", ...new Set(lista.value.map((usuario) => usuario.sede))]);
+
+function limpiarFiltros() {
+  buscar.value = "";
+  unidadFiltro.value = null;
+  alcanceUnidad.value = "DESCENDIENTES";
+  estadoFiltro.value = "TODOS";
+  perfilFiltro.value = "TODOS";
+  sedeFiltro.value = "TODAS";
+}
+
+watch([unidadSeleccionadaId, alcanceUnidad], ([unidadId, alcance]) => {
+  const query = { ...route.query };
+  if (unidadId) {
+    query.unidad = unidadId;
+    query.descendientes = String(alcance === "DESCENDIENTES");
+  } else {
+    delete query.unidad;
+    delete query.descendientes;
+  }
+  void router.replace({ query });
+});
 
 function obtenerIniciales(nombre: string) {
   return nombre
@@ -81,27 +213,62 @@ function obtenerIniciales(nombre: string) {
 async function invitar() {
   if (!nuevoUsuario.nombre.trim() || !nuevoUsuario.correo.trim()) return;
 
+  const unidadId = claveSeleccionArbol(nuevoUsuario.unidadId);
+  const unidad = unidades.value.find((item) => item.id === unidadId);
+  const sede = sedes.value.find((item) => item.id === nuevoUsuario.sedeId);
+  const perfil = perfiles.value.find((item) => item.id === nuevoUsuario.perfilId);
+  const id = Date.now();
+
   const usuario: UsuarioOrganizacion = {
-    id: Date.now(),
+    id,
     nombre: nuevoUsuario.nombre.trim(),
     iniciales: obtenerIniciales(nuevoUsuario.nombre) || "NU",
     correo: nuevoUsuario.correo.trim().toLowerCase(),
-    area: nuevoUsuario.area,
-    sede: nuevoUsuario.sede,
-    rol: nuevoUsuario.rol,
+    area: unidad?.nombre ?? "Pendiente de incorporación",
+    sede: sede?.ciudad ?? sede?.nombre ?? "Sin sede",
+    rol: perfil?.nombre ?? "Colegiado",
     progreso: 0,
     estado: "INVITADO",
+    especialidad: nuevoUsuario.especialidad.trim() || undefined,
+    colegiaturaActiva: false,
+    unidadPrincipalId: unidad?.id,
+    sedeId: sede?.id,
   };
 
   await organizacionService.usuarios.crear(usuario);
+  if (unidad) {
+    await organizacionService.estructura.vinculaciones.crear({
+      id: `vin-invitacion-${id}`,
+      usuarioId: String(id),
+      unidadId: unidad.id,
+      sedeId: sede?.id,
+      tipo: "PRINCIPAL",
+      origen: "ASIGNACION_ADMINISTRATIVA",
+      estado: "PENDIENTE",
+    });
+  }
+  if (perfil) {
+    await organizacionService.estructura.asignacionesPerfil.crear({
+      id: `apu-invitacion-${id}`,
+      usuarioId: String(id),
+      perfilId: perfil.id,
+      unidadIds: unidad ? [unidad.id] : [],
+      sedeIds: sede ? [sede.id] : [],
+      incluirDescendientes: false,
+      esPrincipal: true,
+      estado: "INACTIVA",
+    });
+  }
   lista.value.unshift(usuario);
   mensaje.value = `Invitación enviada a ${usuario.correo}.`;
   Object.assign(nuevoUsuario, {
     nombre: "",
     correo: "",
-    area: "Operaciones",
-    sede: "Lima",
-    rol: "Estudiante",
+    unidadId: unidades.value[0]?.id ?? null,
+    sedeId: sedes.value[0]?.id ?? "",
+    perfilId:
+      perfiles.value.find((item) => item.plantilla === "APRENDIZAJE")?.id ?? "",
+    especialidad: "Ingeniería Civil",
   });
   modal.value = false;
 }
@@ -161,7 +328,11 @@ async function importarCsv(evento: Event) {
       nombre,
       iniciales: obtenerIniciales(nombre),
       correo,
-      area: campos[indice("área")] || campos[indice("area")] || "Operaciones",
+      area:
+        campos[indice("unidad")] ||
+        campos[indice("área")] ||
+        campos[indice("area")] ||
+        "Pendiente de incorporación",
       sede: campos[indice("sede")] || "Lima",
       rol: campos[indice("rol")] || "Estudiante",
       progreso: 0,
@@ -219,7 +390,7 @@ async function cambiarEstado(usuario: UsuarioOrganizacion) {
     <Card class="overflow-hidden border-border bg-card">
       <CardContent class="p-0">
         <div
-          class="grid gap-3 border-b border-border p-4 md:grid-cols-2 xl:grid-cols-[minmax(18rem,1fr)_14rem_12rem_auto]"
+          class="grid gap-3 border-b border-border p-4 md:grid-cols-2 xl:grid-cols-4"
         >
           <label class="grid gap-1.5">
             <span class="text-[11px] font-black uppercase tracking-wider text-muted-foreground">
@@ -232,19 +403,38 @@ async function cambiarEstado(usuario: UsuarioOrganizacion) {
               <InputText
                 v-model="buscar"
                 class="filtro-control w-full pl-10"
-                placeholder="Nombre, correo, área, sede o rol"
+                placeholder="Nombre, correo, unidad, sede o perfil"
               />
             </span>
           </label>
           <label class="grid gap-1.5">
             <span class="text-[11px] font-black uppercase tracking-wider text-muted-foreground">
-              Área
+              Unidad organizacional
+            </span>
+            <TreeSelect
+              v-model="unidadFiltro"
+              :options="nodosUnidades"
+              class="filtro-control w-full"
+              placeholder="Toda la organización"
+              filter
+              show-clear
+              aria-label="Filtrar por unidad organizacional"
+            />
+          </label>
+          <label class="grid gap-1.5">
+            <span class="text-[11px] font-black uppercase tracking-wider text-muted-foreground">
+              Alcance de la unidad
             </span>
             <Select
-              v-model="areaFiltro"
-              :options="opcionesAreas"
+              v-model="alcanceUnidad"
+              :options="[
+                { label: 'Esta unidad y subniveles', value: 'DESCENDIENTES' },
+                { label: 'Solo esta unidad', value: 'SOLO' },
+              ]"
+              option-label="label"
+              option-value="value"
               class="filtro-control w-full"
-              aria-label="Filtrar por área"
+              :disabled="!unidadSeleccionadaId"
             />
           </label>
           <label class="grid gap-1.5">
@@ -258,9 +448,28 @@ async function cambiarEstado(usuario: UsuarioOrganizacion) {
               aria-label="Filtrar por estado"
             />
           </label>
-          <Button class="self-end" variant="outline" @click="exportar">
-            <Download class="h-4 w-4" /> Exportar
-          </Button>
+          <label class="grid gap-1.5">
+            <span class="text-[11px] font-black uppercase tracking-wider text-muted-foreground">Perfil institucional</span>
+            <Select v-model="perfilFiltro" :options="opcionesPerfiles" class="filtro-control w-full" />
+          </label>
+          <label class="grid gap-1.5">
+            <span class="text-[11px] font-black uppercase tracking-wider text-muted-foreground">Sede</span>
+            <Select v-model="sedeFiltro" :options="opcionesSedes" class="filtro-control w-full" />
+          </label>
+          <div class="flex items-end gap-2 xl:col-span-2">
+            <Button class="flex-1" variant="outline" @click="limpiarFiltros">Limpiar filtros</Button>
+            <Button class="flex-1" variant="outline" @click="exportar">
+              <Download class="h-4 w-4" /> Exportar resultados
+            </Button>
+          </div>
+        </div>
+
+        <div v-if="unidadSeleccionadaId" class="flex flex-wrap items-center gap-2 border-b border-border bg-primary/5 px-4 py-3 text-xs">
+          <span class="font-black uppercase tracking-wider text-primary">Estructura aplicada</span>
+          <Tag :value="rutaUnidad(unidadSeleccionadaId)" severity="info" />
+          <span class="text-muted-foreground">
+            {{ alcanceUnidad === 'DESCENDIENTES' ? 'Incluye todos sus subniveles' : 'Solo miembros directos' }}
+          </span>
         </div>
 
         <div v-if="cargando" class="space-y-2 p-5">
@@ -283,7 +492,7 @@ async function cambiarEstado(usuario: UsuarioOrganizacion) {
           paginator-template="RowsPerPageDropdown FirstPageLink PrevPageLink CurrentPageReport NextPageLink LastPageLink"
           current-page-report-template="{first}–{last} de {totalRecords} usuarios"
           :always-show-paginator="false"
-          table-style="min-width: 55rem"
+          table-style="min-width: 70rem"
         >
           <template #empty>
             <div class="py-12 text-center text-sm text-muted-foreground">
@@ -305,13 +514,14 @@ async function cambiarEstado(usuario: UsuarioOrganizacion) {
               </div>
             </template>
           </Column>
-          <Column field="area" header="Área / sede" sortable style="min-width: 12rem">
+          <Column header="Unidad principal" style="min-width: 22rem">
             <template #body="{ data }">
-              <span>{{ data.area }}</span>
-              <p class="text-xs text-muted-foreground">{{ data.sede }}</p>
+              <span class="font-semibold">{{ nombreUnidadUsuario(data) }}</span>
+              <p class="mt-1 max-w-sm text-xs text-muted-foreground">{{ rutaUnidad(unidadPrincipalDe(data)) }}</p>
             </template>
           </Column>
-          <Column field="rol" header="Rol" sortable style="min-width: 12rem" />
+          <Column field="rol" header="Perfil" sortable style="min-width: 12rem" />
+          <Column field="sede" header="Sede" sortable style="min-width: 9rem" />
           <Column field="estado" header="Estado" sortable style="min-width: 9rem">
             <template #body="{ data }">
               <Tag
@@ -359,21 +569,45 @@ async function cambiarEstado(usuario: UsuarioOrganizacion) {
         </label>
         <div class="grid gap-4 sm:grid-cols-2">
           <label class="grid gap-2 text-sm font-bold">
-            Rol
+            Perfil institucional
             <Select
-              v-model="nuevoUsuario.rol"
-              :options="['Estudiante', 'Supervisor', 'Gestor de capacitación']"
+              v-model="nuevoUsuario.perfilId"
+              :options="perfiles"
+              option-label="nombre"
+              option-value="id"
               class="filtro-control w-full"
               panel-class="tukuy-filtro-panel"
             />
           </label>
           <label class="grid gap-2 text-sm font-bold">
-            Área
-            <Select
-              v-model="nuevoUsuario.area"
-              :options="['Operaciones', 'Logística', 'Oficina técnica', 'Administración']"
+            Unidad principal
+            <TreeSelect
+              v-model="nuevoUsuario.unidadId"
+              :options="nodosUnidades"
               class="filtro-control w-full"
               panel-class="tukuy-filtro-panel"
+              filter
+              placeholder="Selecciona dentro del organigrama"
+            />
+          </label>
+        </div>
+        <div class="grid gap-4 sm:grid-cols-2">
+          <label class="grid gap-2 text-sm font-bold">
+            Sede
+            <Select
+              v-model="nuevoUsuario.sedeId"
+              :options="sedes"
+              option-label="nombre"
+              option-value="id"
+              class="filtro-control w-full"
+              panel-class="tukuy-filtro-panel"
+            />
+          </label>
+          <label class="grid gap-2 text-sm font-bold">
+            Especialidad profesional
+            <InputText
+              v-model="nuevoUsuario.especialidad"
+              class="filtro-control w-full"
             />
           </label>
         </div>
