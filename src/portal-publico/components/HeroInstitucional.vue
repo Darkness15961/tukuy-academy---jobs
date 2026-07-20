@@ -34,26 +34,30 @@ onBeforeUnmount(detener);
     @mouseenter="detener"
     @mouseleave="iniciar"
   >
-    <TransitionGroup name="hero-fade"
-      ><img
-        v-for="(d, i) in diapositivasPortada"
-        v-show="i === actual"
-        :key="d.imagen"
-        :src="d.imagen"
-        :alt="d.mensaje"
+    <!-- ── Imagen de fondo con fade ── -->
+    <Transition name="hero-fade" appear>
+      <img
+        :key="actual"
+        :src="diapositivasPortada[actual]!.imagen"
+        :alt="diapositivasPortada[actual]!.mensaje"
         class="absolute inset-0 h-full w-full object-cover"
-        :style="{ objectPosition: d.posicion }"
-    /></TransitionGroup>
+        :style="{ objectPosition: diapositivasPortada[actual]!.posicion }"
+      />
+    </Transition>
+
+    <!-- Overlays de gradiente -->
     <div
       class="absolute inset-0 bg-linear-to-r from-black/85 via-black/48 to-black/10"
     />
     <div
       class="absolute inset-0 bg-linear-to-t from-black/65 via-transparent to-black/25"
     />
+
+    <!-- ── Texto por diapositiva ── -->
     <div
       class="relative mx-auto flex h-full max-w-360 items-center px-5 pt-24 lg:px-8"
     >
-      <Transition name="hero-text" mode="out-in"
+      <Transition name="hero-text" mode="out-in" appear
         ><div :key="actual" class="max-w-4xl text-white">
           <span
             class="hero-highlight relative inline-block px-5 py-2 text-4xl font-black sm:text-6xl lg:text-7xl"
@@ -88,6 +92,8 @@ onBeforeUnmount(detener);
         </div></Transition
       >
     </div>
+
+    <!-- Controles de navegación -->
     <Button
       class="absolute left-3 top-1/2 rounded-none bg-black/30 text-white"
       size="icon"
@@ -101,6 +107,8 @@ onBeforeUnmount(detener);
       @click="cambiar(actual + 1)"
       ><ChevronRight
     /></Button>
+
+    <!-- Indicadores / dots -->
     <div class="absolute bottom-8 left-1/2 flex -translate-x-1/2 gap-2">
       <button
         v-for="(_, i) in diapositivasPortada"
@@ -113,19 +121,34 @@ onBeforeUnmount(detener);
   </section>
 </template>
 <style scoped>
-.hero-fade-enter-active,
-.hero-fade-leave-active {
-  transition:
-    opacity 0.8s ease,
-    transform 5s ease;
+/* ── Transición de imagen de fondo (fade + ken-burns) ── */
+.hero-fade-enter-active {
+  transition: opacity 0.9s ease;
+  animation: hero-ken-burns 6s ease-out forwards;
 }
-.hero-fade-enter-from,
+.hero-fade-leave-active {
+  transition: opacity 0.6s ease;
+  position: absolute;
+  inset: 0;
+}
+.hero-fade-enter-from {
+  opacity: 0;
+}
 .hero-fade-leave-to {
   opacity: 0;
 }
-.hero-fade-enter-active {
-  transform: scale(1.025);
+
+@keyframes hero-ken-burns {
+  from {
+    transform: scale(1.06);
+  }
+  to {
+    transform: scale(1);
+  }
 }
+
+/* ── Transición del bloque de texto ── */
+/* duración total texto: 0.7s opacity + 0.8s translate */
 .hero-text-enter-active,
 .hero-text-leave-active {
   transition:
@@ -140,6 +163,9 @@ onBeforeUnmount(detener);
   opacity: 0;
   transform: translateX(36px);
 }
+
+/* ── Animación del highlight de palabra (wipe azul) ── */
+/* duración: 3s con delay de 0.25s */
 .hero-highlight::before {
   position: absolute;
   inset: 0;
@@ -147,8 +173,7 @@ onBeforeUnmount(detener);
   background: #0b3a78;
   transform: scaleX(0);
   transform-origin: left center;
-  animation: highlight-wipe 3s cubic-bezier(0.16, 1, 0.3, 1) 0.25s
-    forwards;
+  animation: highlight-wipe 3s cubic-bezier(0.16, 1, 0.3, 1) 0.25s forwards;
   will-change: transform;
 }
 @keyframes highlight-wipe {
@@ -156,9 +181,21 @@ onBeforeUnmount(detener);
     transform: scaleX(1);
   }
 }
+
+/* ── Accesibilidad: sin movimiento ── */
 @media (prefers-reduced-motion: reduce) {
-  * {
-    transition: none !important;
+  .hero-fade-enter-active,
+  .hero-fade-leave-active {
+    transition: opacity 0.3s ease;
+    animation: none;
+  }
+  .hero-text-enter-active,
+  .hero-text-leave-active {
+    transition: opacity 0.3s ease;
+  }
+  .hero-text-enter-from,
+  .hero-text-leave-to {
+    transform: none;
   }
   .hero-highlight::before {
     animation: none;

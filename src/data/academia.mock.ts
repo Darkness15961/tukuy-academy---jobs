@@ -400,7 +400,6 @@ export const jobs: Job[] = [
     match: 91,
     postedAt: "2026-07-01",
     deadlineAt: "2026-07-20",
-    deadline: "20 jul 2026",
     tags: ["Almacen", "Obra", "Kardex"],
   },
   {
@@ -411,7 +410,6 @@ export const jobs: Job[] = [
     match: 86,
     postedAt: "2026-06-28",
     deadlineAt: "2026-07-28",
-    deadline: "28 jul 2026",
     tags: ["Logistica", "Materiales", "Excel"],
   },
   {
@@ -422,7 +420,6 @@ export const jobs: Job[] = [
     match: 78,
     postedAt: "2026-06-15",
     deadlineAt: "2026-08-01",
-    deadline: "01 ago 2026",
     tags: ["Inventario", "Almacen"],
   },
   {
@@ -433,7 +430,6 @@ export const jobs: Job[] = [
     match: 83,
     postedAt: "2026-07-03",
     deadlineAt: "2026-08-05",
-    deadline: "05 ago 2026",
     tags: ["Valorizaciones", "Reportes", "Obra pública"],
   },
   {
@@ -444,7 +440,6 @@ export const jobs: Job[] = [
     match: 89,
     postedAt: "2026-07-05",
     deadlineAt: "2026-08-12",
-    deadline: "12 ago 2026",
     tags: ["Tukuy Obra", "Asistencia", "Parte diario"],
   },
   {
@@ -455,7 +450,6 @@ export const jobs: Job[] = [
     match: 81,
     postedAt: "2026-06-20",
     deadlineAt: "2026-08-18",
-    deadline: "18 ago 2026",
     tags: ["KPI", "Curva S", "SIAF"],
   },
   {
@@ -466,7 +460,6 @@ export const jobs: Job[] = [
     match: 74,
     postedAt: "2026-07-06",
     deadlineAt: "2026-07-25",
-    deadline: "25 jul 2026",
     tags: ["Residente", "Obra pública", "Supervisión"],
   },
   {
@@ -477,7 +470,6 @@ export const jobs: Job[] = [
     match: 68,
     postedAt: "2026-06-10",
     deadlineAt: "2026-07-30",
-    deadline: "30 jul 2026",
     tags: ["Cuadrilla", "Obra vertical", "Seguridad"],
   },
   {
@@ -488,7 +480,6 @@ export const jobs: Job[] = [
     match: 88,
     postedAt: "2026-07-04",
     deadlineAt: "2026-07-18",
-    deadline: "18 jul 2026",
     tags: ["Almacen", "Tukuy Obra", "Kardex"],
   },
   {
@@ -499,7 +490,6 @@ export const jobs: Job[] = [
     match: 52,
     postedAt: "2026-07-02",
     deadlineAt: "2026-08-10",
-    deadline: "10 ago 2026",
     tags: ["Practicante", "Metrados", "Presupuesto"],
   },
   {
@@ -510,7 +500,6 @@ export const jobs: Job[] = [
     match: 85,
     postedAt: "2026-06-25",
     deadlineAt: "2026-07-15",
-    deadline: "15 jul 2026",
     tags: ["Topografía", "Obra vial", "Campo"],
   },
   {
@@ -521,7 +510,6 @@ export const jobs: Job[] = [
     match: 71,
     postedAt: "2026-07-07",
     deadlineAt: "2026-07-22",
-    deadline: "22 jul 2026",
     tags: ["SSOMA", "Obra", "Capacitación"],
   },
 ];

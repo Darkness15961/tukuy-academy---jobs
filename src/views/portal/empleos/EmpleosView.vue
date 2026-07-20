@@ -21,6 +21,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { usePortalContext } from "../composables/usePortalContext";
 import type { Job } from "@/types/academia";
+import { formatDeadline } from "@/types/empleo.types";
 
 const portal = usePortalContext();
 
@@ -309,7 +310,7 @@ function handleConfirmApply() {
                 class="mt-2.5 flex items-center gap-1.5 text-[11px] text-amber-700 bg-amber-50 border border-amber-200/50 px-2.5 py-1 rounded-md w-fit font-medium"
               >
                 <CalendarDays class="h-3.5 w-3.5" />
-                <span>Fecha límite: {{ selectedJob.deadline }}</span>
+                <span>Fecha límite: {{ formatDeadline(selectedJob.deadlineAt) }}</span>
               </div>
             </div>
 

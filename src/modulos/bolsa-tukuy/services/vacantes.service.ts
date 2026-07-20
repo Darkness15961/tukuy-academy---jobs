@@ -6,6 +6,7 @@ import { vacantesMock } from "../data/vacantes.mock";
 import type { Postulacion, Vacante } from "../types/vacante.types";
 
 const CLAVE_POSTULACIONES = "tukuy_postulaciones_demo";
+const CLAVE_GUARDADAS = "tukuy_vacantes_guardadas_demo";
 
 function leerPostulacionesMock(): Postulacion[] {
   const guardadas = localStorage.getItem(CLAVE_POSTULACIONES);
@@ -67,5 +68,44 @@ export const vacantesService = {
       API.bolsa.postular(vacanteId),
     );
     return data;
+  },
+
+  async obtenerGuardadas(): Promise<string[]> {
+    if (apiConfig.useMock) {
+      const guardadas = localStorage.getItem(CLAVE_GUARDADAS);
+      if (!guardadas) return resolveMock([]);
+      try {
+        return resolveMock(JSON.parse(guardadas) as string[]);
+      } catch {
+        return resolveMock([]);
+      }
+    }
+    const { data } = await api.get<string[]>(API.bolsa.postulaciones + "/guardadas");
+    return data;
+  },
+
+  async guardar(vacanteId: string): Promise<void> {
+    if (apiConfig.useMock) {
+      const guardadas = localStorage.getItem(CLAVE_GUARDADAS);
+      const lista: string[] = guardadas ? (JSON.parse(guardadas) as string[]) : [];
+      if (!lista.includes(vacanteId)) {
+        localStorage.setItem(CLAVE_GUARDADAS, JSON.stringify([...lista, vacanteId]));
+      }
+      return resolveMock(undefined);
+    }
+    await api.post(API.bolsa.guardar(vacanteId));
+  },
+
+  async desguardar(vacanteId: string): Promise<void> {
+    if (apiConfig.useMock) {
+      const guardadas = localStorage.getItem(CLAVE_GUARDADAS);
+      const lista: string[] = guardadas ? (JSON.parse(guardadas) as string[]) : [];
+      localStorage.setItem(
+        CLAVE_GUARDADAS,
+        JSON.stringify(lista.filter((id) => id !== vacanteId)),
+      );
+      return resolveMock(undefined);
+    }
+    await api.delete(API.bolsa.guardar(vacanteId));
   },
 };

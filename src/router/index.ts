@@ -658,13 +658,13 @@ router.beforeEach((to) => {
     return { name: "seleccionar-contexto" };
   }
 
-  if (contextoGuardado && to.meta.portal) {
+  if (contextoGuardado) {
     try {
       const contexto = JSON.parse(contextoGuardado) as {
         portal?: string;
         permisos?: string[];
       };
-      if (contexto.portal !== to.meta.portal) {
+      if (to.meta.portal && contexto.portal !== to.meta.portal) {
         return { name: "seleccionar-contexto" };
       }
       if (
@@ -672,7 +672,7 @@ router.beforeEach((to) => {
         !contexto.permisos?.includes(to.meta.requiredPermission)
       ) {
         return rutaInicioPortal(
-          contexto.portal as
+          (contexto.portal || "estudiante") as
             | "estudiante"
             | "docente"
             | "organizacion"

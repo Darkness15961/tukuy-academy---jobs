@@ -77,29 +77,15 @@ export function useFiltroEmpleos(jobs: () => Job[]) {
     });
   });
 
-  const forYouJobs = computed(() => {
-    const term = searchTerm.value.trim().toLowerCase();
-    let list = jobs().filter(isForYou);
-    list = applyDateFilter(list, dateFilter.value);
-
-    if (term) {
-      list = list.filter((job) =>
-        [job.title, job.company, job.location, ...job.tags].some((value) =>
-          value.toLowerCase().includes(term),
-        ),
-      );
-    }
-
-    return [...list].sort((a, b) => b.match - a.match);
-  });
-
-  const filteredJobs = computed(() => baseFilteredJobs.value);
+  const forYouJobs = computed(() =>
+    baseFilteredJobs.value.filter(isForYou).sort((a, b) => b.match - a.match),
+  );
 
   return {
     searchTerm,
     scopeFilter,
     dateFilter,
-    filteredJobs,
+    filteredJobs: baseFilteredJobs,
     forYouJobs,
   };
 }

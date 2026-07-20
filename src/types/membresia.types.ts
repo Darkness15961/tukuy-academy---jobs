@@ -20,6 +20,7 @@ export type TipoAlcancePermiso =
   | "CURSOS_PROPIOS"
   | "EQUIPO"
   | "AREA"
+  | "UNIDAD"
   | "SEDE"
   | "ENTIDAD"
   | "PLATAFORMA";

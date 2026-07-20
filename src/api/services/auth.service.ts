@@ -4,7 +4,6 @@ import { API } from "@/api/endpoints";
 import { resolveMock } from "@/api/mock";
 import { user as userMock } from "@/data/academia.mock";
 import { membresiasMock } from "@/data/contextos-sesion.mock";
-import { MOCK_CREDENTIALS } from "@/lib/constants";
 import type {
   LoginRequestDto,
   LoginResponseDto,
@@ -21,10 +20,11 @@ export const authService = {
         throw new Error("Ingresa tu usuario y clave");
       }
 
-      if (
-        username !== MOCK_CREDENTIALS.username ||
-        password !== MOCK_CREDENTIALS.password
-      ) {
+      /** Credenciales de demostración — solo activas en modo mock. */
+      const MOCK_USER = "admin";
+      const MOCK_PASS = "123456";
+
+      if (username !== MOCK_USER || password !== MOCK_PASS) {
         throw new Error("Usuario o clave incorrectos");
       }
 

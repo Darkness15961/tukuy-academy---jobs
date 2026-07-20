@@ -70,52 +70,54 @@ const contextoActivo = ref<ContextoSesion | null>(
   leerJson<ContextoSesion>(CONTEXTO_SESION_KEY),
 );
 
-if (
-  contextoActivo.value?.organizacionId === "org-empresa-abc" &&
-  ["Empresa ABC", "Andina Constructora"].includes(
-    contextoActivo.value.organizacionNombre,
-  )
-) {
-  contextoActivo.value = {
-    ...contextoActivo.value,
-    organizacionNombre: "COLEGIO DE INGENIEROS CUSCO",
-  };
-  localStorage.setItem(
-    CONTEXTO_SESION_KEY,
-    JSON.stringify(contextoActivo.value),
-  );
-}
-
-if (
-  contextoActivo.value?.organizacionId === "org-empresa-abc" &&
-  !contextoActivo.value.personaEntidadId
-) {
-  contextoActivo.value = {
-    ...contextoActivo.value,
-    personaEntidadId: "15",
-  };
-  localStorage.setItem(
-    CONTEXTO_SESION_KEY,
-    JSON.stringify(contextoActivo.value),
-  );
-}
-
+// Permisos adicionales que todo portal de organización debe tener garantizados.
 const permisosAcademicosOrganizacion = [
   "estudiantes.ver",
   "certificados.ver",
   "certificados.emitir",
 ];
 
-if (contextoActivo.value?.portal === "organizacion") {
-  contextoActivo.value = {
-    ...contextoActivo.value,
+/**
+ * Normaliza los permisos de una membresía de organización:
+ * añade los permisos académicos base y, para owners/admins, los permisos
+ * de edición de configuración y cursos.
+ */
+function normalizarPermisosOrganizacion(
+  membresia: MembresiaOrganizacion,
+): MembresiaOrganizacion {
+  if (membresia.portal !== "organizacion") return membresia;
+  return {
+    ...membresia,
     permisos: [
       ...new Set([
-        ...contextoActivo.value.permisos,
+        ...membresia.permisos,
         ...permisosAcademicosOrganizacion,
-        ...(["ORGANIZATION_OWNER", "ORGANIZATION_ADMIN"].includes(
-          contextoActivo.value.rol,
-        )
+        ...(["ORGANIZATION_OWNER", "ORGANIZATION_ADMIN"].includes(membresia.rol)
+          ? ["configuracion.editar", "cursos.crear", "cursos.editar"]
+          : []),
+      ]),
+    ],
+  };
+}
+
+// Normalizar membresías al arrancar (solo permisos; nunca muta IDs ni nombres).
+membresias.value = membresias.value
+  .map(aplicarIdentidadGuardada)
+  .map(normalizarPermisosOrganizacion);
+if (membresias.value.length) {
+  localStorage.setItem(MEMBRESIAS_KEY, JSON.stringify(membresias.value));
+}
+
+// Normalizar contexto activo al arrancar (solo permisos).
+if (contextoActivo.value?.portal === "organizacion") {
+  const ctx = contextoActivo.value;
+  contextoActivo.value = {
+    ...ctx,
+    permisos: [
+      ...new Set([
+        ...ctx.permisos,
+        ...permisosAcademicosOrganizacion,
+        ...(["ORGANIZATION_OWNER", "ORGANIZATION_ADMIN"].includes(ctx.rol)
           ? ["configuracion.editar", "cursos.crear", "cursos.editar"]
           : []),
       ]),
@@ -125,81 +127,6 @@ if (contextoActivo.value?.portal === "organizacion") {
     CONTEXTO_SESION_KEY,
     JSON.stringify(contextoActivo.value),
   );
-}
-
-if (
-  contextoActivo.value?.portal === "docente" &&
-  contextoActivo.value.organizacionId === "org-academia-tukuy"
-) {
-  contextoActivo.value = {
-    ...contextoActivo.value,
-    organizacionId: "org-empresa-abc",
-    organizacionNombre: "COLEGIO DE INGENIEROS CUSCO",
-  };
-  localStorage.setItem(
-    CONTEXTO_SESION_KEY,
-    JSON.stringify(contextoActivo.value),
-  );
-}
-
-membresias.value = membresias.value.map((membresia) => {
-  if (
-    membresia.organizacion?.id === "org-empresa-abc" &&
-    !membresia.personaEntidadId
-  ) {
-    membresia = { ...membresia, personaEntidadId: "15" };
-  }
-  if (
-    membresia.organizacion?.id === "org-empresa-abc" &&
-    ["Empresa ABC", "Andina Constructora"].includes(
-      membresia.organizacion.nombre,
-    )
-  ) {
-    return {
-      ...membresia,
-      organizacion: {
-        ...membresia.organizacion,
-        nombre: "COLEGIO DE INGENIEROS CUSCO",
-      },
-    };
-  }
-  if (
-    membresia.portal === "docente" &&
-    membresia.organizacion?.id === "org-academia-tukuy"
-  ) {
-    return {
-      ...membresia,
-      organizacion: {
-        ...membresia.organizacion,
-        id: "org-empresa-abc",
-        nombre: "COLEGIO DE INGENIEROS CUSCO",
-        tipo: "EMPRESA",
-      },
-    };
-  }
-  return membresia;
-});
-membresias.value = membresias.value.map(aplicarIdentidadGuardada);
-membresias.value = membresias.value.map((membresia) =>
-  membresia.portal === "organizacion"
-    ? {
-        ...membresia,
-        permisos: [
-          ...new Set([
-            ...membresia.permisos,
-            ...permisosAcademicosOrganizacion,
-            ...(["ORGANIZATION_OWNER", "ORGANIZATION_ADMIN"].includes(
-              membresia.rol,
-            )
-              ? ["configuracion.editar", "cursos.crear", "cursos.editar"]
-              : []),
-          ]),
-        ],
-      }
-    : membresia,
-);
-if (membresias.value.length) {
-  localStorage.setItem(MEMBRESIAS_KEY, JSON.stringify(membresias.value));
 }
 
 function crearMembresiaPersonal(
@@ -259,21 +186,9 @@ export function useContextoSesion() {
     const base = nuevasMembresias?.length
       ? nuevasMembresias
       : [crearMembresiaPersonal()];
-    const normalizadas = base.map(aplicarIdentidadGuardada).map((membresia) =>
-      ["ORGANIZATION_OWNER", "ORGANIZATION_ADMIN"].includes(membresia.rol)
-        ? {
-            ...membresia,
-            permisos: [
-              ...new Set([
-                ...membresia.permisos,
-                "configuracion.editar",
-                "cursos.crear",
-                "cursos.editar",
-              ]),
-            ],
-          }
-        : membresia,
-    );
+    const normalizadas = base
+      .map(aplicarIdentidadGuardada)
+      .map(normalizarPermisosOrganizacion);
     membresias.value = normalizadas;
     localStorage.setItem(MEMBRESIAS_KEY, JSON.stringify(normalizadas));
 

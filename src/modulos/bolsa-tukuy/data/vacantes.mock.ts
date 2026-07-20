@@ -1,4 +1,5 @@
 import { jobs } from "@/data/academia.mock";
+import { formatDeadline } from "@/types/empleo.types";
 import type {
   ModalidadVacante,
   TipoContrato,
@@ -23,7 +24,7 @@ export const vacantesMock: Vacante[] = jobs.map((empleo, indice) => ({
   compatibilidad: empleo.match,
   publicadaEn: empleo.postedAt,
   cierreEn: empleo.deadlineAt,
-  cierreTexto: empleo.deadline,
+  cierreTexto: formatDeadline(empleo.deadlineAt),
   etiquetas: empleo.tags,
   descripcion:
     "Buscamos una persona comprometida con la mejora de la operación, capaz de trabajar con información técnica y coordinar con equipos de proyecto.",

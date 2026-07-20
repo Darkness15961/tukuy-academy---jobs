@@ -27,9 +27,4 @@ export const PREFIJOS_RUTA_CON_TEMA = [
 
 export type PreferenciaTema = "light" | "dark" | "system";
 
-export const MOCK_CREDENTIALS = {
-  username: "admin",
-  password: "123456",
-} as const;
-
 export const FOR_YOU_JOB_MATCH = 80;

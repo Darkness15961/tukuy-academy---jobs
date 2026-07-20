@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { isJobForYou } from "@/composables/useFiltroEmpleos";
 import type { Job } from "@/types/academia";
+import { formatDeadline } from "@/types/empleo.types";
 
 const props = withDefaults(
   defineProps<{
@@ -58,7 +59,7 @@ const forYou = computed(() => isJobForYou(props.job));
             </span>
             <span class="inline-flex items-center gap-1">
               <CalendarDays class="h-3.5 w-3.5" />
-              Cierra {{ job.deadline }}
+              Cierra {{ formatDeadline(job.deadlineAt) }}
             </span>
           </p>
         </div>

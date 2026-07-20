@@ -14,17 +14,7 @@ function usuarioGuardado(): UserProfile | null {
   const valor = localStorage.getItem(USUARIO_SESION_KEY);
   if (!valor) return null;
   try {
-    const usuario = JSON.parse(valor) as UserProfile;
-    if (usuario.name === "Carlos Alberto") {
-      const actualizado = {
-        ...usuario,
-        name: "Carlos Alberto",
-        initials: "CA",
-      };
-      localStorage.setItem(USUARIO_SESION_KEY, JSON.stringify(actualizado));
-      return actualizado;
-    }
-    return usuario;
+    return JSON.parse(valor) as UserProfile;
   } catch {
     localStorage.removeItem(USUARIO_SESION_KEY);
     return null;
