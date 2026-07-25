@@ -17,10 +17,7 @@ const portal = usePortalContext();
 const searchTerm = ref("");
 
 const learningCourses = computed(() => {
-  const base =
-    portal.enrolledCourses.value.length >= 8
-      ? portal.enrolledCourses.value
-      : portal.courses.value;
+  const base = portal.enrolledCourses.value;
   const term = searchTerm.value.trim().toLowerCase();
   return term
     ? base.filter((course) =>
@@ -36,7 +33,7 @@ const learningCourses = computed(() => {
   <PortalSection wide :centered="false">
     <section class="grid gap-7">
       <div
-        class="border border-border border-l-4 border-l-[#F5B400] bg-[#F7F9FE] p-6 shadow-[0_14px_34px_-30px_rgba(7,31,82,0.65)] lg:p-8"
+        class="border border-border border-l-4 border-l-[#F5B400] bg-muted/60 p-6 shadow-[0_14px_34px_-30px_rgba(7,31,82,0.65)] dark:shadow-[0_14px_34px_-28px_rgba(0,0,0,0.7)] lg:p-8"
       >
         <div
           class="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between"
@@ -152,21 +149,23 @@ const learningCourses = computed(() => {
           v-else
           :key="course.id"
           fluid
+          modo-aprendizaje
           :course="course"
           :show-detail="false"
-          :in-cart="portal.isInCart(course.id)"
           :is-favorite="portal.isFavorite(course.id)"
-          @add-to-cart="portal.handleAddToCart(course.id)"
           @continue-course="portal.openSimuladorCurso(course)"
-          @select="portal.openSimuladorCurso(course)"
+          @select="portal.verDetalleCurso(course)"
           @toggle-favorite="portal.toggleFavorite(course.id)"
         />
       </div>
 
       <Card v-if="!learningCourses.length" class="border-border shadow-none">
         <CardContent class="py-10 text-center text-sm text-muted-foreground">
-          No encontramos cursos con ese criterio. Prueba otra búsqueda o limpia
-          los filtros.
+          {{
+            searchTerm
+              ? "No encontramos cursos con ese criterio. Prueba otra búsqueda o limpia los filtros."
+              : "Aún no tienes cursos matriculados. Explora el catálogo, agrégalos al carrito o inscríbete en los gratuitos."
+          }}
         </CardContent>
       </Card>
     </section>

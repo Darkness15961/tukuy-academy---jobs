@@ -102,6 +102,18 @@ const router = createRouter({
             import("@/modulos/comunidad/views/EventosComunidadView.vue"),
         },
         {
+          path: "comunidad/entidades",
+          name: "explorar-entidades-comunidad",
+          component: () =>
+            import("@/modulos/comunidad/views/ExplorarEntidadesView.vue"),
+        },
+        {
+          path: "comunidad/entidades/:entidadId",
+          name: "perfil-entidad-comunidad",
+          component: () =>
+            import("@/modulos/comunidad/views/PerfilEntidadView.vue"),
+        },
+        {
           path: "comunidad/moderacion",
           name: "moderacion-comunidad",
           component: () =>
@@ -127,6 +139,11 @@ const router = createRouter({
       path: "/login",
       name: "login",
       component: () => import("@/views/LoginView.vue"),
+    },
+    {
+      path: "/registro",
+      name: "registro",
+      component: () => import("@/views/RegistroView.vue"),
     },
     {
       path: "/seleccionar-contexto",
@@ -232,6 +249,16 @@ const router = createRouter({
           },
         },
         {
+          path: "calendario",
+          name: "calendario-docente",
+          component: () =>
+            import("@/portal-docente/views/CalendarioDocenteView.vue"),
+          meta: {
+            titulo: "Calendario",
+            requiredPermission: "sesiones.gestionar",
+          },
+        },
+        {
           path: "mensajes",
           name: "mensajes-docente",
           component: () =>
@@ -278,7 +305,7 @@ const router = createRouter({
           path: "usuarios",
           name: "usuarios-organizacion",
           component: () =>
-            import("@/portal-organizacion/views/UsuariosOrganizacionView.vue"),
+            import("@/portal-organizacion/views/PersonasOrganizacionView.vue"),
           meta: { titulo: "Usuarios", requiredPermission: "usuarios.ver" },
         },
         {
@@ -311,7 +338,7 @@ const router = createRouter({
           component: () =>
             import("@/portal-organizacion/views/EquiposOrganizacionView.vue"),
           meta: {
-            titulo: "Equipos y áreas",
+            titulo: "Estructura y nodos",
             requiredPermission: "equipos.administrar",
           },
         },
@@ -328,6 +355,30 @@ const router = createRouter({
           },
         },
         {
+          path: "sesiones",
+          name: "sesiones-organizacion",
+          component: () =>
+            import(
+              "@/portal-organizacion/views/SesionesEnVivoOrganizacionView.vue"
+            ),
+          meta: {
+            titulo: "Sesiones en vivo",
+            requiredPermission: "sesiones.gestionar",
+          },
+        },
+        {
+          path: "calendario",
+          name: "calendario-organizacion",
+          component: () =>
+            import(
+              "@/portal-organizacion/views/CalendarioOrganizacionView.vue"
+            ),
+          meta: {
+            titulo: "Calendario",
+            requiredPermission: "sesiones.gestionar",
+          },
+        },
+        {
           path: "licencia",
           name: "licencia-organizacion",
           component: () =>
@@ -339,13 +390,7 @@ const router = createRouter({
         },
         {
           path: "cursos/gestion",
-          name: "gestion-cursos-organizacion",
-          component: () =>
-            import("@/portal-docente/views/CursosDocenteView.vue"),
-          meta: {
-            titulo: "Cursos institucionales",
-            requiredPermission: "cursos.crear",
-          },
+          redirect: "/organizacion/cursos",
         },
         {
           path: "cursos",
@@ -353,7 +398,7 @@ const router = createRouter({
           component: () =>
             import("@/portal-organizacion/views/CatalogoOrganizacionView.vue"),
           meta: {
-            titulo: "Catálogo de cursos",
+            titulo: "Cursos",
             requiredPermission: "cursos.ver",
           },
         },
@@ -365,6 +410,42 @@ const router = createRouter({
           meta: {
             titulo: "Crear curso institucional",
             requiredPermission: "cursos.crear",
+          },
+        },
+        {
+          path: "cursos/categorias",
+          name: "categorias-cursos-organizacion",
+          component: () =>
+            import(
+              "@/portal-organizacion/views/CategoriasCursosOrganizacionView.vue"
+            ),
+          meta: {
+            titulo: "Categorías de cursos",
+            requiredPermission: "categorias.ver",
+          },
+        },
+        {
+          path: "cursos/:cursoId/revision",
+          name: "revision-curso-organizacion",
+          component: () =>
+            import(
+              "@/portal-organizacion/views/RevisionCursoOrganizacionView.vue"
+            ),
+          meta: {
+            titulo: "Revisión de contenido",
+            requiredPermission: "cursos.aprobar",
+          },
+        },
+        {
+          path: "cursos/:cursoId/aprobacion",
+          name: "aprobacion-curso-organizacion",
+          component: () =>
+            import(
+              "@/portal-organizacion/views/AprobacionCursoOrganizacionView.vue"
+            ),
+          meta: {
+            titulo: "Aprobación comercial",
+            requiredPermission: "cursos.aprobar",
           },
         },
         {
@@ -402,8 +483,20 @@ const router = createRouter({
               "@/portal-organizacion/views/FacturacionOrganizacionView.vue"
             ),
           meta: {
-            titulo: "Facturación",
+            titulo: "Facturación y actualización",
             requiredPermission: "facturacion.ver",
+          },
+        },
+        {
+          path: "ecosistema",
+          name: "presencia-ecosistema-organizacion",
+          component: () =>
+            import(
+              "@/portal-organizacion/views/PresenciaEcosistemaOrganizacionView.vue"
+            ),
+          meta: {
+            titulo: "Presencia pública",
+            requiredPermission: "configuracion.editar",
           },
         },
         {
@@ -432,6 +525,15 @@ const router = createRouter({
           component: () =>
             import("@/administracion-tukuy/views/InicioAdministracionView.vue"),
           meta: { titulo: "Panel global" },
+        },
+        {
+          path: "ecosistema",
+          name: "ecosistema-admin",
+          component: () =>
+            import(
+              "@/administracion-tukuy/views/EcosistemaAdministracionView.vue"
+            ),
+          meta: { titulo: "Ecosistema" },
         },
         {
           path: "organizaciones",
@@ -550,6 +652,17 @@ const router = createRouter({
           },
         },
         {
+          path: "cursos/:cursoId",
+          name: "portal-course-detail",
+          component: () =>
+            import("@/views/portal/cursos/DetalleCursoPortalView.vue"),
+          meta: {
+            requiresAuth: true,
+            view: "courses",
+            requiredPermission: "cursos.ver",
+          },
+        },
+        {
           path: "mi-aprendizaje",
           name: "portal-learning",
           component: () =>
@@ -558,6 +671,18 @@ const router = createRouter({
             requiresAuth: true,
             view: "learning",
             requiredPermission: "aprendizaje.consumir",
+          },
+        },
+        {
+          path: "calendario",
+          name: "portal-calendar",
+          component: () =>
+            import("@/views/portal/calendario/CalendarioAlumnoView.vue"),
+          meta: {
+            requiresAuth: true,
+            view: "calendar",
+            requiredPermission: "aprendizaje.consumir",
+            hideFooter: true,
           },
         },
         {
@@ -611,6 +736,16 @@ const router = createRouter({
       ],
     },
     {
+      path: "/acceso-no-autorizado",
+      name: "acceso-no-autorizado",
+      component: () => import("@/views/AccesoNoAutorizadoView.vue"),
+      meta: {
+        requiresAuth: true,
+        allowWithoutContext: true,
+        titulo: "Acceso no autorizado",
+      },
+    },
+    {
       path: "/:pathMatch(.*)*",
       redirect: "/",
     },
@@ -652,6 +787,7 @@ router.beforeEach((to) => {
   if (
     to.meta.requiresAuth &&
     to.name !== "seleccionar-contexto" &&
+    to.name !== "acceso-no-autorizado" &&
     !to.meta.allowWithoutContext &&
     !contextoGuardado
   ) {
@@ -668,16 +804,17 @@ router.beforeEach((to) => {
         return { name: "seleccionar-contexto" };
       }
       if (
+        to.name !== "acceso-no-autorizado" &&
         typeof to.meta.requiredPermission === "string" &&
         !contexto.permisos?.includes(to.meta.requiredPermission)
       ) {
-        return rutaInicioPortal(
-          (contexto.portal || "estudiante") as
-            | "estudiante"
-            | "docente"
-            | "organizacion"
-            | "admin",
-        );
+        return {
+          name: "acceso-no-autorizado",
+          query: {
+            permiso: to.meta.requiredPermission,
+            desde: to.fullPath,
+          },
+        };
       }
     } catch {
       localStorage.removeItem(CONTEXTO_SESION_KEY);

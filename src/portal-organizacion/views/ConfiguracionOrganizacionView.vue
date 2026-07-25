@@ -9,6 +9,7 @@ import {
   type IntegracionOrganizacion,
 } from "@/api/services/organizacion.service";
 import { Button } from "@/components/ui/button";
+import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useContextoSesion } from "@/composables/useContextoSesion";
@@ -37,6 +38,7 @@ const configuracion = reactive({
   dominio: "",
   zonaHoraria: "America/Lima",
   restringirDominio: true,
+  requiereDniEnrolamiento: true,
 });
 
 onMounted(async () => {
@@ -47,6 +49,7 @@ onMounted(async () => {
     ]);
     Object.assign(configuracion, datos, {
       logo: datos.logo || logoMembresia.value,
+      requiereDniEnrolamiento: datos.requiereDniEnrolamiento ?? true,
     });
     integraciones.value = conexiones;
   } finally {
@@ -131,10 +134,11 @@ async function guardarIntegraciones() {
 <template>
   <section class="mx-auto grid max-w-4xl gap-6">
     <div>
-      <h1 class="text-2xl font-black">Configuración de la organización</h1>
-      <p class="mt-1 text-sm text-[#64748B]">
-        Personaliza la identidad, acceso e integraciones de tu organización.
-      </p>
+      <TituloConAyuda
+        titulo="Configuración de la organización"
+        clase-titulo="text-2xl font-black"
+        ayuda="Personaliza la identidad, acceso e integraciones de tu organización."
+      />
     </div>
     <div v-if="cargando" class="grid gap-4">
       <Skeleton v-for="item in 3" :key="item" class="h-44 w-full" />
@@ -232,6 +236,17 @@ async function guardarIntegraciones() {
           </p>
         </div>
         <ToggleSwitch v-model="configuracion.restringirDominio" /></CardContent></Card
+    ><Card class="border-border bg-card"
+      ><CardContent class="flex gap-4 p-6"
+        ><ShieldCheck class="h-6 w-6 text-primary" />
+        <div class="flex-1">
+          <h2 class="font-black">DNI en el enrolamiento</h2>
+          <p class="text-sm text-[#64748B]">
+            Si está activo, toda persona que se incorpore a la entidad deberá registrar su DNI.
+            Desactívalo si tu entidad no lo exige.
+          </p>
+        </div>
+        <ToggleSwitch v-model="configuracion.requiereDniEnrolamiento" /></CardContent></Card
     ><Card class="border-border bg-card"
       ><CardContent class="flex gap-4 p-6"
         ><Link2 class="h-6 w-6 text-violet-700" />

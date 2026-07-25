@@ -11,7 +11,23 @@ import {
   TrendingUp,
   UsersRound,
 } from "lucide-vue-next";
+import {
+  ArcElement,
+  BarController,
+  BarElement,
+  CategoryScale,
+  Chart as ChartJS,
+  DoughnutController,
+  Filler,
+  Legend,
+  LinearScale,
+  LineController,
+  LineElement,
+  PointElement,
+  Tooltip,
+} from "chart.js";
 import { jsPDF } from "jspdf";
+import Chart from "primevue/chart";
 import Column from "primevue/column";
 import DataTable from "primevue/datatable";
 import Dialog from "primevue/dialog";
@@ -21,14 +37,36 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
 import {
   organizacionService,
-  type AreaOrganizacion,
   type AsignacionOrganizacion,
+  type PropuestaCursoOrganizacion,
   type RutaOrganizacion,
   type UsuarioOrganizacion,
 } from "@/api/services/organizacion.service";
+import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { useCursos } from "@/composables/useCursos";
+import type {
+  EstructuraOrganizacional,
+  NivelOrganizacional,
+  UnidadOrganizacional,
+  VinculacionUnidad,
+} from "@/portal-organizacion/types/estructura-organizacional.types";
+import type { CertificadoEmitidoDocente } from "@/portal-docente/types/docente.types";
+
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  LineController,
+  BarElement,
+  BarController,
+  ArcElement,
+  DoughnutController,
+  Filler,
+  Tooltip,
+  Legend,
+);
 
 type FilaReporte = Record<string, string | number>;
 
@@ -42,18 +80,44 @@ interface ResumenCurso {
   ingresos: number;
 }
 
-const { courses, loading: cargandoCursos } = useCursos();
+const COLOR_PRIMARY = "#0B3A78";
+const COLOR_ACCENT = "#F5B400";
+const COLOR_EMERALD = "#059669";
+const COLOR_VIOLET = "#6D28D9";
+const COLOR_SLATE = "#64748B";
+
 const cargando = ref(true);
 const usuarios = ref<UsuarioOrganizacion[]>([]);
 const asignaciones = ref<AsignacionOrganizacion[]>([]);
 const rutas = ref<RutaOrganizacion[]>([]);
-const areas = ref<AreaOrganizacion[]>([]);
+const catalogo = ref<PropuestaCursoOrganizacion[]>([]);
+const certificados = ref<CertificadoEmitidoDocente[]>([]);
+const estructuras = ref<EstructuraOrganizacional[]>([]);
+const niveles = ref<NivelOrganizacional[]>([]);
+const unidades = ref<UnidadOrganizacional[]>([]);
+const vinculaciones = ref<VinculacionUnidad[]>([]);
 const modal = ref(false);
 const reporteActivo = ref("Matrícula por curso");
 const periodo = ref("12 meses");
 const periodos = ["6 meses", "12 meses", "Año 2026"];
-const meses = ["Ago", "Sep", "Oct", "Nov", "Dic", "Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul"];
-const distribucionMensual = [0.055, 0.061, 0.067, 0.071, 0.075, 0.078, 0.082, 0.087, 0.092, 0.099, 0.109, 0.124];
+const meses = [
+  "Ago",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dic",
+  "Ene",
+  "Feb",
+  "Mar",
+  "Abr",
+  "May",
+  "Jun",
+  "Jul",
+];
+const distribucionMensual = [
+  0.055, 0.061, 0.067, 0.071, 0.075, 0.078, 0.082, 0.087, 0.092, 0.099, 0.109,
+  0.124,
+];
 
 onMounted(() => {
   void cargarDatos();
@@ -70,16 +134,38 @@ function actualizarDatos() {
 async function cargarDatos() {
   cargando.value = true;
   try {
-    [usuarios.value, asignaciones.value, rutas.value, areas.value] =
-      await Promise.all([
-        organizacionService.usuarios.listar(),
-        organizacionService.asignaciones.listar(),
-        organizacionService.rutas.listar(),
-        organizacionService.areas.listar(),
-      ]);
+    [
+      usuarios.value,
+      asignaciones.value,
+      rutas.value,
+      catalogo.value,
+      certificados.value,
+      estructuras.value,
+      niveles.value,
+      unidades.value,
+      vinculaciones.value,
+    ] = await Promise.all([
+      organizacionService.usuarios.listar(),
+      organizacionService.asignaciones.listar(),
+      organizacionService.rutas.listar(),
+      organizacionService.catalogoCursos.listar(),
+      organizacionService.certificados.listar(),
+      organizacionService.estructura.estructuras.listar(),
+      organizacionService.estructura.niveles.listar(),
+      organizacionService.estructura.unidades.listar(),
+      organizacionService.estructura.vinculaciones.listar(),
+    ]);
   } finally {
     cargando.value = false;
   }
+}
+
+function moneda(valor: number) {
+  return new Intl.NumberFormat("es-PE", {
+    style: "currency",
+    currency: "PEN",
+    maximumFractionDigits: 0,
+  }).format(valor);
 }
 
 function normalizar(valor: string) {
@@ -89,12 +175,32 @@ function normalizar(valor: string) {
     .toLowerCase();
 }
 
-function precioCurso(nombre: string) {
-  const exacto = courses.value.find(
-    (curso) => normalizar(curso.title) === normalizar(nombre),
+function pertenenciaPrincipal(usuario: UsuarioOrganizacion) {
+  const vinculacion = vinculaciones.value.find(
+    (item) =>
+      item.usuarioId === String(usuario.id) &&
+      item.tipo === "PRINCIPAL" &&
+      item.estado === "ACTIVA",
   );
-  if (exacto) return exacto.pricing === "free" ? 0 : exacto.price ?? 0;
+  const unidad = unidades.value.find(
+    (item) => item.id === (vinculacion?.unidadId ?? usuario.unidadPrincipalId),
+  );
+  if (!unidad) return "Sin nodo asignado";
+  const estructura = estructuras.value.find(
+    (item) => item.id === unidad.estructuraId,
+  );
+  const nivel = niveles.value.find((item) => item.id === unidad.nivelId);
+  return `${estructura?.nombre ?? "Estructura"} · ${nivel?.nombre ?? "Nivel"} · ${unidad.nombre}`;
+}
 
+function precioCurso(nombre: string) {
+  const delCatalogo = catalogo.value.find(
+    (curso) => normalizar(curso.titulo) === normalizar(nombre),
+  );
+  if (delCatalogo) {
+    if (delCatalogo.gratuito || (delCatalogo.precio ?? 0) <= 0) return 0;
+    return delCatalogo.precio ?? 0;
+  }
   const nombreNormalizado = normalizar(nombre);
   const coincidencias: Array<[string, number]> = [
     ["seguridad y salud", 89],
@@ -105,12 +211,8 @@ function precioCurso(nombre: string) {
     ["avance fisico", 99],
     ["cuaderno de obra", 0],
     ["valorizaciones", 179],
-    ["empleabilidad", 0],
-    ["inteligencia artificial", 159],
-    ["ia aplicada", 159],
-    ["induccion", 79],
     ["supervision", 139],
-    ["introduccion a tukuy", 0],
+    ["ia aplicada", 159],
   ];
   return coincidencias.find(([texto]) => nombreNormalizado.includes(texto))?.[1] ?? 99;
 }
@@ -142,20 +244,22 @@ const resumenCursos = computed<ResumenCurso[]>(() => {
       agrupados.set(asignacion.curso, actual);
     });
   return [...agrupados.values()].sort(
-    (primero, segundo) => segundo.matriculas - primero.matriculas,
+    (primero, segundo) => segundo.ingresos - primero.ingresos,
   );
 });
 
-const topCursos = computed(() => resumenCursos.value.slice(0, 5));
-const topIngresos = computed(() =>
+const topCursosIngresos = computed(() =>
+  resumenCursos.value.filter((curso) => curso.ingresos > 0).slice(0, 5),
+);
+const topCursosAlumnos = computed(() =>
   [...resumenCursos.value]
-    .sort((primero, segundo) => segundo.ingresos - primero.ingresos)
-    .slice(0, 5),
+    .sort((a, b) => b.matriculas - a.matriculas)
+    .slice(0, 6),
 );
 const topRutas = computed(() =>
   [...rutas.value]
     .filter((ruta) => ruta.estado !== "ARCHIVADA")
-    .sort((primero, segundo) => segundo.usuarios - primero.usuarios)
+    .sort((a, b) => b.usuarios - a.usuarios)
     .slice(0, 5),
 );
 const activos = computed(() =>
@@ -175,22 +279,12 @@ const finalizacion = computed(() =>
     ? Math.round((completadosTotales.value / matriculasTotales.value) * 100)
     : 0,
 );
-const rutasActivas = computed(
-  () => rutas.value.filter((ruta) => ruta.estado !== "ARCHIVADA").length,
-);
-const ingresoPromedio = computed(() =>
-  completadosTotales.value
-    ? ingresosTotales.value / completadosTotales.value
-    : 0,
-);
-const maximoMatriculas = computed(
-  () => Math.max(...topCursos.value.map((curso) => curso.matriculas), 1),
-);
-const maximoIngresos = computed(
-  () => Math.max(...topIngresos.value.map((curso) => curso.ingresos), 1),
-);
-const maximoRutas = computed(
-  () => Math.max(...topRutas.value.map((ruta) => ruta.usuarios), 1),
+const cursosPublicados = computed(
+  () =>
+    catalogo.value.filter(
+      (curso) =>
+        curso.estado === "PUBLICADO" || curso.estado === "APROBADO",
+    ).length,
 );
 
 const evolucionIngresos = computed(() => {
@@ -198,72 +292,393 @@ const evolucionIngresos = computed(() => {
   return distribucionMensual.slice(-cantidad).map((porcentaje, indice) => ({
     mes: meses.slice(-cantidad)[indice]!,
     importe: Math.round(ingresosTotales.value * porcentaje),
+    matriculas: Math.round(matriculasTotales.value * porcentaje),
+    alumnos: Math.round(activos.value.length * porcentaje * 1.15),
   }));
 });
-const maximoEvolucion = computed(() =>
-  Math.max(...evolucionIngresos.value.map((item) => item.importe), 1),
+
+const crecimientoAlumnado = computed(() => {
+  const serie = evolucionIngresos.value;
+  if (serie.length < 2) return 0;
+  const inicio = serie[0]!.alumnos || 1;
+  const fin = serie[serie.length - 1]!.alumnos;
+  return Math.round(((fin - inicio) / inicio) * 100);
+});
+
+const crecimientoIngresos = computed(() => {
+  const serie = evolucionIngresos.value;
+  if (serie.length < 2) return 0;
+  const inicio = serie[0]!.importe || 1;
+  const fin = serie[serie.length - 1]!.importe;
+  return Math.round(((fin - inicio) / inicio) * 100);
+});
+
+const cumplimientoNodos = computed(() =>
+  unidades.value
+    .filter((unidad) => unidad.estado === "ACTIVA" && !unidad.esSistema)
+    .map((unidad) => {
+      const idsUsuarios = new Set(
+        vinculaciones.value
+          .filter(
+            (item) => item.unidadId === unidad.id && item.estado === "ACTIVA",
+          )
+          .map((item) => item.usuarioId),
+      );
+      const personas = usuarios.value.filter((item) =>
+        idsUsuarios.has(String(item.id)),
+      );
+      const progreso = personas.length
+        ? Math.round(
+            personas.reduce((total, item) => total + item.progreso, 0) /
+              personas.length,
+          )
+        : 0;
+      return {
+        nodo: unidad.nombre,
+        personas: personas.length,
+        progreso,
+      };
+    })
+    .sort((a, b) => b.personas - a.personas)
+    .slice(0, 8),
 );
 
 const indicadores = computed(() => [
   {
-    etiqueta: "Alumnos gestionados",
-    valor: activos.value.length.toLocaleString("es-PE"),
-    detalle: `${matriculasTotales.value.toLocaleString("es-PE")} matrículas acumuladas`,
-    icono: UsersRound,
-    color: "text-primary",
-  },
-  {
-    etiqueta: "Cursos con alumnos",
-    valor: resumenCursos.value.length,
-    detalle: `${completadosTotales.value.toLocaleString("es-PE")} matrículas completadas`,
-    icono: BookOpen,
-    color: "text-violet-700 dark:text-violet-400",
-  },
-  {
-    etiqueta: "Rutas activas",
-    valor: rutasActivas.value,
-    detalle: `${rutas.value.reduce((total, ruta) => total + ruta.usuarios, 0)} participantes en rutas`,
-    icono: Route,
-    color: "text-emerald-700 dark:text-emerald-400",
-  },
-  {
-    etiqueta: "Ingresos por cursos",
+    etiqueta: "Ingresos formación",
     valor: moneda(ingresosTotales.value),
-    detalle: `${moneda(ingresoPromedio.value)} por matrícula completada`,
+    detalle: `+${crecimientoIngresos.value}% en el periodo`,
     icono: CircleDollarSign,
-    color: "text-amber-700 dark:text-amber-400",
+    acento: "accent" as const,
+  },
+  {
+    etiqueta: "Alumnos activos",
+    valor: activos.value.length.toLocaleString("es-PE"),
+    detalle: `+${crecimientoAlumnado.value}% crecimiento · ${matriculasTotales.value} matrículas`,
+    icono: UsersRound,
+    acento: "primary" as const,
+  },
+  {
+    etiqueta: "Top curso",
+    valor: topCursosIngresos.value[0]
+      ? moneda(topCursosIngresos.value[0].ingresos)
+      : "—",
+    detalle: topCursosIngresos.value[0]?.curso ?? "Sin ingresos aún",
+    icono: Target,
+    acento: "accent" as const,
+  },
+  {
+    etiqueta: "Cursos en oferta",
+    valor: cursosPublicados.value,
+    detalle: `${completadosTotales.value} completados · ${finalizacion.value}% avance`,
+    icono: BookOpen,
+    acento: "primary" as const,
   },
 ]);
 
+const opcionesBase = {
+  responsive: true,
+  maintainAspectRatio: false,
+  plugins: {
+    legend: {
+      labels: {
+        color: COLOR_SLATE,
+        usePointStyle: true,
+        pointStyle: "rect",
+        boxWidth: 8,
+        padding: 16,
+        font: { size: 11, weight: 700 as const },
+      },
+    },
+    tooltip: {
+      backgroundColor: "#07152B",
+      titleColor: "#FFFFFF",
+      bodyColor: "#FFFFFF",
+      padding: 12,
+    },
+  },
+};
+
+const datosEvolucion = computed(() => ({
+  labels: evolucionIngresos.value.map((item) => item.mes),
+  datasets: [
+    {
+      type: "line" as const,
+      label: "Ingresos (S/)",
+      data: evolucionIngresos.value.map((item) => item.importe),
+      borderColor: COLOR_PRIMARY,
+      backgroundColor: "rgba(11, 58, 120, 0.14)",
+      fill: true,
+      tension: 0.35,
+      pointRadius: 3,
+      pointBackgroundColor: COLOR_PRIMARY,
+      borderWidth: 2.5,
+    },
+  ],
+}));
+
+const opcionesEvolucion = computed(() => ({
+  ...opcionesBase,
+  interaction: { mode: "index" as const, intersect: false },
+  scales: {
+    x: {
+      grid: { display: false },
+      ticks: { color: COLOR_SLATE, font: { size: 11, weight: 700 as const } },
+    },
+    y: {
+      beginAtZero: true,
+      grid: { color: "rgba(203, 213, 225, 0.45)" },
+      ticks: {
+        color: COLOR_PRIMARY,
+        callback(valor: string | number) {
+          return `S/ ${Math.round(Number(valor) / 1000)}k`;
+        },
+      },
+    },
+  },
+}));
+
+const datosCrecimientoAlumnos = computed(() => ({
+  labels: evolucionIngresos.value.map((item) => item.mes),
+  datasets: [
+    {
+      type: "line" as const,
+      label: "Alumnos",
+      data: evolucionIngresos.value.map((item) => item.alumnos),
+      borderColor: COLOR_EMERALD,
+      backgroundColor: "rgba(5, 150, 105, 0.12)",
+      fill: true,
+      tension: 0.35,
+      pointRadius: 3,
+      pointBackgroundColor: COLOR_EMERALD,
+      borderWidth: 2.5,
+      yAxisID: "y",
+    },
+    {
+      type: "bar" as const,
+      label: "Matrículas",
+      data: evolucionIngresos.value.map((item) => item.matriculas),
+      backgroundColor: COLOR_ACCENT,
+      borderRadius: 0,
+      yAxisID: "y1",
+    },
+  ],
+}));
+
+const opcionesCrecimientoAlumnos = computed(() => ({
+  ...opcionesBase,
+  interaction: { mode: "index" as const, intersect: false },
+  scales: {
+    x: {
+      grid: { display: false },
+      ticks: { color: COLOR_SLATE, font: { size: 11, weight: 700 as const } },
+    },
+    y: {
+      position: "left" as const,
+      beginAtZero: true,
+      grid: { color: "rgba(203, 213, 225, 0.45)" },
+      ticks: { color: COLOR_EMERALD },
+    },
+    y1: {
+      position: "right" as const,
+      beginAtZero: true,
+      grid: { drawOnChartArea: false },
+      ticks: { color: "#A16F00" },
+    },
+  },
+}));
+
+const datosTopIngresos = computed(() => ({
+  labels: topCursosIngresos.value.map((curso) =>
+    curso.curso.length > 32 ? `${curso.curso.slice(0, 32)}…` : curso.curso,
+  ),
+  datasets: [
+    {
+      label: "Ingresos (S/)",
+      data: topCursosIngresos.value.map((curso) => curso.ingresos),
+      backgroundColor: [
+        COLOR_ACCENT,
+        COLOR_PRIMARY,
+        COLOR_EMERALD,
+        COLOR_VIOLET,
+        COLOR_SLATE,
+      ].slice(0, topCursosIngresos.value.length),
+      borderRadius: 0,
+      borderSkipped: false,
+    },
+  ],
+}));
+
+const opcionesTopIngresos = {
+  ...opcionesBase,
+  indexAxis: "y" as const,
+  plugins: {
+    ...opcionesBase.plugins,
+    legend: { display: false },
+  },
+  scales: {
+    x: {
+      beginAtZero: true,
+      grid: { color: "rgba(203, 213, 225, 0.45)" },
+      ticks: {
+        color: COLOR_SLATE,
+        callback(valor: string | number) {
+          return `S/ ${Math.round(Number(valor) / 1000)}k`;
+        },
+      },
+    },
+    y: {
+      grid: { display: false },
+      ticks: { color: COLOR_SLATE, font: { size: 11, weight: 700 as const } },
+    },
+  },
+};
+
+const datosCursos = computed(() => ({
+  labels: topCursosAlumnos.value.map((curso) =>
+    curso.curso.length > 28 ? `${curso.curso.slice(0, 28)}…` : curso.curso,
+  ),
+  datasets: [
+    {
+      label: "Asignados",
+      data: topCursosAlumnos.value.map((curso) => curso.matriculas),
+      backgroundColor: COLOR_PRIMARY,
+      borderRadius: 0,
+    },
+    {
+      label: "Completados",
+      data: topCursosAlumnos.value.map((curso) => curso.completados),
+      backgroundColor: COLOR_EMERALD,
+      borderRadius: 0,
+    },
+  ],
+}));
+
+const opcionesCursos = {
+  ...opcionesBase,
+  indexAxis: "y" as const,
+  scales: {
+    x: {
+      beginAtZero: true,
+      grid: { color: "rgba(203, 213, 225, 0.45)" },
+      ticks: { color: COLOR_SLATE },
+    },
+    y: {
+      grid: { display: false },
+      ticks: { color: COLOR_SLATE, font: { size: 10, weight: 700 as const } },
+    },
+  },
+};
+
+const datosFinalizacion = computed(() => ({
+  labels: ["Completados", "Pendientes"],
+  datasets: [
+    {
+      data: [
+        completadosTotales.value,
+        Math.max(matriculasTotales.value - completadosTotales.value, 0),
+      ],
+      backgroundColor: [COLOR_EMERALD, "rgba(100, 116, 139, 0.35)"],
+      borderWidth: 0,
+      hoverOffset: 6,
+    },
+  ],
+}));
+
+const opcionesDona = {
+  ...opcionesBase,
+  cutout: "62%",
+  plugins: {
+    ...opcionesBase.plugins,
+    legend: {
+      position: "bottom" as const,
+      labels: opcionesBase.plugins.legend.labels,
+    },
+  },
+};
+
+const datosNodos = computed(() => ({
+  labels: cumplimientoNodos.value.map((item) =>
+    item.nodo.length > 22 ? `${item.nodo.slice(0, 22)}…` : item.nodo,
+  ),
+  datasets: [
+    {
+      label: "Personas",
+      data: cumplimientoNodos.value.map((item) => item.personas),
+      backgroundColor: COLOR_VIOLET,
+      borderRadius: 0,
+    },
+    {
+      label: "Progreso %",
+      data: cumplimientoNodos.value.map((item) => item.progreso),
+      backgroundColor: COLOR_ACCENT,
+      borderRadius: 0,
+    },
+  ],
+}));
+
+const opcionesNodos = {
+  ...opcionesBase,
+  scales: {
+    x: {
+      grid: { display: false },
+      ticks: { color: COLOR_SLATE, maxRotation: 45, minRotation: 0, font: { size: 10 } },
+    },
+    y: {
+      beginAtZero: true,
+      grid: { color: "rgba(203, 213, 225, 0.45)" },
+      ticks: { color: COLOR_SLATE },
+    },
+  },
+};
+
+const datosRutas = computed(() => {
+  const publicadas = rutas.value.filter(
+    (r) => (r.estado ?? "PUBLICADA") === "PUBLICADA",
+  ).length;
+  const borradores = rutas.value.filter((r) => r.estado === "BORRADOR").length;
+  const archivadas = rutas.value.filter((r) => r.estado === "ARCHIVADA").length;
+  return {
+    labels: ["Publicadas", "Borradores", "Archivadas"],
+    datasets: [
+      {
+        data: [publicadas, borradores, archivadas],
+        backgroundColor: [COLOR_PRIMARY, COLOR_ACCENT, COLOR_SLATE],
+        borderWidth: 0,
+      },
+    ],
+  };
+});
+
 const reportesGerenciales = [
   {
+    nombre: "Ingresos por curso",
+    descripcion: "Top cursos por ingresos, precio y completados.",
+    icono: CircleDollarSign,
+  },
+  {
     nombre: "Matrícula por curso",
-    descripcion: "Alumnos asignados, completados, pendientes y nivel de finalización.",
+    descripcion: "Asignados, completados, pendientes y finalización.",
     icono: UsersRound,
   },
   {
     nombre: "Desempeño de rutas",
-    descripcion: "Participación, cursos incluidos, progreso y certificación por ruta.",
+    descripcion: "Participantes, cursos, progreso, precio y estado.",
     icono: Route,
   },
   {
-    nombre: "Ingresos por curso",
-    descripcion: "Precio, matrículas completadas e ingresos generados por formación.",
-    icono: CircleDollarSign,
-  },
-  {
-    nombre: "Cumplimiento por área",
-    descripcion: "Usuarios gestionados, responsables y avance de cada unidad.",
+    nombre: "Cumplimiento por nodo",
+    descripcion: "Personas y avance por nodo de la estructura.",
     icono: Building2,
   },
   {
     nombre: "Progreso por trabajador",
-    descripcion: "Situación individual, sede, área y porcentaje de aprendizaje.",
+    descripcion: "Situación individual y pertenencia estructural.",
     icono: TrendingUp,
   },
   {
     nombre: "Inactividad y vencimientos",
-    descripcion: "Personas suspendidas, invitadas o con avance menor al esperado.",
+    descripcion: "Personas en riesgo o con bajo avance.",
     icono: Target,
   },
 ];
@@ -284,13 +699,15 @@ const filas = computed<FilaReporte[]>(() => {
       alumnos: ruta.usuarios,
       cursos: ruta.cursos,
       progreso: `${ruta.progreso}%`,
+      precio: moneda(ruta.precio ?? 0),
+      descuentos: ruta.descuentos?.length ?? (ruta.descuentoInterno ? 1 : 0),
       certificado: ruta.certificado ? "Sí" : "No",
       estado: ruta.estado ?? "PUBLICADA",
     }));
   }
   if (reporteActivo.value === "Ingresos por curso") {
     return [...resumenCursos.value]
-      .sort((primero, segundo) => segundo.ingresos - primero.ingresos)
+      .sort((a, b) => b.ingresos - a.ingresos)
       .map((curso) => ({
         curso: curso.curso,
         precio: moneda(curso.precio),
@@ -298,13 +715,39 @@ const filas = computed<FilaReporte[]>(() => {
         ingresos: moneda(curso.ingresos),
       }));
   }
-  if (reporteActivo.value === "Cumplimiento por área") {
-    return areas.value.map((area) => ({
-      area: area.nombre,
-      alumnos: area.usuarios,
-      responsable: area.responsable,
-      progreso: `${area.progreso}%`,
-    }));
+  if (reporteActivo.value === "Cumplimiento por nodo") {
+    return unidades.value
+      .filter((unidad) => unidad.estado === "ACTIVA" && !unidad.esSistema)
+      .map((unidad) => {
+        const idsUsuarios = new Set(
+          vinculaciones.value
+            .filter(
+              (item) => item.unidadId === unidad.id && item.estado === "ACTIVA",
+            )
+            .map((item) => item.usuarioId),
+        );
+        const personas = usuarios.value.filter((item) =>
+          idsUsuarios.has(String(item.id)),
+        );
+        const estructura = estructuras.value.find(
+          (item) => item.id === unidad.estructuraId,
+        );
+        const nivel = niveles.value.find((item) => item.id === unidad.nivelId);
+        return {
+          estructura: estructura?.nombre ?? "Sin estructura",
+          nivel: nivel?.nombre ?? "Sin nivel",
+          nodo: unidad.nombre,
+          personas: personas.length,
+          progreso: `${
+            personas.length
+              ? Math.round(
+                  personas.reduce((total, item) => total + item.progreso, 0) /
+                    personas.length,
+                )
+              : 0
+          }%`,
+        };
+      });
   }
   if (reporteActivo.value === "Inactividad y vencimientos") {
     return usuarios.value
@@ -313,15 +756,14 @@ const filas = computed<FilaReporte[]>(() => {
       )
       .map((usuario) => ({
         colaborador: usuario.nombre,
-        area: usuario.area,
+        pertenencia: pertenenciaPrincipal(usuario),
         estado: usuario.estado,
         progreso: `${usuario.progreso}%`,
       }));
   }
   return usuarios.value.map((usuario) => ({
     colaborador: usuario.nombre,
-    area: usuario.area,
-    sede: usuario.sede,
+    pertenencia: pertenenciaPrincipal(usuario),
     progreso: `${usuario.progreso}%`,
     estado: usuario.estado,
   }));
@@ -338,14 +780,6 @@ const columnas = computed(() => {
       }))
     : [];
 });
-
-function moneda(valor: number) {
-  return new Intl.NumberFormat("es-PE", {
-    style: "currency",
-    currency: "PEN",
-    maximumFractionDigits: 0,
-  }).format(valor);
-}
 
 function abrir(nombre: string) {
   reporteActivo.value = nombre;
@@ -388,7 +822,7 @@ function descargarPdf() {
   pdf.text(reporteActivo.value, 16, 29);
   pdf.setFontSize(9);
   pdf.text(
-    `Alumnos: ${activos.value.length} · Matrículas: ${matriculasTotales.value} · Ingresos: ${moneda(ingresosTotales.value)}`,
+    `Alumnos: ${activos.value.length} · Matrículas: ${matriculasTotales.value} · Ingresos: ${moneda(ingresosTotales.value)} · Certificados: ${certificados.value.length}`,
     16,
     38,
   );
@@ -411,43 +845,41 @@ function descargarPdf() {
 
 <template>
   <section class="mx-auto grid max-w-375 gap-6">
-    <div class="flex flex-wrap items-end justify-between gap-4">
-      <div>
-        <p class="text-xs font-black uppercase tracking-[0.2em] text-primary">
-          Inteligencia empresarial
-        </p>
-        <h1 class="mt-2 text-3xl font-black">Panel gerencial de formación</h1>
-        <p class="mt-1 text-sm text-muted-foreground">
-          Controla alumnos, cursos, rutas, cumplimiento e ingresos desde una sola vista.
-        </p>
-      </div>
+    <header class="flex flex-wrap items-end justify-between gap-4">
+      <TituloConAyuda
+        eyebrow="Inteligencia empresarial"
+        titulo="Reportes de formación"
+        ayuda="Primero ingresos y crecimiento de alumnado; el reporte clave es el top 5 de cursos por ingresos."
+      />
       <div class="flex flex-wrap items-end gap-2">
         <label class="grid gap-1.5">
-          <span class="text-[11px] font-black uppercase tracking-wider text-muted-foreground">
-            Periodo del reporte
-          </span>
+          <span class="filtro-label mb-0">Periodo</span>
           <Select
             v-model="periodo"
             :options="periodos"
-            class="min-w-40"
+            class="filtro-control min-w-40"
+            panel-class="tukuy-filtro-panel"
             aria-label="Periodo del reporte"
           />
         </label>
         <Button variant="outline" @click="descargarCsv">
-          <FileSpreadsheet class="h-4 w-4" />Excel/CSV
+          <FileSpreadsheet class="h-4 w-4" />
+          CSV
         </Button>
         <Button @click="descargarPdf">
-          <Download class="h-4 w-4" />PDF ejecutivo
+          <Download class="h-4 w-4" />
+          PDF
         </Button>
       </div>
-    </div>
+    </header>
 
-    <div v-if="cargando || cargandoCursos" class="grid gap-5">
+    <div v-if="cargando" class="grid gap-5">
       <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <Skeleton v-for="item in 4" :key="item" height="9rem" />
+        <Skeleton v-for="item in 4" :key="item" class="h-28 w-full" />
       </div>
       <div class="grid gap-5 xl:grid-cols-3">
-        <Skeleton v-for="item in 3" :key="item" height="22rem" />
+        <Skeleton class="h-80 xl:col-span-2" />
+        <Skeleton class="h-80" />
       </div>
     </div>
 
@@ -457,88 +889,419 @@ function descargarPdf() {
           v-for="indicador in indicadores"
           :key="indicador.etiqueta"
           class="overflow-hidden border-border bg-card"
+          :class="
+            indicador.acento === 'accent'
+              ? 'border-t-4 border-t-accent'
+              : 'border-t-4 border-t-primary'
+          "
         >
-          <CardContent class="border-l-4 border-l-primary p-5">
-            <div class="flex items-start justify-between gap-3">
-              <component :is="indicador.icono" class="h-6 w-6" :class="indicador.color" />
-              <span class="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Gerencia</span>
+          <CardContent class="flex items-center gap-4 p-5">
+            <div
+              class="grid h-11 w-11 place-items-center"
+              :class="
+                indicador.acento === 'accent'
+                  ? 'bg-accent/20 text-[#B87A00]'
+                  : 'bg-primary/10 text-primary'
+              "
+            >
+              <component :is="indicador.icono" class="h-5 w-5" />
             </div>
-            <strong class="mt-5 block text-3xl font-black tracking-tight">{{ indicador.valor }}</strong>
-            <p class="mt-1 text-sm font-bold">{{ indicador.etiqueta }}</p>
-            <p class="mt-1 text-xs text-muted-foreground">{{ indicador.detalle }}</p>
+            <div class="min-w-0">
+              <strong class="block text-2xl font-black tracking-tight">{{
+                indicador.valor
+              }}</strong>
+              <p class="text-xs font-bold">{{ indicador.etiqueta }}</p>
+              <p class="truncate text-[11px] text-muted-foreground">
+                {{ indicador.detalle }}
+              </p>
+            </div>
           </CardContent>
         </Card>
       </div>
 
-      <div class="grid gap-5 xl:grid-cols-3">
-        <Card class="border-border bg-card">
-          <CardContent class="p-6">
-            <div class="flex items-start justify-between gap-3">
-              <div><h2 class="text-lg font-black">Top 5 cursos</h2><p class="text-xs text-muted-foreground">Por cantidad de alumnos gestionados</p></div>
-              <UsersRound class="h-5 w-5 text-primary" />
+      <!-- 1. Ingresos -->
+      <Card class="border-border border-t-4 border-t-accent bg-card">
+        <CardContent class="p-5 sm:p-6">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p class="text-[11px] font-bold uppercase tracking-wide text-[#B87A00]">
+                Prioridad comercial
+              </p>
+              <h2 class="text-lg font-black">Evolución de ingresos</h2>
+              <p class="text-xs text-muted-foreground">
+                Ingresos por formación en el periodo seleccionado
+              </p>
             </div>
-            <div class="mt-6 space-y-5">
-              <article v-for="(curso, indice) in topCursos" :key="curso.curso">
-                <div class="flex items-start gap-3">
-                  <span class="grid h-7 w-7 shrink-0 place-items-center bg-primary text-xs font-black text-primary-foreground">{{ indice + 1 }}</span>
-                  <div class="min-w-0 flex-1"><div class="flex justify-between gap-3"><p class="truncate text-sm font-bold">{{ curso.curso }}</p><strong class="shrink-0 text-sm">{{ curso.matriculas }}</strong></div><div class="mt-2 h-2 bg-muted"><div class="h-full bg-primary" :style="{ width: `${(curso.matriculas / maximoMatriculas) * 100}%` }" /></div><p class="mt-1 text-[10px] text-muted-foreground">{{ curso.completados }} completaron · {{ curso.finalizacion }}%</p></div>
+            <div class="text-right">
+              <strong class="text-2xl font-black text-primary">{{
+                moneda(ingresosTotales)
+              }}</strong>
+              <p class="text-[11px] font-bold text-emerald-700">
+                +{{ crecimientoIngresos }}% vs inicio del periodo
+              </p>
+            </div>
+          </div>
+          <div class="mt-4 h-72 w-full">
+            <Chart
+              type="line"
+              :data="datosEvolucion"
+              :options="opcionesEvolucion"
+              class="h-full w-full"
+              :canvas-props="{
+                role: 'img',
+                'aria-label': 'Evolución mensual de ingresos',
+              }"
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      <!-- 2. Crecimiento alumnado + Top 5 ingresos -->
+      <div class="grid gap-5 xl:grid-cols-2">
+        <Card class="border-border border-t-4 border-t-primary bg-card">
+          <CardContent class="p-5 sm:p-6">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 class="text-lg font-black">Crecimiento de alumnado</h2>
+                <p class="text-xs text-muted-foreground">
+                  Alumnos activos y matrículas mes a mes
+                </p>
+              </div>
+              <div class="text-right">
+                <strong class="text-xl font-black">{{
+                  activos.length.toLocaleString("es-PE")
+                }}</strong>
+                <p class="text-[11px] font-bold text-emerald-700">
+                  +{{ crecimientoAlumnado }}% en el periodo
+                </p>
+              </div>
+            </div>
+            <div class="mt-4 h-64 w-full">
+              <Chart
+                type="bar"
+                :data="datosCrecimientoAlumnos"
+                :options="opcionesCrecimientoAlumnos"
+                class="h-full w-full"
+                :canvas-props="{
+                  role: 'img',
+                  'aria-label': 'Crecimiento de alumnos y matrículas',
+                }"
+              />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card class="border-border border-t-4 border-t-accent bg-card">
+          <CardContent class="p-5 sm:p-6">
+            <div class="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <p class="text-[11px] font-bold uppercase tracking-wide text-[#B87A00]">
+                  Reporte clave
+                </p>
+                <h2 class="text-lg font-black">Top 5 cursos por ingresos</h2>
+                <p class="text-xs text-muted-foreground">
+                  Cursos que más dinero generaron
+                </p>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                @click="abrir('Ingresos por curso')"
+              >
+                Ver detalle
+              </Button>
+            </div>
+            <div
+              v-if="topCursosIngresos.length"
+              class="h-64 w-full"
+            >
+              <Chart
+                type="bar"
+                :data="datosTopIngresos"
+                :options="opcionesTopIngresos"
+                class="h-full w-full"
+                :canvas-props="{
+                  role: 'img',
+                  'aria-label': 'Top 5 cursos con más ingresos',
+                }"
+              />
+            </div>
+            <p
+              v-else
+              class="grid h-64 place-items-center text-sm text-muted-foreground"
+            >
+              Aún no hay cursos con ingresos en el periodo.
+            </p>
+            <ul
+              v-if="topCursosIngresos.length"
+              class="mt-4 grid gap-2"
+            >
+              <li
+                v-for="(curso, indice) in topCursosIngresos"
+                :key="curso.curso"
+                class="flex items-center justify-between gap-3 border border-border px-3 py-2 text-sm"
+              >
+                <span class="flex min-w-0 items-center gap-2">
+                  <span
+                    class="grid h-6 w-6 shrink-0 place-items-center text-xs font-black"
+                    :class="
+                      indice === 0
+                        ? 'bg-accent text-[#7A5600]'
+                        : 'bg-muted text-muted-foreground'
+                    "
+                  >
+                    {{ indice + 1 }}
+                  </span>
+                  <span class="truncate font-bold">{{ curso.curso }}</span>
+                </span>
+                <span class="shrink-0 font-black text-primary">
+                  {{ moneda(curso.ingresos) }}
+                </span>
+              </li>
+            </ul>
+          </CardContent>
+        </Card>
+      </div>
+
+      <!-- 3. Resto de reportes -->
+      <div class="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
+        <Card class="border-border bg-card">
+          <CardContent class="p-5 sm:p-6">
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <h2 class="text-lg font-black">Finalización</h2>
+                <p class="text-xs text-muted-foreground">
+                  Completados vs pendientes
+                </p>
+              </div>
+              <Award class="h-5 w-5 text-[#B87A00]" />
+            </div>
+            <div class="relative mt-4 h-56 w-full">
+              <Chart
+                type="doughnut"
+                :data="datosFinalizacion"
+                :options="opcionesDona"
+                class="h-full w-full"
+                :canvas-props="{
+                  role: 'img',
+                  'aria-label': 'Distribución de matrículas completadas y pendientes',
+                }"
+              />
+              <div
+                class="pointer-events-none absolute inset-0 grid place-items-center pt-2"
+              >
+                <div class="text-center">
+                  <strong class="block text-3xl font-black">{{
+                    finalizacion
+                  }}%</strong>
+                  <span
+                    class="text-[10px] font-bold uppercase tracking-wide text-muted-foreground"
+                    >avance</span
+                  >
                 </div>
-              </article>
+              </div>
             </div>
-            <Button class="mt-6 w-full" variant="outline" @click="abrir('Matrícula por curso')">Ver matrícula completa</Button>
+            <p class="mt-3 text-center text-xs text-muted-foreground">
+              {{ completadosTotales }} de {{ matriculasTotales }} matrículas
+            </p>
           </CardContent>
         </Card>
 
         <Card class="border-border bg-card">
-          <CardContent class="p-6">
-            <div class="flex items-start justify-between gap-3">
-              <div><h2 class="text-lg font-black">Top 5 rutas</h2><p class="text-xs text-muted-foreground">Por participantes asignados</p></div>
-              <Route class="h-5 w-5 text-emerald-700 dark:text-emerald-400" />
+          <CardContent class="p-5 sm:p-6">
+            <div class="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <h2 class="text-lg font-black">Cursos con más alumnos</h2>
+                <p class="text-xs text-muted-foreground">
+                  Asignados vs completados
+                </p>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                @click="abrir('Matrícula por curso')"
+              >
+                Ver detalle
+              </Button>
             </div>
-            <div class="mt-6 space-y-5">
-              <article v-for="(ruta, indice) in topRutas" :key="ruta.id">
-                <div class="flex items-start gap-3"><span class="grid h-7 w-7 shrink-0 place-items-center bg-emerald-600 text-xs font-black text-white">{{ indice + 1 }}</span><div class="min-w-0 flex-1"><div class="flex justify-between gap-3"><p class="truncate text-sm font-bold">{{ ruta.nombre }}</p><strong class="shrink-0 text-sm">{{ ruta.usuarios }}</strong></div><div class="mt-2 h-2 bg-muted"><div class="h-full bg-emerald-600" :style="{ width: `${(ruta.usuarios / maximoRutas) * 100}%` }" /></div><p class="mt-1 text-[10px] text-muted-foreground">{{ ruta.cursos }} cursos · {{ ruta.progreso }}% de progreso</p></div></div>
-              </article>
+            <div class="h-64 w-full">
+              <Chart
+                type="bar"
+                :data="datosCursos"
+                :options="opcionesCursos"
+                class="h-full w-full"
+                :canvas-props="{
+                  role: 'img',
+                  'aria-label': 'Comparativa de alumnos asignados y completados por curso',
+                }"
+              />
             </div>
-            <Button class="mt-6 w-full" variant="outline" @click="abrir('Desempeño de rutas')">Ver rutas completas</Button>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div class="grid gap-5 xl:grid-cols-2">
+        <Card class="border-border bg-card">
+          <CardContent class="p-5 sm:p-6">
+            <div class="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <h2 class="text-lg font-black">Cumplimiento por nodo</h2>
+                <p class="text-xs text-muted-foreground">
+                  Personas y progreso medio
+                </p>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                @click="abrir('Cumplimiento por nodo')"
+              >
+                Ver detalle
+              </Button>
+            </div>
+            <div class="h-72 w-full">
+              <Chart
+                type="bar"
+                :data="datosNodos"
+                :options="opcionesNodos"
+                class="h-full w-full"
+                :canvas-props="{
+                  role: 'img',
+                  'aria-label': 'Personas y progreso por nodo organizacional',
+                }"
+              />
+            </div>
           </CardContent>
         </Card>
 
         <Card class="border-border bg-card">
-          <CardContent class="p-6">
-            <div class="flex items-start justify-between gap-3"><div><h2 class="text-lg font-black">Top 5 ingresos</h2><p class="text-xs text-muted-foreground">Por matrículas completadas</p></div><CircleDollarSign class="h-5 w-5 text-amber-700 dark:text-amber-400" /></div>
-            <div class="mt-6 space-y-5">
-              <article v-for="(curso, indice) in topIngresos" :key="curso.curso">
-                <div class="flex items-start gap-3"><span class="grid h-7 w-7 shrink-0 place-items-center bg-[#F5B400] text-xs font-black text-[#071F52]">{{ indice + 1 }}</span><div class="min-w-0 flex-1"><div class="flex justify-between gap-3"><p class="truncate text-sm font-bold">{{ curso.curso }}</p><strong class="shrink-0 text-sm">{{ moneda(curso.ingresos) }}</strong></div><div class="mt-2 h-2 bg-muted"><div class="h-full bg-[#F5B400]" :style="{ width: `${(curso.ingresos / maximoIngresos) * 100}%` }" /></div><p class="mt-1 text-[10px] text-muted-foreground">{{ curso.completados }} matrículas · {{ moneda(curso.precio) }} por alumno</p></div></div>
-              </article>
+          <CardContent class="p-5 sm:p-6">
+            <div class="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <h2 class="text-lg font-black">Estado de rutas</h2>
+                <p class="text-xs text-muted-foreground">
+                  Publicadas, borradores y archivadas
+                </p>
+              </div>
+              <Route class="h-5 w-5 text-primary" />
             </div>
-            <Button class="mt-6 w-full" variant="outline" @click="abrir('Ingresos por curso')">Ver reporte financiero</Button>
+            <div class="h-56 w-full">
+              <Chart
+                type="doughnut"
+                :data="datosRutas"
+                :options="opcionesDona"
+                class="h-full w-full"
+                :canvas-props="{
+                  role: 'img',
+                  'aria-label': 'Distribución de rutas por estado',
+                }"
+              />
+            </div>
+            <ul class="mt-3 grid gap-2">
+              <li
+                v-for="ruta in topRutas"
+                :key="ruta.id"
+                class="flex items-center justify-between gap-2 border border-border px-3 py-2 text-sm"
+              >
+                <span class="truncate font-bold">{{ ruta.nombre }}</span>
+                <span class="shrink-0 text-xs text-muted-foreground">
+                  {{ ruta.usuarios }} · {{ ruta.progreso }}%
+                </span>
+              </li>
+            </ul>
+            <Button
+              class="mt-4 w-full"
+              variant="outline"
+              @click="abrir('Desempeño de rutas')"
+            >
+              Ver rutas
+            </Button>
           </CardContent>
         </Card>
       </div>
 
       <Card class="border-border bg-card">
-        <CardContent class="p-6">
-          <div class="flex flex-wrap items-start justify-between gap-3"><div><h2 class="text-lg font-black">Evolución de ingresos por formación</h2><p class="text-xs text-muted-foreground">Distribución del ingreso realizado por matrículas completadas</p></div><div class="text-right"><strong class="text-2xl font-black text-primary">{{ moneda(ingresosTotales) }}</strong><p class="text-xs text-muted-foreground">acumulado</p></div></div>
-          <div class="mt-8 flex h-64 items-end gap-2 border-b border-border sm:gap-4">
-            <div v-for="item in evolucionIngresos" :key="item.mes" class="flex h-full min-w-0 flex-1 flex-col justify-end"><span class="mb-2 hidden text-center text-[10px] font-bold text-muted-foreground sm:block">{{ moneda(item.importe) }}</span><div class="min-h-1 bg-linear-to-t from-primary to-blue-400 transition-all" :style="{ height: `${(item.importe / maximoEvolucion) * 82}%` }" /><span class="mt-2 text-center text-[10px] text-muted-foreground">{{ item.mes }}</span></div>
+        <CardContent class="p-5 sm:p-6">
+          <div class="mb-4">
+            <h2 class="text-lg font-black">Más reportes</h2>
+            <p class="text-xs text-muted-foreground">
+              Abre el detalle paginado y expórtalo en CSV o PDF.
+            </p>
           </div>
-          <p class="mt-5 border-l-4 border-l-[#F5B400] bg-[#F5B400]/10 p-3 text-xs text-muted-foreground">El ingreso se calcula con el precio vigente del curso multiplicado por las matrículas completadas. Los cursos gratuitos no generan ingreso. La utilidad neta se incorporará cuando el backend proporcione costos, comisiones e impuestos.</p>
+          <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <button
+              v-for="reporte in reportesGerenciales"
+              :key="reporte.nombre"
+              type="button"
+              class="border border-border border-l-4 border-l-transparent p-4 text-left transition hover:border-l-primary hover:bg-muted/40"
+              @click="abrir(reporte.nombre)"
+            >
+              <component :is="reporte.icono" class="h-5 w-5 text-primary" />
+              <h3 class="mt-3 text-sm font-black">{{ reporte.nombre }}</h3>
+              <p class="mt-1 text-xs leading-5 text-muted-foreground">
+                {{ reporte.descripcion }}
+              </p>
+            </button>
+          </div>
         </CardContent>
       </Card>
 
-      <div>
-        <div class="mb-4"><h2 class="text-xl font-black">Reportes para gerencia</h2><p class="text-sm text-muted-foreground">Abre el detalle paginado y expórtalo en CSV o PDF.</p></div>
-        <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          <Card v-for="reporte in reportesGerenciales" :key="reporte.nombre" class="border-border bg-card"><CardContent class="p-5"><component :is="reporte.icono" class="h-5 w-5 text-primary" /><h3 class="mt-4 font-black">{{ reporte.nombre }}</h3><p class="mt-2 min-h-10 text-xs leading-5 text-muted-foreground">{{ reporte.descripcion }}</p><Button class="mt-4" size="sm" variant="outline" @click="abrir(reporte.nombre)">Abrir reporte</Button></CardContent></Card>
-        </div>
-      </div>
+      <p
+        class="border border-border border-l-4 border-l-accent bg-muted/20 p-3 text-xs text-muted-foreground"
+      >
+        Los ingresos se estiman con el precio del catálogo × matrículas
+        completadas. Cursos gratuitos no generan ingreso. La utilidad neta
+        requerirá costos e impuestos del backend.
+      </p>
     </template>
 
-    <Dialog v-model:visible="modal" modal :header="reporteActivo" :style="{ width: 'min(96vw, 1120px)' }">
-      <div class="mb-4 flex flex-wrap items-center justify-between gap-3"><p class="text-sm text-muted-foreground">{{ filas.length }} registros disponibles</p><div class="flex gap-2"><Button variant="outline" @click="descargarCsv"><FileSpreadsheet class="h-4 w-4" />CSV</Button><Button @click="descargarPdf"><Download class="h-4 w-4" />PDF</Button></div></div>
-      <DataTable :value="filas" paginator :rows="8" :rows-per-page-options="[8, 15, 30]" striped-rows table-style="min-width: 760px" removable-sort>
-        <Column v-for="columna in columnas" :key="columna.field" :field="columna.field" :header="columna.header" sortable />
+    <Dialog
+      v-model:visible="modal"
+      modal
+      :header="reporteActivo"
+      :style="{ width: 'min(96vw, 70rem)' }"
+      :pt="{
+        root: { class: 'rounded-none' },
+        header: { class: 'rounded-none border-b border-border' },
+        content: { class: 'rounded-none' },
+      }"
+    >
+      <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <p class="text-sm text-muted-foreground">
+          {{ filas.length }} registros
+        </p>
+        <div class="flex gap-2">
+          <Button variant="outline" @click="descargarCsv">
+            <FileSpreadsheet class="h-4 w-4" />
+            CSV
+          </Button>
+          <Button @click="descargarPdf">
+            <Download class="h-4 w-4" />
+            PDF
+          </Button>
+        </div>
+      </div>
+      <DataTable
+        class="tabla-estudiantes"
+        :value="filas"
+        paginator
+        :rows="8"
+        :rows-per-page-options="[8, 15, 30]"
+        removable-sort
+        size="small"
+        table-style="min-width: 48rem"
+      >
+        <Column
+          v-for="columna in columnas"
+          :key="columna.field"
+          :field="columna.field"
+          :header="columna.header"
+          sortable
+        />
+        <template #empty>
+          <div class="py-10 text-center text-sm text-muted-foreground">
+            No hay datos para este reporte.
+          </div>
+        </template>
       </DataTable>
     </Dialog>
   </section>

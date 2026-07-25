@@ -93,7 +93,14 @@ function normalizarPermisosOrganizacion(
         ...membresia.permisos,
         ...permisosAcademicosOrganizacion,
         ...(["ORGANIZATION_OWNER", "ORGANIZATION_ADMIN"].includes(membresia.rol)
-          ? ["configuracion.editar", "cursos.crear", "cursos.editar"]
+          ? [
+              "configuracion.editar",
+              "cursos.crear",
+              "cursos.editar",
+              "cursos.aprobar",
+              "categorias.ver",
+              "categorias.gestionar",
+            ]
           : []),
       ]),
     ],
@@ -118,7 +125,14 @@ if (contextoActivo.value?.portal === "organizacion") {
         ...ctx.permisos,
         ...permisosAcademicosOrganizacion,
         ...(["ORGANIZATION_OWNER", "ORGANIZATION_ADMIN"].includes(ctx.rol)
-          ? ["configuracion.editar", "cursos.crear", "cursos.editar"]
+          ? [
+              "configuracion.editar",
+              "cursos.crear",
+              "cursos.editar",
+              "cursos.aprobar",
+              "categorias.ver",
+              "categorias.gestionar",
+            ]
           : []),
       ]),
     ],

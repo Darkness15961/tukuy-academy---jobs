@@ -12,6 +12,7 @@ import ToggleSwitch from "primevue/toggleswitch";
 import { onMounted, reactive, ref } from "vue";
 
 import { Button } from "@/components/ui/button";
+import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { administracionService } from "@/api/services/administracion.service";
@@ -51,14 +52,12 @@ async function guardar() {
 <template>
   <section class="mx-auto grid max-w-300 gap-6">
     <div>
-      <p class="text-xs font-black uppercase tracking-[.2em] text-violet-700">
-        Parámetros globales
-      </p>
-      <h1 class="mt-2 text-3xl font-black">Configuración</h1>
-      <p class="mt-2 text-sm text-muted-foreground">
-        Define reglas transversales de operación, revisión, seguridad y
-        notificaciones.
-      </p>
+      <TituloConAyuda
+          clase-eyebrow="text-primary"
+        eyebrow="Parámetros globales"
+        titulo="Configuración"
+        ayuda="Define reglas transversales de operación, revisión, seguridad y notificaciones."
+      />
     </div>
 
     <div
@@ -75,7 +74,7 @@ async function guardar() {
       <Card class="border-border bg-card"
         ><CardContent class="p-6"
           ><div class="flex items-center gap-3">
-            <SlidersHorizontal class="h-5 w-5 text-violet-700" />
+            <SlidersHorizontal class="h-5 w-5 text-primary" />
             <div>
               <h2 class="font-black">Datos de plataforma</h2>
               <p class="text-xs text-muted-foreground">
@@ -128,7 +127,7 @@ async function guardar() {
       <Card class="border-border bg-card"
         ><CardContent class="p-6"
           ><div class="flex items-center gap-3">
-            <ShieldCheck class="h-5 w-5 text-violet-700" />
+            <ShieldCheck class="h-5 w-5 text-primary" />
             <div>
               <h2 class="font-black">Gobierno y seguridad</h2>
               <p class="text-xs text-muted-foreground">
@@ -173,7 +172,7 @@ async function guardar() {
       <Card class="border-border bg-card lg:col-span-2"
         ><CardContent class="p-6"
           ><div class="flex items-center gap-3">
-            <Bell class="h-5 w-5 text-violet-700" />
+            <Bell class="h-5 w-5 text-primary" />
             <div>
               <h2 class="font-black">Alertas operativas</h2>
               <p class="text-xs text-muted-foreground">
@@ -210,7 +209,7 @@ async function guardar() {
       class="sticky bottom-4 flex justify-end border border-border bg-card/95 p-4 shadow-xl backdrop-blur"
     >
       <Button
-        class="bg-violet-800 px-6 hover:bg-violet-900"
+        class="bg-primary px-6 hover:bg-primary/90"
         :disabled="cargando"
         @click="guardar"
         ><Save class="h-4 w-4" /> Guardar configuración</Button

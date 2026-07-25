@@ -8,6 +8,7 @@ import Tag from "primevue/tag";
 import { computed, onMounted, ref } from "vue";
 
 import { Button } from "@/components/ui/button";
+import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -62,14 +63,12 @@ function severidad(valor: string) {
 <template>
   <section class="mx-auto grid max-w-400 gap-6">
     <div>
-      <p class="text-xs font-black uppercase tracking-[.2em] text-violet-700">
-        Identidad multiempresa
-      </p>
-      <h1 class="mt-2 text-3xl font-black">Usuarios globales</h1>
-      <p class="mt-2 text-sm text-muted-foreground">
-        Consulta perfiles, organizaciones y estados sin duplicar la identidad de
-        una persona.
-      </p>
+      <TituloConAyuda
+          clase-eyebrow="text-primary"
+        eyebrow="Identidad multiempresa"
+        titulo="Usuarios globales"
+        ayuda="Consulta perfiles, organizaciones y estados sin duplicar la identidad de una persona."
+      />
     </div>
 
     <div

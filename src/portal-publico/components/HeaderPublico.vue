@@ -97,12 +97,22 @@ onBeforeUnmount(() => {
           />
         </button>
 
-        <Button
-          class="rounded-none bg-[#F5B400] text-[#07152B] hover:bg-amber-400"
-          @click="router.push('/login')"
-        >
-          ACCEDER
-        </Button>
+        <div class="flex items-center gap-2">
+          <Button
+            class="rounded-none border border-current/20 bg-transparent hover:bg-white/10"
+            :class="desplazado ? 'text-[#07152B]' : 'text-white'"
+            variant="outline"
+            @click="router.push('/registro')"
+          >
+            REGISTRARSE
+          </Button>
+          <Button
+            class="rounded-none bg-[#F5B400] text-[#07152B] hover:bg-amber-400"
+            @click="router.push('/login')"
+          >
+            ACCEDER
+          </Button>
+        </div>
       </nav>
 
       <Button
@@ -133,6 +143,13 @@ onBeforeUnmount(() => {
           {{ enlace.texto }}
         </button>
 
+        <Button
+          class="mt-2 rounded-none"
+          variant="outline"
+          @click="router.push('/registro')"
+        >
+          Registrarse
+        </Button>
         <Button class="mt-2 rounded-none" @click="router.push('/login')">
           Acceder
         </Button>

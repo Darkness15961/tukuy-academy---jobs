@@ -9,24 +9,27 @@ import {
   XCircle,
 } from "lucide-vue-next";
 import { onMounted, reactive, ref } from "vue";
+import { RouterLink } from "vue-router";
 import {
   docenteService,
   type SesionDocente,
 } from "@/api/services/docente.service";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import { Card, CardContent } from "@/components/ui/card";
 import Skeleton from "primevue/skeleton";
 const modal = ref(false);
 const cargando = ref(true);
 const sesiones = ref<SesionDocente[]>([]);
-const cursos = ref<string[]>([]);
+const cursos = ref<{ id: string; titulo: string }[]>([]);
 const sesionSeleccionada = ref<SesionDocente>();
 const nuevaSesion = reactive({
   titulo: "",
-  curso: "Gestión digital de obras",
+  cursoId: "",
   fechaHora: "",
   duracion: "60 min",
+  emailsInvitados: "",
 });
 
 onMounted(async () => {
@@ -36,20 +39,32 @@ onMounted(async () => {
       docenteService.cursos.listar(),
     ]);
     sesiones.value = listaSesiones;
-    cursos.value = listaCursos.map((curso) => curso.titulo);
-    if (cursos.value[0]) nuevaSesion.curso = cursos.value[0];
+    cursos.value = listaCursos.map((curso) => ({
+      id: curso.id,
+      titulo: curso.titulo,
+    }));
+    if (cursos.value[0]) nuevaSesion.cursoId = cursos.value[0].id;
   } finally {
     cargando.value = false;
   }
 });
 
 async function programar() {
-  if (!nuevaSesion.titulo.trim() || !nuevaSesion.fechaHora) return;
+  if (!nuevaSesion.titulo.trim() || !nuevaSesion.fechaHora || !nuevaSesion.cursoId)
+    return;
+  const cursoElegido = cursos.value.find((c) => c.id === nuevaSesion.cursoId);
+  if (!cursoElegido) return;
   const fecha = new Date(nuevaSesion.fechaHora);
+  const emails = nuevaSesion.emailsInvitados
+    .split(/[,;\n]+/)
+    .map((e) => e.trim().toLowerCase())
+    .filter((e) => e.includes("@"));
+  const sufijo = Math.random().toString(36).slice(2, 6);
   const sesion: SesionDocente = {
     id: `s-${Date.now()}`,
     titulo: nuevaSesion.titulo.trim(),
-    curso: nuevaSesion.curso,
+    curso: cursoElegido.titulo,
+    cursoId: cursoElegido.id,
     fecha: new Intl.DateTimeFormat("es-PE", {
       day: "2-digit",
       month: "short",
@@ -62,17 +77,21 @@ async function programar() {
       minute: "2-digit",
     }).format(fecha),
     duracion: nuevaSesion.duracion,
-    inscritos: 0,
+    inscritos: emails.length,
     estado: "PROGRAMADA",
     fechaHoraIso: fecha.toISOString(),
+    calendarEventId: `gcal_doc_${Date.now().toString(36)}`,
+    enlace: `https://meet.google.com/tuk-${sufijo}`,
+    invitadosEmails: emails,
   };
   await docenteService.sesiones.crear(sesion);
   sesiones.value.push(sesion);
   Object.assign(nuevaSesion, {
     titulo: "",
-    curso: cursos.value[0] ?? "",
+    cursoId: cursos.value[0]?.id ?? "",
     fechaHora: "",
     duracion: "60 min",
+    emailsInvitados: "",
   });
   modal.value = false;
 }
@@ -100,9 +119,16 @@ function accionSesion(sesion: SesionDocente) {
   <section class="mx-auto grid max-w-375 gap-6">
     <div class="flex flex-wrap items-end justify-between gap-4">
       <div>
-        <h1 class="text-2xl font-black">Sesiones en vivo</h1>
-        <p class="mt-1 text-sm text-muted-foreground">
-          Programa encuentros, comparte el acceso y controla la asistencia.
+        <TituloConAyuda
+          titulo="Sesiones en vivo"
+          clase-titulo="text-2xl font-black"
+          ayuda="Programa encuentros sincronizados con la organización y los alumnos del curso. Se genera Meet y se invita por correo (matrículas + extras)."
+        />
+        <p class="mt-2 text-sm text-muted-foreground">
+          Para la vista mes a pantalla completa con filtros por curso, abre
+          <RouterLink class="font-bold text-primary underline-offset-2 hover:underline" to="/docente/calendario"
+            >Calendario</RouterLink
+          >.
         </p>
       </div>
       <Button class="bg-primary" @click="modal = true"
@@ -190,20 +216,29 @@ function accionSesion(sesion: SesionDocente) {
               class="h-11 rounded-md border border-border bg-card px-3 text-foreground"
               placeholder="Título de la sesión"
             /><select
-              v-model="nuevaSesion.curso"
+              v-model="nuevaSesion.cursoId"
               class="h-11 rounded-md border border-border bg-card px-3 text-foreground"
             >
-              <option v-for="curso in cursos" :key="curso" :value="curso">
-                {{ curso }}
+              <option
+                v-for="curso in cursos"
+                :key="curso.id"
+                :value="curso.id"
+              >
+                {{ curso.titulo }}
               </option></select
             ><input
               v-model="nuevaSesion.fechaHora"
               class="h-11 rounded-md border border-border bg-card px-3 text-foreground"
               type="datetime-local"
             />
+            <textarea
+              v-model="nuevaSesion.emailsInvitados"
+              class="min-h-20 rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground"
+              placeholder="Correos a invitar (Meet vía Calendar, separados por coma)"
+            />
             <div class="flex justify-end gap-2">
               <Button variant="outline" @click="modal = false">Cancelar</Button
-              ><Button @click="programar">Programar</Button>
+              ><Button @click="programar">Crear Meet e invitar</Button>
             </div>
           </div></CardContent
         ></Card
@@ -243,6 +278,18 @@ function accionSesion(sesion: SesionDocente) {
                 sesionSeleccionada.enlace
               }}</span
             >
+            <span
+              v-if="sesionSeleccionada.invitadosEmails?.length"
+              class="text-muted-foreground"
+            >
+              Invitados: {{ sesionSeleccionada.invitadosEmails.join(", ") }}
+            </span>
+            <span
+              v-if="sesionSeleccionada.calendarEventId"
+              class="text-xs text-muted-foreground"
+            >
+              Calendar: {{ sesionSeleccionada.calendarEventId }}
+            </span>
           </div>
           <div class="mt-5 flex flex-wrap justify-end gap-2">
             <Button variant="outline" @click="sesionSeleccionada = undefined"

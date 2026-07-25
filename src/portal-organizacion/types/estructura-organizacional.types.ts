@@ -41,13 +41,44 @@ export interface TipoUnidadEntidad {
   estado: "ACTIVO" | "INACTIVO";
 }
 
+export type TipoEstructuraOrganizacional =
+  | "FUNCIONAL"
+  | "TERRITORIAL"
+  | "PROYECTOS"
+  | "GOBIERNO"
+  | "PERSONALIZADA";
+
+/** Una dimensión independiente para ordenar y filtrar al personal. */
+export interface EstructuraOrganizacional {
+  id: string;
+  nombre: string;
+  descripcion?: string;
+  tipo: TipoEstructuraOrganizacional;
+  modoJerarquia: "ESTRICTA" | "FLEXIBLE";
+  esSistema: boolean;
+  estado: "ACTIVA" | "INACTIVA";
+}
+
+/** Nombre configurable de una posición jerárquica dentro de una estructura. */
+export interface NivelOrganizacional {
+  id: string;
+  estructuraId: string;
+  nombre: string;
+  orden: number;
+  estado: "ACTIVO" | "INACTIVO";
+}
+
 export interface UnidadOrganizacional {
   id: string;
   nombre: string;
   descripcion?: string;
   codigo?: string;
   tipoUnidadId: string;
+  estructuraId?: string;
+  nivelId?: string;
   unidadPadreId: string | null;
+  codigoSistema?: "DIRECCION" | "ADMINISTRACION" | "CERTIFICACION";
+  esSistema?: boolean;
   responsableUsuarioId?: string;
   politicaIncorporacionId?: string;
   /** Permite convertir una unidad concreta en terminal o contenedora. */

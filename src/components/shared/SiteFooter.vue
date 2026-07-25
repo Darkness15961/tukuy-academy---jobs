@@ -37,7 +37,7 @@ function handleFooterLink() {
     :class="
       isDark
         ? 'border-t border-white/10 bg-[#07152B] text-white'
-        : 'border-t border-[#D6E2EF] bg-[#EAF1F8] text-[#07152B]'
+        : 'border-t border-border bg-muted/80 text-foreground'
     "
   >
     <div
@@ -61,7 +61,7 @@ function handleFooterLink() {
               <span class="font-light"> Academy</span>
             </strong>
             <span
-              :class="['text-sm', isDark ? 'text-white/65' : 'text-[#52657A]']"
+              :class="['text-sm', isDark ? 'text-white/65' : 'text-muted-foreground']"
             >
               Formación, certificación y empleabilidad
             </span>
@@ -71,7 +71,7 @@ function handleFooterLink() {
         <p
           :class="[
             'max-w-sm text-sm leading-6',
-            isDark ? 'text-white/65' : 'text-[#52657A]',
+            isDark ? 'text-white/65' : 'text-muted-foreground',
           ]"
         >
           Plataforma simulada para capacitación, CV inteligente, certificados
@@ -81,7 +81,7 @@ function handleFooterLink() {
         <div
           :class="[
             'flex items-center gap-2 text-sm font-semibold',
-            isDark ? 'text-white/65' : 'text-[#52657A]',
+            isDark ? 'text-white/65' : 'text-muted-foreground',
           ]"
         >
           <span class="h-2 w-2 rounded-full bg-emerald-400" />
@@ -98,7 +98,7 @@ function handleFooterLink() {
           :class="
             isDark
               ? 'text-white/70 hover:text-white'
-              : 'text-[#52657A] hover:text-[#07152B]'
+              : 'text-muted-foreground hover:text-foreground'
           "
           variant="link"
           type="button"
@@ -117,7 +117,7 @@ function handleFooterLink() {
           :class="
             isDark
               ? 'text-white/70 hover:text-white'
-              : 'text-[#52657A] hover:text-[#07152B]'
+              : 'text-muted-foreground hover:text-foreground'
           "
           variant="link"
           type="button"
@@ -129,28 +129,28 @@ function handleFooterLink() {
 
       <div class="grid content-start gap-3">
         <h3 class="font-bold">Contacto</h3>
-        <span :class="['text-sm', isDark ? 'text-white/65' : 'text-[#52657A]']"
+        <span :class="['text-sm', isDark ? 'text-white/65' : 'text-muted-foreground']"
           >Cusco, Perú</span
         >
-        <span :class="['text-sm', isDark ? 'text-white/65' : 'text-[#52657A]']"
+        <span :class="['text-sm', isDark ? 'text-white/65' : 'text-muted-foreground']"
           >+51 930 804 475</span
         >
-        <span :class="['text-sm', isDark ? 'text-white/65' : 'text-[#52657A]']"
+        <span :class="['text-sm', isDark ? 'text-white/65' : 'text-muted-foreground']"
           >academy@tukuyobra.com</span
         >
-        <span :class="['text-sm', isDark ? 'text-white/65' : 'text-[#52657A]']"
+        <span :class="['text-sm', isDark ? 'text-white/65' : 'text-muted-foreground']"
           >Lun - Vie · 9am - 7pm</span
         >
       </div>
     </div>
 
     <div
-      :class="isDark ? 'border-t border-white/10' : 'border-t border-[#D6E2EF]'"
+      :class="isDark ? 'border-t border-white/10' : 'border-t border-border'"
     >
       <div
         :class="[
           'mx-auto flex max-w-7xl flex-col gap-2 px-5 py-4 text-xs sm:flex-row sm:items-center sm:justify-between',
-          isDark ? 'text-white/65' : 'text-[#52657A]',
+          isDark ? 'text-white/65' : 'text-muted-foreground',
         ]"
       >
         <span>© 2026 Tukuy Academy & Jobs.</span>

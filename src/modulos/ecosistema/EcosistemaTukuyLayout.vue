@@ -3,13 +3,13 @@ import {
   ArrowLeft,
   ArrowLeftRight,
   BriefcaseBusiness,
-  ChevronDown,
   FileText,
   LogOut,
   Menu,
   Settings,
   UsersRound,
   X,
+  ChevronDown,
 } from "lucide-vue-next";
 import {
   DropdownMenuContent,
@@ -34,62 +34,55 @@ import {
 const route = useRoute();
 const router = useRouter();
 const { logout } = useAuth();
-const { contextoActivo, tienePermiso } = useContextoSesion();
+const { contextoActivo, funcionesEntidadActiva, tienePermiso } =
+  useContextoSesion();
 const menuAbierto = ref(false);
 
-const enlaces = computed(() => {
-  const base = [
-    {
-      etiqueta: "Perfil profesional",
-      ruta: "/perfil-profesional",
-      icono: FileText,
-    },
-    {
-      etiqueta: "Bolsa Tukuy",
-      ruta: "/bolsa-tukuy",
-      icono: BriefcaseBusiness,
-    },
-    {
-      etiqueta: "Comunidad",
-      ruta: "/comunidad",
-      icono: UsersRound,
-    },
-  ];
-
-  if (tienePermiso("vacantes.gestionar")) {
-    base.push({
-      etiqueta: "Gestionar vacantes",
-      ruta: "/bolsa-tukuy/gestion",
-      icono: Settings,
-    });
-  }
-
-  if (tienePermiso("comunidad.moderar")) {
-    base.push({
-      etiqueta: "Moderar comunidad",
-      ruta: "/comunidad/moderacion",
-      icono: Settings,
-    });
-  }
-
-  return base;
-});
+/** Tres pilares del ecosistema. Grupos/eventos/entidades viven dentro de Comunidad. */
+const enlaces = [
+  {
+    etiqueta: "Comunidad",
+    ruta: "/comunidad",
+    icono: UsersRound,
+  },
+  {
+    etiqueta: "Bolsa Tukuy",
+    ruta: "/bolsa-tukuy",
+    icono: BriefcaseBusiness,
+  },
+  {
+    etiqueta: "Perfil profesional",
+    ruta: "/perfil-profesional",
+    icono: FileText,
+  },
+];
 
 const portalActivo = computed(() => contextoActivo.value?.portal ?? "personal");
 const organizacionActiva = computed(
   () => contextoActivo.value?.organizacionNombre ?? "Tukuy Personal",
 );
 const logoOrganizacion = computed(() => {
+  const desdeMembresia = funcionesEntidadActiva.value.find(
+    (item) => item.organizacion?.logo,
+  )?.organizacion?.logo;
+  if (desdeMembresia) return desdeMembresia;
+
   const id = contextoActivo.value?.organizacionId;
-  if (id === "org-empresa-abc") return "/img/logo-andina-constructora.png";
+  if (id === "org-empresa-abc") return "/img/LogoColegioING.png";
+  if (id === "org-andina-constructora")
+    return "/img/logo-andina-constructora.png";
   return null;
 });
 const iniciales = computed(() => {
   if (portalActivo.value === "docente") return "CQ";
-  if (portalActivo.value === "organizacion") return "AC";
+  if (portalActivo.value === "organizacion") return "CI";
   if (portalActivo.value === "admin") return "TA";
   return "CQ";
 });
+const puedeGestionarVacantes = computed(() =>
+  tienePermiso("vacantes.gestionar"),
+);
+const puedeModerar = computed(() => tienePermiso("comunidad.moderar"));
 
 function volverAlPortal() {
   if (!contextoActivo.value) {
@@ -102,6 +95,22 @@ function volverAlPortal() {
 function navegar(ruta: string) {
   menuAbierto.value = false;
   router.push(ruta);
+}
+
+function enlaceActivo(ruta: string) {
+  if (ruta === "/comunidad") {
+    return (
+      route.path === "/comunidad" ||
+      route.path.startsWith("/comunidad/")
+    );
+  }
+  if (ruta === "/bolsa-tukuy") {
+    return (
+      route.path === "/bolsa-tukuy" ||
+      route.path.startsWith("/bolsa-tukuy/")
+    );
+  }
+  return route.path === ruta || route.path.startsWith(`${ruta}/`);
 }
 </script>
 
@@ -130,14 +139,17 @@ function navegar(ruta: string) {
           </span>
         </button>
 
-        <nav class="ml-6 hidden h-full items-center lg:flex" aria-label="Ecosistema Tukuy">
+        <nav
+          class="ml-6 hidden h-full items-center lg:flex"
+          aria-label="Ecosistema Tukuy"
+        >
           <RouterLink
             v-for="enlace in enlaces"
             :key="enlace.ruta"
             :to="enlace.ruta"
             class="flex h-full items-center gap-2 border-b-[3px] px-5 text-sm font-bold transition"
             :class="
-              route.path === enlace.ruta || route.path.startsWith(`${enlace.ruta}/`)
+              enlaceActivo(enlace.ruta)
                 ? 'border-accent text-foreground'
                 : 'border-transparent text-muted-foreground hover:text-foreground'
             "
@@ -179,11 +191,15 @@ function navegar(ruta: string) {
                 aria-label="Abrir menú de usuario"
               >
                 <Avatar class="h-9 w-9">
-                  <AvatarFallback class="bg-primary text-xs text-primary-foreground">
+                  <AvatarFallback
+                    class="bg-primary text-xs text-primary-foreground"
+                  >
                     {{ iniciales }}
                   </AvatarFallback>
                 </Avatar>
-                <ChevronDown class="hidden h-4 w-4 text-muted-foreground sm:block" />
+                <ChevronDown
+                  class="hidden h-4 w-4 text-muted-foreground sm:block"
+                />
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent
@@ -200,14 +216,38 @@ function navegar(ruta: string) {
                     class="h-10 w-10 shrink-0 object-contain"
                   />
                   <div class="min-w-0">
-                    <p class="truncate text-sm font-black">{{ organizacionActiva }}</p>
-                    <p class="mt-1 text-xs font-normal capitalize text-muted-foreground">
+                    <p class="truncate text-sm font-black">
+                      {{ organizacionActiva }}
+                    </p>
+                    <p
+                      class="mt-1 text-xs font-normal capitalize text-muted-foreground"
+                    >
                       Contexto {{ portalActivo }} activo
                     </p>
                   </div>
                 </div>
               </DropdownMenuLabel>
               <DropdownMenuSeparator class="my-1 h-px bg-border" />
+              <DropdownMenuItem
+                v-if="puedeGestionarVacantes"
+                class="flex cursor-pointer items-center gap-3 px-3 py-2.5 text-sm outline-none hover:bg-muted"
+                @select="router.push('/bolsa-tukuy/gestion')"
+              >
+                <Settings class="h-4 w-4" />
+                Gestionar vacantes
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                v-if="puedeModerar"
+                class="flex cursor-pointer items-center gap-3 px-3 py-2.5 text-sm outline-none hover:bg-muted"
+                @select="router.push('/comunidad/moderacion')"
+              >
+                <Settings class="h-4 w-4" />
+                Moderar comunidad
+              </DropdownMenuItem>
+              <DropdownMenuSeparator
+                v-if="puedeGestionarVacantes || puedeModerar"
+                class="my-1 h-px bg-border"
+              />
               <DropdownMenuItem
                 class="flex cursor-pointer items-center gap-3 px-3 py-2.5 text-sm outline-none hover:bg-muted"
                 @select="volverAlPortal"
@@ -257,7 +297,7 @@ function navegar(ruta: string) {
           type="button"
           class="flex items-center gap-3 border-l-[3px] px-4 py-3 text-left text-sm font-bold"
           :class="
-            route.path.startsWith(enlace.ruta)
+            enlaceActivo(enlace.ruta)
               ? 'border-primary bg-primary/10 text-primary'
               : 'border-transparent text-muted-foreground'
           "

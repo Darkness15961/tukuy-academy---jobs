@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, ref } from "vue";
+import { nextTick, onMounted, ref } from "vue";
 import {
   Building2,
   Maximize2,
@@ -14,11 +14,15 @@ import type { NodoOrganigramaEntidad } from "./NodoOrganigrama.vue";
 withDefaults(
   defineProps<{
     nombreEntidad: string;
+    nombreEstructura?: string;
     logoEntidad?: string;
     nodos: NodoOrganigramaEntidad[];
+    niveles?: { id: string; nombre: string; orden: number }[];
   }>(),
   {
     logoEntidad: "",
+    nombreEstructura: "",
+    niveles: () => [],
   },
 );
 
@@ -34,6 +38,8 @@ const emit = defineEmits<{
 const viewport = ref<HTMLElement | null>(null);
 const lienzo = ref<HTMLElement | null>(null);
 const escala = ref(1);
+// Escala que equivale a "100%" para el usuario (se fija al ajustar)
+const escalaBase = ref(1);
 
 const ESCALA_MINIMA = 0.45;
 const ESCALA_MAXIMA = 1.4;
@@ -50,25 +56,45 @@ function cambiarEscala(incremento: number) {
 }
 
 function restablecerEscala() {
-  escala.value = 1;
+  // Vuelve a la escala ajustada (que es el "100%" del usuario)
+  escala.value = escalaBase.value;
   nextTick(() => viewport.value?.scrollTo({ left: 0, behavior: "smooth" }));
 }
 
 async function ajustarAlDiagrama() {
-  escala.value = 1;
-  await nextTick();
-
   if (!viewport.value || !lienzo.value) return;
 
-  const anchoDisponible = Math.max(viewport.value.clientWidth - 16, 1);
-  const anchoDiagrama = Math.max(lienzo.value.scrollWidth, 1);
-  escala.value = limitarEscala(
-    Number(Math.min(1, anchoDisponible / anchoDiagrama).toFixed(2)),
+  // Medir el ancho natural del lienzo compensando el zoom CSS actual.
+  const rectLienzo = lienzo.value.getBoundingClientRect();
+  const anchoNatural = Math.max(rectLienzo.width / escala.value, 1);
+
+  // El ancho disponible en el viewport (clientWidth ya excluye el scrollbar)
+  const anchoDisponible = Math.max(viewport.value.clientWidth, 1);
+
+  const escalaObjetivo = limitarEscala(
+    Number((anchoDisponible / anchoNatural).toFixed(2)),
   );
 
-  await nextTick();
-  viewport.value.scrollTo({ left: 0, behavior: "smooth" });
+  escala.value = escalaObjetivo;
+  // Actualizar la base: este ajuste es el nuevo "100%"
+  escalaBase.value = escalaObjetivo;
+
+  // Esperar dos frames para que el browser complete el reflow del zoom CSS
+  await new Promise<void>((resolve) =>
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+  );
+
+  viewport.value?.scrollTo({ left: 0, behavior: "smooth" });
 }
+
+// Al montar, auto-ajustar para que el organigrama llene el espacio disponible.
+// Usamos doble rAF para garantizar que el DOM del lienzo ya tiene dimensiones.
+onMounted(async () => {
+  await new Promise<void>((resolve) =>
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+  );
+  await ajustarAlDiagrama();
+});
 </script>
 
 <template>
@@ -91,8 +117,8 @@ async function ajustarAlDiagrama() {
         >
           <Minus class="h-4 w-4" />
         </button>
-        <output :aria-label="`Escala ${Math.round(escala * 100)} por ciento`">
-          {{ Math.round(escala * 100) }}%
+        <output :aria-label="`Escala ${Math.round((escala / escalaBase) * 100)} por ciento`">
+          {{ Math.round((escala / escalaBase) * 100) }}%
         </output>
         <button
           type="button"
@@ -126,6 +152,20 @@ async function ajustarAlDiagrama() {
 
     <div ref="viewport" class="organigrama-viewport">
       <div ref="lienzo" class="organigrama-lienzo" :style="{ zoom: escala }">
+        <div class="guias-niveles" aria-hidden="true">
+          <div
+            v-for="nivel in niveles"
+            :key="nivel.id"
+            class="guia-nivel"
+            :style="{ '--indice-nivel': nivel.orden - 1 }"
+          >
+            <div class="guia-nivel-etiqueta">
+              <span>{{ nivel.nombre }}</span>
+              <em>{{ nivel.orden }}</em>
+            </div>
+            <div class="guia-nivel-banda" />
+          </div>
+        </div>
         <div class="entidad-raiz">
           <span class="entidad-marca">
             <img
@@ -136,9 +176,14 @@ async function ajustarAlDiagrama() {
             />
             <Building2 v-else class="h-5 w-5" />
           </span>
-          <div>
-            <small>Entidad</small>
-            <strong>{{ nombreEntidad || "Organización" }}</strong>
+          <div class="entidad-contenido">
+            <div class="entidad-identidad">
+              <small>Entidad</small>
+              <strong>{{ nombreEntidad || "Organización" }}</strong>
+            </div>
+            <span v-if="nombreEstructura" class="entidad-estructura">
+              {{ nombreEstructura }}
+            </span>
           </div>
         </div>
 
@@ -273,20 +318,100 @@ async function ajustarAlDiagrama() {
 }
 
 .organigrama-lienzo {
+  position: relative;
   width: max-content;
   min-width: max-content;
-  padding: 2rem 2.5rem 3rem;
+  padding: 2rem 3.75rem 3rem 4.25rem;
+}
+
+/* ── Guías de nivel ── */
+.guias-niveles {
+  position: absolute;
+  z-index: 0;
+  /* El primer nivel de nodos empieza en ~9.55rem desde el tope del lienzo */
+  top: 9.55rem;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  /* sin overflow:hidden para que se extienda al ancho real del contenido */
+  min-width: 100%;
+  pointer-events: none;
+}
+
+.guia-nivel {
+  position: absolute;
+  top: calc(var(--indice-nivel) * 14.25rem);
+  /* Ocupar todo el ancho del lienzo, no solo el del viewport */
+  left: 0;
+  right: 0;
+  width: 100%;
+  display: flex;
+  height: 14.25rem;
+  align-items: stretch;
+  /* Líneas horizontales entrecortadas, color suave */
+  border-top: 1px dashed color-mix(in srgb, var(--color-primary) 18%, var(--color-border));
+  border-bottom: 1px dashed color-mix(in srgb, var(--color-primary) 18%, var(--color-border));
+}
+
+/* Etiqueta vertical a la izquierda con el nombre del nivel */
+.guia-nivel-etiqueta {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 2.5rem;
+  height: 100%;
+  gap: 0.3rem;
+  border-right: 1px dashed color-mix(in srgb, var(--color-primary) 18%, var(--color-border));
+  background: color-mix(in srgb, var(--color-background) 97%, var(--color-primary));
+}
+
+/* Número del nivel */
+.guia-nivel-etiqueta em {
+  display: block;
+  font-style: normal;
+  font-size: 0.7rem;
+  font-weight: 900;
+  color: var(--color-primary);
+  opacity: 0.55;
+  line-height: 1;
+}
+
+/* Nombre del nivel en escritura vertical */
+.guia-nivel-etiqueta span {
+  display: block;
+  color: var(--color-primary);
+  font-size: 0.57rem;
+  font-weight: 900;
+  letter-spacing: 0.07em;
+  line-height: 1;
+  text-transform: uppercase;
+  white-space: nowrap;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  max-height: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Fondo semitransparente de la banda */
+.guia-nivel-banda {
+  flex: 1;
+  background: color-mix(in srgb, var(--color-primary) 3%, transparent);
 }
 
 .entidad-raiz {
   display: flex;
-  width: min(22rem, 80vw);
+  position: relative;
+  z-index: 1;
+  width: min(32rem, calc(100vw - 3rem));
   margin: 0 auto;
   align-items: center;
-  gap: 0.85rem;
+  gap: 0.75rem;
   border-top: 4px solid var(--color-accent);
   background: var(--color-primary);
-  padding: 1rem 1.15rem;
+  padding: 0.8rem 1rem;
   color: var(--color-primary-foreground);
   text-align: left;
   box-shadow: 0 18px 35px rgb(3 36 78 / 18%);
@@ -294,8 +419,8 @@ async function ajustarAlDiagrama() {
 
 .entidad-marca {
   display: grid;
-  width: 2.75rem;
-  height: 2.75rem;
+  width: 2.6rem;
+  height: 2.6rem;
   flex: none;
   place-items: center;
   overflow: hidden;
@@ -311,12 +436,20 @@ async function ajustarAlDiagrama() {
   padding: 0.2rem;
 }
 
-.entidad-raiz small,
-.entidad-raiz strong {
-  display: block;
+.entidad-contenido {
+  min-width: 0;
+  flex: 1;
+}
+
+.entidad-identidad {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 0.6rem;
 }
 
 .entidad-raiz small {
+  flex: none;
   color: rgb(255 255 255 / 70%);
   font-size: 0.62rem;
   font-weight: 900;
@@ -325,14 +458,31 @@ async function ajustarAlDiagrama() {
 }
 
 .entidad-raiz strong {
-  margin-top: 0.2rem;
-  font-size: 0.88rem;
+  min-width: 0;
+  font-size: 0.9rem;
   line-height: 1.25;
   font-weight: 900;
 }
 
+.entidad-estructura {
+  display: block;
+  margin-top: 0.15rem;
+  color: rgb(255 255 255 / 65%);
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+@media (max-width: 520px) {
+  .entidad-identidad {
+    display: grid;
+    gap: 0.15rem;
+  }
+}
+
 .organigrama-raices {
   position: relative;
+  z-index: 1;
   display: flex;
   justify-content: center;
   margin: 0;

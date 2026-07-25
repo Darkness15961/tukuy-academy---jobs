@@ -18,6 +18,7 @@ import {
   type ResumenCursoCalificaciones,
 } from "@/api/services/academico.service";
 import { Button } from "@/components/ui/button";
+import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import Skeleton from "primevue/skeleton";
@@ -115,14 +116,11 @@ function exportarResumen() {
   <section class="mx-auto grid max-w-375 gap-6">
     <div class="flex flex-wrap items-end justify-between gap-4">
       <div>
-        <p class="text-xs font-black uppercase tracking-[.2em] text-primary">
-          Gestión académica por curso
-        </p>
-        <h1 class="mt-2 text-3xl font-black">Libro de calificaciones</h1>
-        <p class="mt-2 max-w-3xl text-sm text-muted-foreground">
-          Selecciona un curso para revisar sus módulos, entregas PDF, notas y
-          estudiantes habilitados para certificación.
-        </p>
+        <TituloConAyuda
+          eyebrow="Gestión académica por curso"
+          titulo="Libro de calificaciones"
+          ayuda="Selecciona un curso para revisar módulos, entregas PDF, notas y estudiantes habilitados para certificación."
+        />
       </div>
       <Button
         variant="outline"

@@ -17,6 +17,8 @@ import {
   formatPrecioSoles,
   usePasarelaIzipay,
 } from "@/composables/usePasarelaIzipay";
+import { matricularCurso } from "@/lib/acceso-curso";
+import { entidadesComunidadService } from "@/modulos/comunidad/services/entidades.service";
 import type { DetalleCursoPublico } from "@/types/academia";
 
 const route = useRoute();
@@ -29,6 +31,7 @@ const curso = computed(() =>
 );
 const detalle = ref<DetalleCursoPublico | null>(null);
 const cargandoDetalle = ref(false);
+const matriculaAplicada = ref(false);
 
 watch(
   curso,
@@ -45,6 +48,21 @@ watch(
   { immediate: true },
 );
 
+async function aplicarMatriculaTrasPago() {
+  if (!curso.value || matriculaAplicada.value) return;
+  await matricularCurso(curso.value.id, courses.value);
+  await entidadesComunidadService.sincronizarMatriculaTrasPago([curso.value.id]);
+  matriculaAplicada.value = true;
+}
+
+watch(
+  () => pasarela.fase.value,
+  async (fase) => {
+    if (fase !== "pagado") return;
+    await aplicarMatriculaTrasPago();
+  },
+);
+
 const importe = computed(() => curso.value?.price ?? 0);
 const esCursoPagado = computed(
   () => curso.value?.pricing === "paid" && importe.value > 0,
@@ -53,6 +71,11 @@ const esCursoPagado = computed(
 async function continuarConIzipay() {
   if (!curso.value) return;
   await pasarela.iniciarPagoCurso(curso.value.id);
+}
+
+async function irAAprendizaje() {
+  await aplicarMatriculaTrasPago();
+  await router.push("/tukuy-academy/mi-aprendizaje");
 }
 </script>
 
@@ -99,7 +122,7 @@ async function continuarConIzipay() {
         <button
           type="button"
           class="inline-flex items-center gap-2 text-sm font-bold text-muted-foreground transition hover:text-foreground"
-          @click="router.push(`/cursos/${curso.id}`)"
+          @click="router.push(`/tukuy-academy/cursos/${curso.id}`)"
         >
           <ArrowLeft class="h-4 w-4" />
           Volver al curso
@@ -123,7 +146,7 @@ async function continuarConIzipay() {
             </p>
             <Button
               class="mt-8 h-13 rounded-none bg-[#0B3A78] px-8 text-white hover:bg-[#071F52]"
-              @click="router.push('/tukuy-academy/mi-aprendizaje')"
+              @click="irAAprendizaje"
             >
               Ir a mi aprendizaje
             </Button>

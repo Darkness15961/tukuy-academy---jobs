@@ -21,7 +21,7 @@ const props = withDefaults(
 <template>
   <div
     v-bind="$attrs"
-    :class="cn('tukuy-prime-skeleton overflow-hidden bg-[#E3EAF3]', props.class)"
+    :class="cn('tukuy-prime-skeleton overflow-hidden bg-[#E3EAF3] dark:bg-muted', props.class)"
   >
     <PrimeSkeleton
       width="100%"

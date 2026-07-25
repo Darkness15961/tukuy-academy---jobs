@@ -6,6 +6,8 @@ export interface NodoOrganigramaEntidad {
   nombre: string;
   codigo?: string;
   tipo: string;
+  nivel?: string;
+  numeroNivel?: number;
   responsable: string;
   responsableIniciales?: string;
   miembros: number;
@@ -78,8 +80,8 @@ function iniciales(nombre: string, fallback?: string) {
         v-if="nodo.permiteSubunidades && nodo.puedeAgregarSubunidad"
         type="button"
         class="nodo-agregar nodo-agregar-inferior"
-        :aria-label="`Agregar subnivel a ${nodo.nombre}`"
-        :title="`Agregar subnivel debajo de ${nodo.nombre}`"
+        :aria-label="`Agregar nodo descendiente a ${nodo.nombre}`"
+        :title="`Agregar nodo descendiente debajo de ${nodo.nombre}`"
         @click.stop="emit('agregarSubnivel', nodo)"
       >
         +
@@ -88,7 +90,7 @@ function iniciales(nombre: string, fallback?: string) {
         v-if="nodo.puedeAgregarMismoNivel"
         type="button"
         class="nodo-agregar nodo-agregar-lateral nodo-agregar-izquierda"
-        :aria-label="`Agregar unidad a la izquierda de ${nodo.nombre}`"
+        :aria-label="`Agregar nodo a la izquierda de ${nodo.nombre}`"
         :title="`Agregar al mismo nivel, a la izquierda de ${nodo.nombre}`"
         @click.stop="emit('agregarMismoNivel', nodo, 'IZQUIERDA')"
       >
@@ -98,7 +100,7 @@ function iniciales(nombre: string, fallback?: string) {
         v-if="nodo.puedeAgregarMismoNivel"
         type="button"
         class="nodo-agregar nodo-agregar-lateral nodo-agregar-derecha"
-        :aria-label="`Agregar unidad a la derecha de ${nodo.nombre}`"
+        :aria-label="`Agregar nodo a la derecha de ${nodo.nombre}`"
         :title="`Agregar al mismo nivel, a la derecha de ${nodo.nombre}`"
         @click.stop="emit('agregarMismoNivel', nodo, 'DERECHA')"
       >
@@ -176,6 +178,8 @@ function iniciales(nombre: string, fallback?: string) {
 }
 
 .nodo-tarjeta {
+  position: relative;
+  z-index: 1;
   display: inline-grid;
   width: 15.5rem;
   min-height: 10rem;
@@ -195,6 +199,7 @@ function iniciales(nombre: string, fallback?: string) {
 .nodo-contenido {
   position: relative;
   display: inline-block;
+  z-index: 1;
 }
 
 .nodo-tarjeta:hover,

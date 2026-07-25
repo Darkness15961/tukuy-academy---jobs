@@ -10,6 +10,7 @@ import Tag from "primevue/tag";
 import { computed, onMounted, reactive, ref } from "vue";
 
 import { Button } from "@/components/ui/button";
+import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { administracionService } from "@/api/services/administracion.service";
@@ -173,17 +174,15 @@ async function registrarOrganizacion() {
   <section class="mx-auto grid max-w-400 gap-6">
     <div class="flex flex-wrap items-end justify-between gap-4">
       <div>
-        <p class="text-xs font-black uppercase tracking-[.2em] text-violet-700">
-          Clientes SaaS
-        </p>
-        <h1 class="mt-2 text-3xl font-black">Organizaciones</h1>
-        <p class="mt-2 text-sm text-muted-foreground">
-          Administra altas, planes, vigencias, consumo y suspensión de cada
-          entidad.
-        </p>
+        <TituloConAyuda
+          clase-eyebrow="text-primary"
+          eyebrow="Clientes SaaS"
+          titulo="Organizaciones"
+          ayuda="Administra altas, planes, vigencias, consumo y suspensión de cada entidad."
+        />
       </div>
       <Button
-        class="bg-violet-800 hover:bg-violet-900"
+        class="bg-primary hover:bg-primary/90"
         @click="dialogoAbierto = true"
       >
         <Plus class="h-4 w-4" /> Nueva organización
@@ -216,7 +215,7 @@ async function registrarOrganizacion() {
       >
         <CardContent class="flex items-center gap-4 p-5">
           <div
-            class="grid h-11 w-11 place-items-center bg-violet-50 text-violet-700"
+            class="grid h-11 w-11 place-items-center bg-primary/10 text-primary"
           >
             <Building2 class="h-5 w-5" />
           </div>
@@ -320,7 +319,7 @@ async function registrarOrganizacion() {
                 </div>
                 <div class="mt-1.5 h-1.5 bg-muted">
                   <div
-                    class="h-full bg-violet-700"
+                    class="h-full bg-primary"
                     :style="{
                       width: `${Math.min((data.usuarios / data.limiteUsuarios) * 100, 100)}%`,
                     }"
@@ -444,7 +443,7 @@ async function registrarOrganizacion() {
       </div>
       <div class="mt-6 border-t border-border pt-5">
         <div class="flex items-start gap-3">
-          <span class="grid h-10 w-10 shrink-0 place-items-center bg-violet-100 text-violet-800">
+          <span class="grid h-10 w-10 shrink-0 place-items-center bg-primary/15 text-primary">
             <UserCog class="h-5 w-5" />
           </span>
           <div>
@@ -457,7 +456,7 @@ async function registrarOrganizacion() {
 
         <div class="mt-5 grid gap-5 md:grid-cols-2">
           <div class="border border-border p-4">
-            <p class="text-xs font-black uppercase tracking-[.16em] text-violet-800">Dirección</p>
+            <p class="text-xs font-black uppercase tracking-[.16em] text-primary">Dirección</p>
             <p class="mt-1 text-xs text-muted-foreground">Máxima autoridad de la entidad.</p>
             <label class="mt-4 block">
               <span class="mb-2 block text-xs font-black uppercase tracking-wide text-muted-foreground">Nombre completo *</span>
@@ -470,7 +469,7 @@ async function registrarOrganizacion() {
           </div>
 
           <div class="border border-border p-4">
-            <p class="text-xs font-black uppercase tracking-[.16em] text-violet-800">Administración</p>
+            <p class="text-xs font-black uppercase tracking-[.16em] text-primary">Administración</p>
             <p class="mt-1 text-xs text-muted-foreground">Gestionará estructura, personas y cursos.</p>
             <label class="mt-4 block">
               <span class="mb-2 block text-xs font-black uppercase tracking-wide text-muted-foreground">Nombre completo *</span>
@@ -484,7 +483,7 @@ async function registrarOrganizacion() {
         </div>
       </div>
       <div
-        class="mt-5 flex gap-3 border-l-4 border-l-violet-700 bg-violet-50 p-4 text-xs text-violet-950"
+        class="mt-5 flex gap-3 border-l-4 border-l-primary bg-primary/10 p-4 text-xs text-foreground"
       >
         <Mail class="h-5 w-5 shrink-0" />
         <p>
@@ -498,7 +497,7 @@ async function registrarOrganizacion() {
         ><Button variant="outline" @click="dialogoAbierto = false"
           >Cancelar</Button
         ><Button
-          class="bg-violet-800 hover:bg-violet-900"
+          class="bg-primary hover:bg-primary/90"
           :disabled="!formularioValido"
           @click="registrarOrganizacion"
           >Registrar organización</Button

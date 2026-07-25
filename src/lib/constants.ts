@@ -1,5 +1,7 @@
 export const AUTH_TOKEN_KEY = "auth_token";
 export const USUARIO_SESION_KEY = "tukuy_usuario_sesion";
+/** Cuentas creadas en la demo (registro / Google simulado). */
+export const USUARIOS_REGISTRADOS_KEY = "tukuy_usuarios_registrados";
 export const MEMBRESIAS_KEY = "tukuy_membresias";
 export const CONTEXTO_SESION_KEY = "tukuy_contexto_sesion";
 export const ULTIMAS_FUNCIONES_ENTIDAD_KEY = "tukuy_ultimas_funciones_entidad";

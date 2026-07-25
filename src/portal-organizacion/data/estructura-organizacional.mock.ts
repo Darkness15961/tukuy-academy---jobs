@@ -1,5 +1,7 @@
 import type {
   AsignacionPerfilUsuario,
+  EstructuraOrganizacional,
+  NivelOrganizacional,
   PerfilEntidad,
   PoliticaIncorporacionUnidad,
   ReglaAccesoCursoEntidad,
@@ -7,6 +9,17 @@ import type {
   UnidadOrganizacional,
   VinculacionUnidad,
 } from "@/portal-organizacion/types/estructura-organizacional.types";
+
+export const estructurasOrganizacionales: EstructuraOrganizacional[] = [
+  { id: "estructura-gobierno", nombre: "Gobierno y administración", descripcion: "Funciones protegidas necesarias para operar la entidad en Tukuy.", tipo: "GOBIERNO", modoJerarquia: "FLEXIBLE", esSistema: true, estado: "ACTIVA" },
+  { id: "estructura-funcional", nombre: "Estructura funcional", descripcion: "Organización del personal por áreas de trabajo.", tipo: "FUNCIONAL", modoJerarquia: "FLEXIBLE", esSistema: false, estado: "ACTIVA" },
+];
+
+export const nivelesOrganizacionales: NivelOrganizacional[] = [
+  { id: "nivel-gobierno", estructuraId: "estructura-gobierno", nombre: "Gobierno", orden: 1, estado: "ACTIVO" },
+  { id: "nivel-area", estructuraId: "estructura-funcional", nombre: "Área o capítulo", orden: 1, estado: "ACTIVO" },
+  { id: "nivel-equipo", estructuraId: "estructura-funcional", nombre: "Comité o equipo", orden: 2, estado: "ACTIVO" },
+];
 
 export const tiposUnidadEntidad: TipoUnidadEntidad[] = [
   { id: "tipo-capitulo", nombreSingular: "Capítulo profesional", nombrePlural: "Capítulos profesionales", descripcion: "Agrupa miembros por especialidad profesional.", color: "#0B3A78", permiteSubunidades: true, estado: "ACTIVO" },
@@ -23,20 +36,20 @@ export const politicasIncorporacionEntidad: PoliticaIncorporacionUnidad[] = [
 ];
 
 export const unidadesOrganizacionales: UnidadOrganizacional[] = [
-  { id: "unidad-direccion-gobierno", nombre: "Dirección", codigo: "DIR", tipoUnidadId: "tipo-direccion", unidadPadreId: null, responsableUsuarioId: "3", politicaIncorporacionId: "pol-admin", orden: 1, estado: "ACTIVA" },
-  { id: "unidad-administracion", nombre: "Administración", codigo: "ADM", tipoUnidadId: "tipo-administracion", unidadPadreId: "unidad-direccion-gobierno", responsableUsuarioId: "9", politicaIncorporacionId: "pol-admin", orden: 1, estado: "ACTIVA" },
-  { id: "unidad-capitulo-civil", nombre: "Capítulo de Ingeniería Civil", codigo: "CIC", tipoUnidadId: "tipo-capitulo", unidadPadreId: "unidad-administracion", responsableUsuarioId: "8", politicaIncorporacionId: "pol-especialidad", orden: 1, estado: "ACTIVA" },
-  { id: "unidad-comite-construccion", nombre: "Comité de Construcción", codigo: "CC", tipoUnidadId: "tipo-comite", unidadPadreId: "unidad-capitulo-civil", responsableUsuarioId: "3", politicaIncorporacionId: "pol-abierta", orden: 1, estado: "ACTIVA" },
-  { id: "unidad-comite-estructuras", nombre: "Comité de Estructuras", codigo: "CE", tipoUnidadId: "tipo-comite", unidadPadreId: "unidad-capitulo-civil", responsableUsuarioId: "11", politicaIncorporacionId: "pol-especialidad", orden: 2, estado: "ACTIVA" },
-  { id: "unidad-comision-certificacion", nombre: "Comisión de Certificación", codigo: "CRC", tipoUnidadId: "tipo-comision", unidadPadreId: "unidad-administracion", responsableUsuarioId: "5", politicaIncorporacionId: "pol-admin", permiteSubunidades: true, orden: 4, estado: "ACTIVA" },
-  { id: "unidad-capitulo-industrial", nombre: "Capítulo de Ingeniería Industrial", codigo: "CII", tipoUnidadId: "tipo-capitulo", unidadPadreId: "unidad-administracion", responsableUsuarioId: "2", politicaIncorporacionId: "pol-admin", orden: 2, estado: "ACTIVA" },
-  { id: "unidad-capitulo-sistemas", nombre: "Capítulo de Ingeniería de Sistemas", codigo: "CIS", tipoUnidadId: "tipo-capitulo", unidadPadreId: "unidad-administracion", responsableUsuarioId: "7", politicaIncorporacionId: "pol-admin", orden: 3, estado: "ACTIVA" },
+  { id: "unidad-direccion-gobierno", nombre: "Dirección", codigo: "DIR", codigoSistema: "DIRECCION", esSistema: true, estructuraId: "estructura-gobierno", nivelId: "nivel-gobierno", tipoUnidadId: "tipo-direccion", unidadPadreId: null, responsableUsuarioId: "3", politicaIncorporacionId: "pol-admin", orden: 1, estado: "ACTIVA" },
+  { id: "unidad-administracion", nombre: "Administración", codigo: "ADM", codigoSistema: "ADMINISTRACION", esSistema: true, estructuraId: "estructura-gobierno", nivelId: "nivel-gobierno", tipoUnidadId: "tipo-administracion", unidadPadreId: null, responsableUsuarioId: "9", politicaIncorporacionId: "pol-admin", orden: 2, estado: "ACTIVA" },
+  { id: "unidad-comision-certificacion", nombre: "Certificación y firmas", codigo: "CERT", codigoSistema: "CERTIFICACION", esSistema: true, estructuraId: "estructura-gobierno", nivelId: "nivel-gobierno", tipoUnidadId: "tipo-comision", unidadPadreId: null, responsableUsuarioId: "5", politicaIncorporacionId: "pol-admin", permiteSubunidades: false, orden: 3, estado: "ACTIVA" },
+  { id: "unidad-capitulo-civil", nombre: "Capítulo de Ingeniería Civil", codigo: "CIC", estructuraId: "estructura-funcional", nivelId: "nivel-area", tipoUnidadId: "tipo-capitulo", unidadPadreId: null, responsableUsuarioId: "8", politicaIncorporacionId: "pol-especialidad", orden: 1, estado: "ACTIVA" },
+  { id: "unidad-comite-construccion", nombre: "Comité de Construcción", codigo: "CC", estructuraId: "estructura-funcional", nivelId: "nivel-equipo", tipoUnidadId: "tipo-comite", unidadPadreId: "unidad-capitulo-civil", responsableUsuarioId: "3", politicaIncorporacionId: "pol-abierta", orden: 1, estado: "ACTIVA" },
+  { id: "unidad-comite-estructuras", nombre: "Comité de Estructuras", codigo: "CE", estructuraId: "estructura-funcional", nivelId: "nivel-equipo", tipoUnidadId: "tipo-comite", unidadPadreId: "unidad-capitulo-civil", responsableUsuarioId: "11", politicaIncorporacionId: "pol-especialidad", orden: 2, estado: "ACTIVA" },
+  { id: "unidad-capitulo-industrial", nombre: "Capítulo de Ingeniería Industrial", codigo: "CII", estructuraId: "estructura-funcional", nivelId: "nivel-area", tipoUnidadId: "tipo-capitulo", unidadPadreId: null, responsableUsuarioId: "2", politicaIncorporacionId: "pol-admin", orden: 2, estado: "ACTIVA" },
+  { id: "unidad-capitulo-sistemas", nombre: "Capítulo de Ingeniería de Sistemas", codigo: "CIS", estructuraId: "estructura-funcional", nivelId: "nivel-area", tipoUnidadId: "tipo-capitulo", unidadPadreId: null, responsableUsuarioId: "7", politicaIncorporacionId: "pol-admin", orden: 3, estado: "ACTIVA" },
 ];
 
 export const perfilesEntidad: PerfilEntidad[] = [
   { id: "perfil-direccion", nombre: "Dirección", descripcion: "Máxima autoridad y gobierno de la entidad.", tipo: "DIRECCION", plantilla: "DIRECCION", nivelAutoridad: 1000, permisos: ["entidad.gobernar", "administradores.designar", "auditoria.ver", "facturacion.ver", "reportes.ver"], alcanceDefecto: "ENTIDAD", rutaInicial: "/organizacion/inicio", esSistema: true, estado: "ACTIVO" },
-  { id: "perfil-administracion", nombre: "Administración", descripcion: "Gestiona la operación, estructura, accesos y capacitación.", tipo: "ADMINISTRADOR", plantilla: "ADMINISTRACION", nivelAutoridad: 900, permisos: ["usuarios.administrar", "estructura.administrar", "perfiles.administrar", "cursos.ver", "cursos.crear", "cursos.editar", "asignaciones.crear", "certificados.emitir", "reportes.ver"], alcanceDefecto: "ENTIDAD", rutaInicial: "/organizacion/inicio", esSistema: true, estado: "ACTIVO" },
-  { id: "perfil-director-academico", nombre: "Coordinación de certificación", descripcion: "Gestiona la oferta académica y los procesos de certificación bajo Administración.", tipo: "PERSONALIZADO", plantilla: "GESTION", nivelAutoridad: 700, permisos: ["cursos.ver", "cursos.aprobar", "asignaciones.crear", "certificados.emitir", "reportes.ver"], alcanceDefecto: "UNIDAD", rutaInicial: "/organizacion/inicio", esSistema: false, estado: "ACTIVO" },
+  { id: "perfil-administracion", nombre: "Administración", descripcion: "Gestiona la operación, estructura, accesos y capacitación.", tipo: "ADMINISTRADOR", plantilla: "ADMINISTRACION", nivelAutoridad: 900, permisos: ["usuarios.administrar", "estructura.administrar", "perfiles.administrar", "cursos.ver", "cursos.crear", "cursos.editar", "cursos.aprobar", "categorias.ver", "categorias.gestionar", "asignaciones.crear", "certificados.emitir", "reportes.ver"], alcanceDefecto: "ENTIDAD", rutaInicial: "/organizacion/inicio", esSistema: true, estado: "ACTIVO" },
+  { id: "perfil-director-academico", nombre: "Coordinación académica", descripcion: "Gestiona la oferta académica, categorías, aprobación de cursos y certificación.", tipo: "PERSONALIZADO", plantilla: "GESTION", nivelAutoridad: 700, permisos: ["cursos.ver", "cursos.aprobar", "categorias.ver", "categorias.gestionar", "asignaciones.crear", "certificados.emitir", "reportes.ver"], alcanceDefecto: "UNIDAD", rutaInicial: "/organizacion/inicio", esSistema: false, estado: "ACTIVO" },
   { id: "perfil-presidente-capitulo", nombre: "Presidente de capítulo", descripcion: "Supervisa miembros y resultados de su capítulo.", tipo: "PERSONALIZADO", plantilla: "SUPERVISION", nivelAutoridad: 600, permisos: ["alumnos.ver", "asignaciones.ver", "reportes.ver"], alcanceDefecto: "UNIDAD", rutaInicial: "/organizacion/inicio", esSistema: false, estado: "ACTIVO" },
   { id: "perfil-docente-especialista", nombre: "Docente especialista", descripcion: "Imparte cursos y evalúa a sus estudiantes.", tipo: "PERSONALIZADO", plantilla: "DOCENCIA", nivelAutoridad: 400, permisos: ["cursos.ver", "cursos.crear", "alumnos.ver", "evaluaciones.calificar"], alcanceDefecto: "CURSOS_PROPIOS", rutaInicial: "/docente/inicio", esSistema: false, estado: "ACTIVO" },
   { id: "perfil-colegiado", nombre: "Colegiado", descripcion: "Accede a aprendizaje, certificaciones y comunidad.", tipo: "PERSONALIZADO", plantilla: "APRENDIZAJE", nivelAutoridad: 100, permisos: ["cursos.ver", "aprendizaje.consumir", "certificados.ver"], alcanceDefecto: "PROPIO", rutaInicial: "/tukuy-academy/cursos", esSistema: false, estado: "ACTIVO" },

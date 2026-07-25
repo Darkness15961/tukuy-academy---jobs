@@ -8,7 +8,7 @@ defineProps<{ class?: string }>();
   <div
     :class="
       cn(
-        'flex h-full w-full items-center justify-center rounded-md bg-blue-100 font-bold text-blue-700',
+        'flex h-full w-full items-center justify-center rounded-md bg-blue-100 font-bold text-blue-700 dark:bg-primary/20 dark:text-blue-300',
         $props.class,
       )
     "

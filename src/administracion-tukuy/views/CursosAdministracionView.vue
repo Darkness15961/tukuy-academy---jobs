@@ -17,6 +17,7 @@ import Textarea from "primevue/textarea";
 import { computed, onMounted, ref } from "vue";
 
 import { Button } from "@/components/ui/button";
+import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -78,6 +79,23 @@ function severidad(valor: EstadoRevisionCurso) {
   return "info";
 }
 
+function textoModalidad(modalidad: string) {
+  return (
+    {
+      VIRTUAL: "Virtual",
+      EN_VIVO: "En vivo",
+      HIBRIDA: "Híbrida",
+      MIXTO: "Mixto",
+    }[modalidad] ?? modalidad
+  );
+}
+
+const formatoPrecio = new Intl.NumberFormat("es-PE", {
+  style: "currency",
+  currency: "PEN",
+  maximumFractionDigits: 0,
+});
+
 async function aprobar(curso: CursoRevision) {
   curso.estado = "APROBADO";
   await administracionService.cursos.actualizar(curso.id, {
@@ -115,19 +133,17 @@ async function confirmarDecision() {
 <template>
   <section class="mx-auto grid max-w-400 gap-6">
     <div>
-      <p class="text-xs font-black uppercase tracking-[.2em] text-violet-700">
-        Control editorial
-      </p>
-      <h1 class="mt-2 text-3xl font-black">Cursos y revisión</h1>
-      <p class="mt-2 text-sm text-muted-foreground">
-        Revisa estructura, calidad académica, presentación, precio y certificado
-        antes de publicar.
-      </p>
+      <TituloConAyuda
+        clase-eyebrow="text-primary"
+        eyebrow="Control editorial"
+        titulo="Cursos y revisión"
+        ayuda="Revisa estructura, modalidad (virtual/mixto/en vivo), calidad académica, precio B2C y certificado antes de publicar."
+      />
     </div>
 
     <div
       v-if="mensaje"
-      class="border-l-4 border-l-teal-600 bg-teal-50 px-4 py-3 text-sm font-semibold text-teal-900"
+      class="border-l-4 border-l-teal-600 bg-teal-500/10 px-4 py-3 text-sm font-semibold text-teal-900 dark:text-teal-200"
     >
       {{ mensaje }}
     </div>
@@ -151,14 +167,14 @@ async function confirmarDecision() {
           {
             etiqueta: 'Con observaciones',
             valor: resumen.observados,
-            fondo: 'bg-amber-50',
-            texto: 'text-amber-700',
+            fondo: 'bg-amber-500/10',
+            texto: 'text-amber-700 dark:text-amber-300',
           },
           {
             etiqueta: 'Aprobados',
             valor: resumen.aprobados,
-            fondo: 'bg-teal-50',
-            texto: 'text-teal-700',
+            fondo: 'bg-teal-500/10',
+            texto: 'text-teal-700 dark:text-teal-300',
           },
         ]"
         :key="item.etiqueta"
@@ -261,6 +277,38 @@ async function confirmarDecision() {
             style="min-width: 14rem"
           />
           <Column
+            field="modalidad"
+            header="Modalidad"
+            sortable
+            style="min-width: 8rem"
+          >
+            <template #body="{ data }">
+              {{ textoModalidad(data.modalidad) }}
+            </template>
+          </Column>
+          <Column
+            field="precio"
+            header="Precio"
+            sortable
+            style="min-width: 8rem"
+          >
+            <template #body="{ data }">
+              {{
+                data.precio === 0
+                  ? "Licencia / gratis"
+                  : formatoPrecio.format(data.precio)
+              }}
+            </template>
+          </Column>
+          <Column header="Cert." style="min-width: 5rem">
+            <template #body="{ data }">
+              <Tag
+                :severity="data.certificado ? 'success' : 'secondary'"
+                :value="data.certificado ? 'Sí' : 'No'"
+              />
+            </template>
+          </Column>
+          <Column
             field="enviado"
             header="Enviado"
             sortable
@@ -347,7 +395,7 @@ async function confirmarDecision() {
         ><Button variant="outline" @click="cursoSeleccionado = null"
           >Cancelar</Button
         ><Button
-          class="bg-violet-800 hover:bg-violet-900"
+          class="bg-primary hover:bg-primary/90"
           :disabled="comentario.trim().length < 10"
           @click="confirmarDecision"
           >Enviar al docente</Button

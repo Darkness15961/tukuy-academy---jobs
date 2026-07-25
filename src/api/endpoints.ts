@@ -1,6 +1,8 @@
 export const API = {
   auth: {
     login: "/auth/login",
+    registro: "/auth/registro",
+    google: "/auth/google",
     logout: "/auth/logout",
     me: "/auth/me",
   },
@@ -55,6 +57,14 @@ export const API = {
       `/comunidad/publicaciones/${id}/reacciones` as const,
     grupos: "/comunidad/grupos",
     eventos: "/comunidad/eventos",
+    entidades: "/comunidad/entidades",
+    entidadPorId: (id: string) => `/comunidad/entidades/${id}` as const,
+    publicacionesEntidad: (id: string) =>
+      `/comunidad/entidades/${id}/publicaciones` as const,
+    unirseEntidad: (id: string) =>
+      `/comunidad/entidades/${id}/unirse` as const,
+    contactarEntidad: (id: string) =>
+      `/comunidad/entidades/${id}/contactar` as const,
   },
   user: {
     profile: "/user/profile",
@@ -132,10 +142,22 @@ export const API = {
     comprobantes: "/organizacion/facturacion/comprobantes",
     notificaciones: "/organizacion/notificaciones",
     catalogoCursos: "/organizacion/catalogo-cursos",
+    categoriasCursos: "/organizacion/categorias-cursos",
     aprobarCurso: (id: string) =>
       `/organizacion/catalogo-cursos/${id}/aprobar` as const,
+    revisarContenidoCurso: (id: string) =>
+      `/organizacion/catalogo-cursos/${id}/revisar-contenido` as const,
     observarCurso: (id: string) =>
       `/organizacion/catalogo-cursos/${id}/observar` as const,
+    sesionesEnVivo: "/organizacion/sesiones-en-vivo",
+    sesionEnVivoPorId: (id: string) =>
+      `/organizacion/sesiones-en-vivo/${id}` as const,
+    iniciarSesionEnVivo: (id: string) =>
+      `/organizacion/sesiones-en-vivo/${id}/iniciar` as const,
+    cancelarSesionEnVivo: (id: string) =>
+      `/organizacion/sesiones-en-vivo/${id}/cancelar` as const,
+    reenviarInvitacionesSesion: (id: string) =>
+      `/organizacion/sesiones-en-vivo/${id}/reenviar-invitaciones` as const,
   },
   administracion: {
     resumen: "/administracion/resumen",
@@ -146,5 +168,9 @@ export const API = {
     facturas: "/administracion/facturas",
     auditoria: "/administracion/auditoria",
     configuracion: "/administracion/configuracion",
+    ecosistema: "/administracion/ecosistema",
+    certificados: "/administracion/certificados",
+    ordenesMarketplace: "/administracion/ordenes-marketplace",
+    sesiones: "/administracion/sesiones",
   },
 } as const;

@@ -7,7 +7,9 @@ import {
   rutaInicioPortal,
   useContextoSesion,
 } from "@/composables/useContextoSesion";
+import type { RegistroRequestDto } from "@/types/api";
 import type { UserProfile } from "@/types/academia";
+import type { LoginResponseDto } from "@/types/api";
 
 const isAuthenticated = ref(!!localStorage.getItem(AUTH_TOKEN_KEY));
 function usuarioGuardado(): UserProfile | null {
@@ -34,6 +36,38 @@ export function useAuth() {
   const loading = ref(false);
   const error = ref<string | null>(null);
 
+  async function completarSesion(
+    response: LoginResponseDto,
+    destinoDespues?: string,
+  ) {
+    localStorage.setItem(AUTH_TOKEN_KEY, response.token);
+    localStorage.setItem(USUARIO_SESION_KEY, JSON.stringify(response.user));
+    currentUser.value = response.user;
+    isAuthenticated.value = true;
+    configurarMembresias(response.memberships);
+
+    const destinoSeguro =
+      destinoDespues?.startsWith("/") && !destinoDespues.startsWith("//")
+        ? destinoDespues
+        : null;
+
+    if (destinoSeguro) {
+      await router.push(destinoSeguro);
+      return;
+    }
+
+    if (membresiasActivas.value.length === 1) {
+      const membresia = membresiasActivas.value[0];
+      if (membresia) {
+        const contexto = seleccionarContexto(membresia);
+        await router.push(rutaInicioPortal(contexto.portal));
+        return;
+      }
+    }
+
+    await router.push("/seleccionar-contexto");
+  }
+
   async function login(
     dni: string,
     password: string,
@@ -43,35 +77,45 @@ export function useAuth() {
     error.value = null;
     try {
       const response = await authService.login({ dni, password });
-      localStorage.setItem(AUTH_TOKEN_KEY, response.token);
-      localStorage.setItem(USUARIO_SESION_KEY, JSON.stringify(response.user));
-      currentUser.value = response.user;
-      isAuthenticated.value = true;
-      configurarMembresias(response.memberships);
-
-      const destinoSeguro =
-        destinoDespues?.startsWith("/") && !destinoDespues.startsWith("//")
-          ? destinoDespues
-          : null;
-
-      if (destinoSeguro) {
-        await router.push(destinoSeguro);
-        return;
-      }
-
-      if (membresiasActivas.value.length === 1) {
-        const membresia = membresiasActivas.value[0];
-        if (membresia) {
-          const contexto = seleccionarContexto(membresia);
-          await router.push(rutaInicioPortal(contexto.portal));
-          return;
-        }
-      }
-
-      await router.push("/seleccionar-contexto");
+      await completarSesion(response, destinoDespues);
     } catch (err) {
       error.value =
         err instanceof Error ? err.message : "No se pudo iniciar sesión";
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  async function registrar(
+    datos: RegistroRequestDto,
+    destinoDespues?: string,
+  ) {
+    loading.value = true;
+    error.value = null;
+    try {
+      const response = await authService.registrar(datos);
+      await completarSesion(response, destinoDespues);
+    } catch (err) {
+      error.value =
+        err instanceof Error ? err.message : "No se pudo crear la cuenta";
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  async function loginConGoogle(destinoDespues?: string) {
+    loading.value = true;
+    error.value = null;
+    try {
+      const response = await authService.loginConGoogle();
+      await completarSesion(response, destinoDespues);
+    } catch (err) {
+      error.value =
+        err instanceof Error
+          ? err.message
+          : "No se pudo continuar con Google";
       throw err;
     } finally {
       loading.value = false;
@@ -113,6 +157,8 @@ export function useAuth() {
     loading,
     error,
     login,
+    registrar,
+    loginConGoogle,
     logout,
     restaurarUsuario,
   };

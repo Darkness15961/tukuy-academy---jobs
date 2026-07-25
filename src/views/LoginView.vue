@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ArrowLeft, Mail } from "lucide-vue-next";
-import { ref } from "vue";
+import { ArrowLeft } from "lucide-vue-next";
+import { computed, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 import { Button } from "@/components/ui/button";
@@ -9,23 +9,30 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { useAuth } from "@/composables/useAuth";
-import { env } from "@/lib/env";
 
 const router = useRouter();
 const route = useRoute();
-const { login, loading, error } = useAuth();
+const { login, loginConGoogle, loading, error } = useAuth();
 
 const dni = ref("");
 const password = ref("");
 const remember = ref(false);
 
+const destinoContinuar = computed(() =>
+  typeof route.query.continuar === "string" ? route.query.continuar : undefined,
+);
+
 async function handleSubmit() {
   try {
-    const continuar =
-      typeof route.query.continuar === "string"
-        ? route.query.continuar
-        : undefined;
-    await login(dni.value, password.value, continuar);
+    await login(dni.value, password.value, destinoContinuar.value);
+  } catch {
+    // error handled in composable
+  }
+}
+
+async function handleGoogle() {
+  try {
+    await loginConGoogle(destinoContinuar.value);
   } catch {
     // error handled in composable
   }
@@ -57,19 +64,20 @@ async function handleSubmit() {
                 Bienvenido de nuevo
               </h1>
               <p class="mt-3 text-sm text-slate-400">
-                Ingresa tu usuario y clave para continuar
+                Ingresa tu correo y clave para continuar
               </p>
             </div>
           </div>
 
           <form class="grid gap-5" @submit.prevent="handleSubmit">
             <div class="grid gap-2">
-              <Label class="text-slate-400" for="dni">Usuario</Label>
+              <Label class="text-slate-400" for="dni">Correo</Label>
               <Input
                 id="dni"
                 v-model="dni"
                 class="border-white/15 bg-black/30 text-white placeholder:text-slate-500 focus-visible:ring-blue-500"
-                placeholder="admin"
+                placeholder="tu@correo.com (o admin)"
+                autocomplete="username"
               />
             </div>
 
@@ -81,6 +89,7 @@ async function handleSubmit() {
                 class="border-white/15 bg-black/30 text-white placeholder:text-slate-500 focus-visible:ring-blue-500"
                 placeholder="Contraseña"
                 type="password"
+                autocomplete="current-password"
               />
             </div>
 
@@ -126,13 +135,51 @@ async function handleSubmit() {
               class="border-white/15 bg-transparent text-slate-200 hover:bg-white/8"
               variant="outline"
               type="button"
+              :disabled="loading"
+              @click="handleGoogle"
             >
-              <Mail class="h-4 w-4" />
+              <svg class="h-4 w-4" viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  fill="#EA4335"
+                  d="M12 10.2v3.6h5.1c-.2 1.2-.9 2.2-1.9 2.9l3.1 2.4c1.8-1.7 2.9-4.1 2.9-7 0-.7-.1-1.3-.2-1.9H12z"
+                />
+                <path
+                  fill="#34A853"
+                  d="M6.6 14.3l-.7.5-2.4 1.9C5.1 19.5 8.3 21.5 12 21.5c2.7 0 4.9-.9 6.5-2.4l-3.1-2.4c-.9.6-2 1-3.4 1-2.6 0-4.8-1.7-5.6-4.1z"
+                />
+                <path
+                  fill="#4A90E2"
+                  d="M3.5 7.3C2.9 8.5 2.5 9.9 2.5 11.5s.4 3 1 4.2l3.1-2.4c-.2-.6-.3-1.2-.3-1.8 0-.6.1-1.2.3-1.8L3.5 7.3z"
+                />
+                <path
+                  fill="#FBBC05"
+                  d="M12 5.3c1.5 0 2.8.5 3.8 1.5l2.8-2.8C17 2.4 14.7 1.5 12 1.5 8.3 1.5 5.1 3.5 3.5 7.3l3.1 2.4C7.2 7 9.4 5.3 12 5.3z"
+                />
+              </svg>
               Iniciar con Google
             </Button>
           </form>
 
+          <p class="text-center text-sm text-slate-400">
+            ¿No tienes cuenta?
+            <button
+              class="font-bold text-blue-400 hover:text-blue-300"
+              type="button"
+              @click="
+                router.push({
+                  path: '/registro',
+                  query: destinoContinuar
+                    ? { continuar: destinoContinuar }
+                    : undefined,
+                })
+              "
+            >
+              Regístrate
+            </button>
+          </p>
+
           <div class="grid gap-1 text-center text-xs text-slate-500">
+            <span>Demo: admin / 123456</span>
             <span>© Tukuy Academy · Ver. 07.06</span>
             <span>Soporte: 910104133 · 930132386 · 974977988 · 930804475</span>
           </div>

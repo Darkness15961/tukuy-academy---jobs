@@ -50,9 +50,14 @@ export function useFiltroCursos(courses: () => Course[]) {
     const list = courses();
     if (!term) return list;
     return list.filter((course) =>
-      [course.title, course.category, course.level, course.mode].some((value) =>
-        value.toLowerCase().includes(term),
-      ),
+      [
+        course.title,
+        course.category,
+        course.level,
+        course.mode,
+        course.organizacionNombre ?? "",
+        course.instructor ?? "",
+      ].some((value) => value.toLowerCase().includes(term)),
     );
   });
 

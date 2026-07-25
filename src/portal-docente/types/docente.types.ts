@@ -1,8 +1,26 @@
 export type AmbitoDocente = "INDEPENDIENTE" | "ORGANIZACION";
 
+/**
+ * Separación de oferta formativa:
+ * - VIRTUAL: contenido asíncrono (catálogo / aula virtual)
+ * - EN_VIVO: clases sincrónicas (calendario + Meet)
+ * - HIBRIDA: curso con ambos (contenido + sesiones en vivo)
+ *
+ * El calendario solo opera sobre sesiones EN_VIVO vinculadas a cursos
+ * EN_VIVO o HIBRIDA.
+ */
+export type ModalidadImparticion = "VIRTUAL" | "EN_VIVO" | "HIBRIDA";
+
+/**
+ * Alineado al pipeline de organización:
+ * BORRADOR → EN_REVISION → CONTENIDO_REVISADO → APROBADO → PUBLICADO
+ * OBSERVADO = requiere correcciones (con texto de observación)
+ */
 export type EstadoCursoDocente =
   | "BORRADOR"
   | "EN_REVISION"
+  | "CONTENIDO_REVISADO"
+  | "OBSERVADO"
   | "APROBADO"
   | "PUBLICADO"
   | "ARCHIVADO";
@@ -16,6 +34,11 @@ export interface CursoDocente {
   titulo: string;
   imagen: string;
   estado: EstadoCursoDocente;
+  /**
+   * Define si el curso alimenta el calendario de clases en vivo.
+   * Por defecto VIRTUAL si no se indica.
+   */
+  modalidadImparticion?: ModalidadImparticion;
   estudiantes: number;
   progreso: number;
   valoracion: number;
@@ -24,6 +47,8 @@ export interface CursoDocente {
   docenteResponsableNombre?: string;
   cargadoPorNombre?: string;
   origenCarga?: "DOCENTE" | "ADMINISTRACION";
+  /** Feedback de revisión académica cuando estado === OBSERVADO. */
+  observacion?: string;
 }
 
 export interface EstudianteDocente {
@@ -58,7 +83,10 @@ export interface EvaluacionDocente {
 export interface SesionDocente {
   id: string;
   titulo: string;
+  /** Título legible (denormalizado para UI). */
   curso: string;
+  /** Vínculo estable al curso docente. */
+  cursoId: string;
   fecha: string;
   hora: string;
   duracion: string;
@@ -68,6 +96,9 @@ export interface SesionDocente {
   enlace?: string;
   grabacion?: string;
   asistentes?: number;
+  /** Simulación Google Calendar + Meet. */
+  calendarEventId?: string;
+  invitadosEmails?: string[];
 }
 
 export interface MensajeDocente {

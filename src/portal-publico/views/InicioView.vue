@@ -5,12 +5,12 @@ import {
   BookOpen,
   BriefcaseBusiness,
   Building2,
+  CalendarDays,
   Check,
-  FileText,
+  FileUser,
   GraduationCap,
   MessageSquare,
   ShieldCheck,
-  Sparkles,
   UsersRound,
 } from "lucide-vue-next";
 import { useRouter } from "vue-router";
@@ -21,11 +21,69 @@ import { useCursos } from "@/composables/useCursos";
 import HeaderPublico from "../components/HeaderPublico.vue";
 import HeroInstitucional from "../components/HeroInstitucional.vue";
 import { bloquesAdn } from "../data/portada.mock";
+
 const router = useRouter();
 const { courses } = useCursos();
-function irA(destino: string) {
+
+/**
+ * Opción B: recorrido = módulos reales del producto.
+ * Cada paso nombra dónde ocurre en la plataforma.
+ */
+const pasosEcosistema = [
+  {
+    modulo: "Tukuy Academy",
+    titulo: "Aprende",
+    detalle: "Catálogo, compra e inscripción. Continúa en Mi aprendizaje.",
+    icono: BookOpen,
+    destino: "#cursos",
+  },
+  {
+    modulo: "Clases en vivo",
+    titulo: "Practica",
+    detalle: "Calendario de sesiones Meet vinculadas a tus cursos Mixto/Presencial.",
+    icono: CalendarDays,
+    destino: { name: "login", query: { continuar: "/tukuy-academy/calendario" } },
+  },
+  {
+    modulo: "Certificados",
+    titulo: "Certifica",
+    detalle: "Emisión al completar y verificación pública del documento.",
+    icono: Award,
+    destino: {
+      name: "login",
+      query: { continuar: "/tukuy-academy/certificados" },
+    },
+  },
+  {
+    modulo: "CV inteligente",
+    titulo: "Construye tu perfil",
+    detalle: "Perfil laboral alimentado por cursos, avance y evidencias.",
+    icono: FileUser,
+    destino: {
+      name: "login",
+      query: { continuar: "/perfil-profesional" },
+    },
+  },
+  {
+    modulo: "Bolsa Tukuy",
+    titulo: "Postula",
+    detalle: "Vacantes alineadas a tu perfil. Comunidad refuerza la red.",
+    icono: BriefcaseBusiness,
+    destino: "#bolsa",
+  },
+] as const;
+
+function irA(
+  destino:
+    | string
+    | { name: string; query?: Record<string, string> },
+) {
+  if (typeof destino === "object") {
+    void router.push(destino);
+    return;
+  }
   if (destino.startsWith("/")) {
-    router.push(destino);
+    void router.push(destino);
     return;
   }
   const el = document.querySelector(destino);
@@ -35,7 +93,7 @@ const audiencias = [
   {
     titulo: "ESTUDIANTES",
     texto:
-      "Aprende, certifica tus capacidades y fortalece tu perfil profesional.",
+      "Aprende, practica, certifica y postula desde un solo ecosistema.",
     imagen:
       "https://images.unsplash.com/photo-1523240795612-9a054b0db644?auto=format&fit=crop&w=900&q=85",
     icono: GraduationCap,
@@ -200,34 +258,74 @@ const audiencias = [
       </div>
     </section>
 
-    <section id="ecosistema" class="bg-[#07152B] py-20 text-white">
+    <section id="ecosistema" class="scroll-mt-24 bg-[#07152B] py-16 text-white sm:py-20">
       <div class="mx-auto max-w-360 px-5 lg:px-8">
         <p class="text-sm font-black uppercase tracking-[.25em] text-[#F5B400]">
           Ecosistema Tukuy
         </p>
-        <h2 class="mt-3 text-4xl font-black sm:text-6xl">
+        <h2 class="mt-3 max-w-4xl text-3xl font-black leading-tight sm:text-5xl lg:text-6xl">
           APRENDER ES SOLO EL COMIENZO
         </h2>
-        <div class="mt-12 grid md:grid-cols-5">
-          <div
-            v-for="(e, i) in [
-              { t: 'Aprende', ico: BookOpen },
-              { t: 'Practica', ico: Sparkles },
-              { t: 'Certifica', ico: Award },
-              { t: 'Construye tu perfil', ico: FileText },
-              { t: 'Postula', ico: BriefcaseBusiness },
-            ]"
-            :key="e.t"
-            class="relative border border-white/15 p-6"
+        <p class="mt-4 max-w-2xl text-sm leading-7 text-white/65 sm:text-base">
+          Cada etapa del recorrido es un módulo real de la plataforma: Academy,
+          clases en vivo, certificados, CV inteligente y Bolsa Tukuy.
+        </p>
+
+        <div
+          class="mt-10 border border-white/15 md:grid md:grid-cols-5"
+          role="list"
+          aria-label="Módulos del ecosistema Tukuy"
+        >
+          <button
+            v-for="(paso, indice) in pasosEcosistema"
+            :key="paso.modulo"
+            type="button"
+            role="listitem"
+            class="group relative flex w-full flex-col border-b border-white/15 p-6 text-left transition duration-300 last:border-b-0 hover:bg-white/[0.04] md:border-b-0 md:border-r md:last:border-r-0 md:p-7"
+            @click="irA(paso.destino)"
           >
-            <span class="text-xs text-blue-300">0{{ i + 1 }}</span
-            ><component :is="e.ico" class="mt-8 h-7 w-7 text-[#F5B400]" />
-            <h3 class="mt-4 text-xl font-black">{{ e.t }}</h3>
-            <ArrowRight
-              v-if="i < 4"
-              class="absolute -right-3 top-1/2 z-10 h-6 w-6 bg-[#07152B] text-white"
+            <div class="flex items-start justify-between gap-2">
+              <span
+                class="text-xs font-bold tracking-wide text-[#5B8FD4]"
+                aria-hidden="true"
+              >
+                {{ String(indice + 1).padStart(2, "0") }}
+              </span>
+              <span
+                class="max-w-[9.5rem] text-right text-[10px] font-bold uppercase tracking-wide text-[#F5B400]/90"
+              >
+                {{ paso.modulo }}
+              </span>
+            </div>
+
+            <component
+              :is="paso.icono"
+              class="mt-7 h-7 w-7 text-[#F5B400] transition duration-300 group-hover:scale-110"
+              aria-hidden="true"
             />
-          </div>
+
+            <h3 class="mt-4 text-lg font-black leading-snug sm:text-xl">
+              {{ paso.titulo }}
+            </h3>
+            <p class="mt-2 text-sm leading-6 text-white/55">
+              {{ paso.detalle }}
+            </p>
+
+            <span
+              class="mt-4 inline-flex items-center gap-1 text-xs font-bold text-white/40 transition group-hover:text-[#F5B400]"
+            >
+              Ver módulo
+              <ArrowRight class="h-3.5 w-3.5" />
+            </span>
+
+            <span
+              v-if="indice < pasosEcosistema.length - 1"
+              class="pointer-events-none absolute -bottom-3 left-1/2 z-10 grid h-6 w-6 -translate-x-1/2 place-items-center bg-[#07152B] text-white md:bottom-auto md:-right-3 md:left-auto md:top-1/2 md:translate-x-0 md:-translate-y-1/2"
+              aria-hidden="true"
+            >
+              <ArrowRight class="h-4 w-4 rotate-90 md:rotate-0" />
+            </span>
+          </button>
         </div>
       </div>
     </section>

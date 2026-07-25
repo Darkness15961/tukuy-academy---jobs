@@ -20,6 +20,7 @@ import { useRouter } from "vue-router";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import Skeleton from "primevue/skeleton";
@@ -156,16 +157,13 @@ function exportarReporte() {
         class="flex flex-wrap items-end justify-between gap-4 border-t-4 border-[#F5B400] bg-linear-to-r from-[#071F52] to-[#0B3A78] p-6 text-white sm:p-8"
       >
         <div>
-          <p class="text-xs font-black uppercase tracking-[.2em] text-accent">
-            Panel de desempeño
-          </p>
-          <h1 class="mt-2 text-2xl font-black sm:text-3xl">
-            Analítica académica
-          </h1>
-          <p class="mt-2 max-w-2xl text-sm leading-6 text-blue-100">
-            Monitorea participación, finalización, certificación y estudiantes
-            que necesitan seguimiento en todos tus cursos publicados.
-          </p>
+          <TituloConAyuda
+            eyebrow="Panel de desempeño"
+            titulo="Analítica académica"
+            clase-titulo="text-2xl font-black sm:text-3xl"
+            variante="claro"
+            ayuda="Monitorea participación, finalización, certificación y estudiantes que necesitan seguimiento."
+          />
         </div>
         <div class="flex flex-wrap gap-2">
           <div

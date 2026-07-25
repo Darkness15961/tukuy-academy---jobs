@@ -1,5 +1,11 @@
 export type CoursePricing = "free" | "paid";
 
+/** Procedencia del curso en el catálogo del portal. */
+export type CourseOrigen = "tukuy" | "entidad";
+
+/** Visibilidad / restricción (cursos de entidad). */
+export type CourseAlcance = "PUBLICO" | "INTERNO";
+
 export type Course = {
   id: string;
   title: string;
@@ -17,6 +23,12 @@ export type Course = {
   rating?: number;
   reviewCount?: number;
   bestseller?: boolean;
+  /** Tukuy Academy vs publicado por una organización. */
+  origen?: CourseOrigen;
+  /** Público abierto o solo miembros/nodos. */
+  alcance?: CourseAlcance;
+  organizacionId?: string;
+  organizacionNombre?: string;
 };
 
 export type CourseLesson = {

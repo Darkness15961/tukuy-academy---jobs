@@ -1,6 +1,7 @@
 export type ViewId =
   | "courses"
   | "learning"
+  | "calendar"
   | "favorites"
   | "jobs"
   | "cv"

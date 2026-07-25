@@ -16,6 +16,7 @@ import {
 import { docenteService } from "@/api/services/docente.service";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import Skeleton from "primevue/skeleton";
@@ -101,10 +102,11 @@ async function guardarCalificacion() {
 <template>
   <section class="mx-auto grid max-w-375 gap-6">
     <div>
-      <h1 class="text-2xl font-black">Evaluaciones y entregas</h1>
-      <p class="mt-1 text-sm text-muted-foreground">
-        Bandeja general de archivos enviados en todos tus cursos.
-      </p>
+      <TituloConAyuda
+        titulo="Evaluaciones y entregas"
+        clase-titulo="text-2xl font-black"
+        ayuda="Bandeja general de archivos enviados en todos tus cursos."
+      />
     </div>
 
     <div class="grid gap-4 sm:grid-cols-3">

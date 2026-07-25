@@ -6,11 +6,15 @@ import {
   crearRepositorioLocal,
 } from "@/api/repositorio-local";
 import {
+  certificadosOperacionAdmin,
   cursosRevisionAdministracion,
   eventosAuditoria,
   facturasAdministracion,
+  ordenesMarketplaceAdmin,
   organizacionesAdministracion,
   planesAdministracion,
+  resumenEcosistemaAdmin,
+  sesionesGlobalesAdmin,
   usuariosAdministracion,
 } from "@/administracion-tukuy/data/administracion.mock";
 import type { OrganizacionAdministrada } from "@/administracion-tukuy/data/administracion.mock";
@@ -20,21 +24,26 @@ export type CursoAdministrado = (typeof cursosRevisionAdministracion)[number];
 export type FacturaAdministrada = (typeof facturasAdministracion)[number];
 export type PlanAdministrado = (typeof planesAdministracion)[number];
 export type EventoAuditoria = (typeof eventosAuditoria)[number];
+export type ResumenEcosistemaAdmin = typeof resumenEcosistemaAdmin;
+export type CertificadoOperacionAdmin =
+  (typeof certificadosOperacionAdmin)[number];
+export type OrdenMarketplaceAdmin = (typeof ordenesMarketplaceAdmin)[number];
+export type SesionGlobalAdmin = (typeof sesionesGlobalesAdmin)[number];
 
 const organizaciones = crearRepositorioLocal({
-  clave: "tukuy_demo_admin_organizaciones",
+  clave: "tukuy_demo_admin_organizaciones_v2",
   ruta: API.administracion.organizaciones,
   semilla: organizacionesAdministracion,
 });
 
 const usuarios = crearRepositorioLocal({
-  clave: "tukuy_demo_admin_usuarios",
+  clave: "tukuy_demo_admin_usuarios_v2",
   ruta: API.administracion.usuarios,
   semilla: usuariosAdministracion,
 });
 
 const cursos = crearRepositorioLocal({
-  clave: "tukuy_demo_admin_cursos",
+  clave: "tukuy_demo_admin_cursos_v2",
   ruta: API.administracion.cursos,
   semilla: cursosRevisionAdministracion,
 });
@@ -52,7 +61,7 @@ const facturas = crearRepositorioLocal({
 });
 
 const auditoria = crearRepositorioLocal({
-  clave: "tukuy_demo_admin_auditoria",
+  clave: "tukuy_demo_admin_auditoria_v2",
   ruta: API.administracion.auditoria,
   semilla: eventosAuditoria,
 });
@@ -176,6 +185,24 @@ const configuracionLocal = crearAlmacenDocumento("tukuy_demo_admin_config", {
   dobleFactor: true,
 });
 
+const certificados = crearRepositorioLocal({
+  clave: "tukuy_demo_admin_certificados",
+  ruta: API.administracion.certificados,
+  semilla: certificadosOperacionAdmin,
+});
+
+const ordenesMarketplace = crearRepositorioLocal({
+  clave: "tukuy_demo_admin_ordenes_marketplace",
+  ruta: API.administracion.ordenesMarketplace,
+  semilla: ordenesMarketplaceAdmin,
+});
+
+const sesiones = crearRepositorioLocal({
+  clave: "tukuy_demo_admin_sesiones",
+  ruta: API.administracion.sesiones,
+  semilla: sesionesGlobalesAdmin,
+});
+
 export const administracionService = {
   organizaciones,
   usuarios,
@@ -184,6 +211,9 @@ export const administracionService = {
   facturas,
   auditoria,
   invitacionesIniciales,
+  certificados,
+  ordenesMarketplace,
+  sesiones,
 
   registrarOrganizacionConResponsables,
 
@@ -204,20 +234,50 @@ export const administracionService = {
     return data as ReturnType<typeof configuracionLocal.leer>;
   },
 
+  async obtenerResumenEcosistema() {
+    if (apiConfig.useMock) return { ...resumenEcosistemaAdmin };
+    const { data } = await api.get(API.administracion.ecosistema);
+    return data as ResumenEcosistemaAdmin;
+  },
+
   async obtenerPanel() {
-    const [listaOrganizaciones, listaUsuarios, listaCursos, listaFacturas] =
-      await Promise.all([
-        organizaciones.listar(),
-        usuarios.listar(),
-        cursos.listar(),
-        facturas.listar(),
-      ]);
+    const [
+      listaOrganizaciones,
+      listaUsuarios,
+      listaCursos,
+      listaFacturas,
+      ecosistema,
+    ] = await Promise.all([
+      organizaciones.listar(),
+      usuarios.listar(),
+      cursos.listar(),
+      facturas.listar(),
+      this.obtenerResumenEcosistema(),
+    ]);
 
     return {
       organizaciones: listaOrganizaciones,
       usuarios: listaUsuarios,
       cursos: listaCursos,
       facturas: listaFacturas,
+      ecosistema,
+    };
+  },
+
+  async obtenerOperacionEcosistema() {
+    const [ecosistema, listaCertificados, listaOrdenes, listaSesiones] =
+      await Promise.all([
+        this.obtenerResumenEcosistema(),
+        certificados.listar(),
+        ordenesMarketplace.listar(),
+        sesiones.listar(),
+      ]);
+
+    return {
+      resumen: ecosistema,
+      certificados: listaCertificados,
+      ordenes: listaOrdenes,
+      sesiones: listaSesiones,
     };
   },
 };

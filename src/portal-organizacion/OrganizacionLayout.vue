@@ -10,6 +10,7 @@ import {
   ChevronDown,
   ClipboardList,
   CreditCard,
+  CalendarDays,
   GraduationCap,
   Home,
   LogOut,
@@ -18,8 +19,12 @@ import {
   Route,
   Settings,
   ShieldCheck,
+  Sparkles,
+  Tags,
   UsersRound,
+  Video,
   X,
+  type LucideIcon,
 } from "lucide-vue-next";
 import {
   DropdownMenuContent,
@@ -29,7 +34,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "reka-ui";
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { RouterView, useRoute, useRouter } from "vue-router";
 import SelectorTema from "@/components/shared/SelectorTema.vue";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -44,6 +49,24 @@ import {
   etiquetaRol,
   rutaInicioPortal,
 } from "@/composables/useContextoSesion";
+
+type ItemNav = {
+  etiqueta: string;
+  ruta: string;
+  icono: LucideIcon;
+  permiso?: string;
+};
+
+type GrupoNav = {
+  id: string;
+  etiqueta: string;
+  icono: LucideIcon;
+  /** Ítem suelto (sin submenú), p. ej. Inicio o Reportes. */
+  ruta?: string;
+  permiso?: string;
+  hijos?: ItemNav[];
+};
+
 const route = useRoute(),
   router = useRouter();
 const { logout, currentUser, restaurarUsuario } = useAuth();
@@ -56,6 +79,7 @@ const {
 const abierto = ref(false);
 const panelAvisos = ref(false);
 const avisos = ref<NotificacionOrganizacion[]>([]);
+const gruposAbiertos = ref<Record<string, boolean>>({});
 const nombreUsuario = computed(
   () => currentUser.value?.name ?? "Administrador de organización",
 );
@@ -99,29 +123,173 @@ async function marcarLeidas() {
 function fechaAviso(valor: string) {
   return new Intl.DateTimeFormat("es-PE", { dateStyle: "short", timeStyle: "short" }).format(new Date(valor));
 }
-const itemsBase = [
-  { e: "Inicio", r: "/organizacion/inicio", i: Home },
-  { e: "Usuarios", r: "/organizacion/usuarios", i: UsersRound, p: "usuarios.ver" },
-  { e: "Alumnos", r: "/organizacion/alumnos", i: GraduationCap, p: "estudiantes.ver" },
-  { e: "Certificados", r: "/organizacion/certificados", i: Award, p: "certificados.ver" },
-  { e: "Equipos y áreas", r: "/organizacion/equipos", i: Network, p: "equipos.administrar" },
-  { e: "Cursos institucionales", r: "/organizacion/cursos/gestion", i: BookOpen, p: "cursos.crear" },
-  { e: "Catálogo y revisión", r: "/organizacion/cursos", i: BookOpen, p: "cursos.ver" },
-  { e: "Asignaciones", r: "/organizacion/asignaciones", i: ClipboardList, p: "asignaciones.crear" },
-  { e: "Rutas de aprendizaje", r: "/organizacion/rutas", i: Route, p: "rutas.administrar" },
-  { e: "Reportes", r: "/organizacion/reportes", i: BarChart3, p: "reportes.ver" },
-  { e: "Licencia y consumo", r: "/organizacion/licencia", i: ShieldCheck, p: "licencias.ver" },
-  { e: "Facturación", r: "/organizacion/facturacion", i: CreditCard, p: "facturacion.ver" },
+
+/** Menú agrupado: globales + subpuntos relacionados. */
+const gruposBase: GrupoNav[] = [
+  {
+    id: "inicio",
+    etiqueta: "Inicio",
+    icono: Home,
+    ruta: "/organizacion/inicio",
+  },
+  {
+    id: "personas",
+    etiqueta: "Personas",
+    icono: UsersRound,
+    hijos: [
+      {
+        etiqueta: "Usuarios",
+        ruta: "/organizacion/usuarios",
+        icono: UsersRound,
+        permiso: "usuarios.ver",
+      },
+      {
+        etiqueta: "Alumnos",
+        ruta: "/organizacion/alumnos",
+        icono: GraduationCap,
+        permiso: "estudiantes.ver",
+      },
+    ],
+  },
+  {
+    id: "formacion",
+    etiqueta: "Formación",
+    icono: BookOpen,
+    hijos: [
+      {
+        etiqueta: "Cursos",
+        ruta: "/organizacion/cursos",
+        icono: BookOpen,
+        permiso: "cursos.ver",
+      },
+      {
+        etiqueta: "Categorías",
+        ruta: "/organizacion/cursos/categorias",
+        icono: Tags,
+        permiso: "categorias.ver",
+      },
+      {
+        etiqueta: "Asignaciones",
+        ruta: "/organizacion/asignaciones",
+        icono: ClipboardList,
+        permiso: "asignaciones.crear",
+      },
+      {
+        etiqueta: "Rutas de aprendizaje",
+        ruta: "/organizacion/rutas",
+        icono: Route,
+        permiso: "rutas.administrar",
+      },
+      {
+        etiqueta: "Certificados",
+        ruta: "/organizacion/certificados",
+        icono: Award,
+        permiso: "certificados.ver",
+      },
+    ],
+  },
+  {
+    id: "clases-vivo",
+    etiqueta: "Clases en vivo",
+    icono: Video,
+    hijos: [
+      {
+        etiqueta: "Calendario",
+        ruta: "/organizacion/calendario",
+        icono: CalendarDays,
+        permiso: "sesiones.gestionar",
+      },
+      {
+        etiqueta: "Sesiones",
+        ruta: "/organizacion/sesiones",
+        icono: Video,
+        permiso: "sesiones.gestionar",
+      },
+    ],
+  },
+  {
+    id: "estructura",
+    etiqueta: "Estructura",
+    icono: Network,
+    hijos: [
+      {
+        etiqueta: "Estructura y nodos",
+        ruta: "/organizacion/equipos",
+        icono: Network,
+        permiso: "equipos.administrar",
+      },
+    ],
+  },
+  {
+    id: "reportes",
+    etiqueta: "Reportes",
+    icono: BarChart3,
+    ruta: "/organizacion/reportes",
+    permiso: "reportes.ver",
+  },
+  {
+    id: "plan",
+    etiqueta: "Plan y facturación",
+    icono: CreditCard,
+    hijos: [
+      {
+        etiqueta: "Licencia y consumo",
+        ruta: "/organizacion/licencia",
+        icono: ShieldCheck,
+        permiso: "licencias.ver",
+      },
+      {
+        etiqueta: "Facturación y actualización",
+        ruta: "/organizacion/facturacion",
+        icono: CreditCard,
+        permiso: "facturacion.ver",
+      },
+    ],
+  },
 ];
-const items = computed(() =>
-  itemsBase.filter((item) => !item.p || tienePermiso(item.p)),
+
+const grupos = computed(() =>
+  gruposBase
+    .map((grupo) => {
+      if (grupo.ruta) {
+        if (grupo.permiso && !tienePermiso(grupo.permiso)) return null;
+        return grupo;
+      }
+      const hijos = (grupo.hijos ?? []).filter(
+        (hijo) => !hijo.permiso || tienePermiso(hijo.permiso),
+      );
+      if (!hijos.length) return null;
+      // Un solo hijo visible: mostrar como ítem directo con la etiqueta del hijo.
+      if (hijos.length === 1) {
+        const unico = hijos[0]!;
+        return {
+          id: grupo.id,
+          etiqueta: unico.etiqueta,
+          icono: unico.icono,
+          ruta: unico.ruta,
+        } satisfies GrupoNav;
+      }
+      return { ...grupo, hijos };
+    })
+    .filter((grupo): grupo is GrupoNav => Boolean(grupo)),
 );
+
 const itemsEcosistemaBase = [
-  { e: "Bolsa Tukuy", r: "/bolsa-tukuy", i: BriefcaseBusiness, p: "bolsa.ver" },
-  { e: "Comunidad", r: "/comunidad", i: UsersRound, p: "comunidad.ver" },
+  {
+    e: "Presencia pública",
+    r: "/organizacion/ecosistema",
+    i: Sparkles,
+    p: "configuracion.editar",
+  },
+  {
+    e: "Gestionar vacantes",
+    r: "/bolsa-tukuy/gestion",
+    i: BriefcaseBusiness,
+    p: "vacantes.gestionar",
+  },
 ];
 const itemsEcosistema = computed(() =>
-  itemsEcosistemaBase.filter((item) => tienePermiso(item.p)),
+  itemsEcosistemaBase.filter((item) => !item.p || tienePermiso(item.p)),
 );
 const otrasFunciones = computed(() =>
   funcionesEntidadActiva.value.filter(
@@ -131,7 +299,63 @@ const otrasFunciones = computed(() =>
 const titulo = computed(() =>
   String(route.meta.titulo ?? "Portal de organización"),
 );
-const activa = (r: string) => route.path === r;
+
+function rutaActiva(ruta: string) {
+  if (ruta === "/organizacion/cursos") {
+    return (
+      route.path === ruta ||
+      (route.path.startsWith(`${ruta}/`) &&
+        !route.path.startsWith("/organizacion/cursos/categorias"))
+    );
+  }
+  if (ruta === "/comunidad") {
+    return (
+      route.path === "/comunidad" ||
+      route.path.startsWith("/comunidad/publicaciones")
+    );
+  }
+  if (ruta === "/bolsa-tukuy") {
+    return (
+      route.path === "/bolsa-tukuy" ||
+      route.path.startsWith("/bolsa-tukuy/vacantes")
+    );
+  }
+  return route.path === ruta || route.path.startsWith(`${ruta}/`);
+}
+
+function grupoActivo(grupo: GrupoNav) {
+  if (grupo.ruta) return rutaActiva(grupo.ruta);
+  return (grupo.hijos ?? []).some((hijo) => rutaActiva(hijo.ruta));
+}
+
+function grupoExpandido(grupo: GrupoNav) {
+  if (!grupo.hijos?.length) return false;
+  return gruposAbiertos.value[grupo.id] ?? grupoActivo(grupo);
+}
+
+function alternarGrupo(grupo: GrupoNav) {
+  const abiertoAhora = grupoExpandido(grupo);
+  gruposAbiertos.value = {
+    ...gruposAbiertos.value,
+    [grupo.id]: !abiertoAhora,
+  };
+}
+
+watch(
+  () => route.path,
+  () => {
+    for (const grupo of grupos.value) {
+      if (grupo.hijos?.length && grupoActivo(grupo)) {
+        gruposAbiertos.value = {
+          ...gruposAbiertos.value,
+          [grupo.id]: true,
+        };
+      }
+    }
+  },
+  { immediate: true },
+);
+
 async function ir(r: string) {
   abierto.value = false;
   await router.push(r);
@@ -200,35 +424,86 @@ async function activarFuncion(membresiaId: string) {
           </p>
         </div>
       </div>
-      <nav class="mt-5 flex-1 space-y-1 overflow-y-auto px-3">
-        <button
-          v-for="x in items"
-          :key="x.r"
-          class="flex w-full items-center gap-3 border-l-[3px] px-3 py-2.5 text-sm font-semibold transition"
-          :class="
-            activa(x.r)
-              ? 'border-l-primary bg-primary/10 text-primary'
-              : 'border-l-transparent text-muted-foreground hover:border-l-accent/50 hover:bg-muted hover:text-foreground'
-          "
-          @click="ir(x.r)"
-        >
-          <component :is="x.i" class="h-[18px] w-[18px]" /><span>{{
-            x.e
-          }}</span>
-        </button>
+      <nav class="mt-5 flex-1 space-y-1 overflow-y-auto px-3 pb-2">
+        <div v-for="grupo in grupos" :key="grupo.id" class="space-y-0.5">
+          <!-- Ítem global sin hijos -->
+          <button
+            v-if="grupo.ruta && !grupo.hijos?.length"
+            class="flex w-full items-center gap-3 border-l-[3px] px-3 py-2.5 text-sm font-semibold transition"
+            :class="
+              rutaActiva(grupo.ruta)
+                ? 'border-l-primary bg-primary/10 text-primary'
+                : 'border-l-transparent text-muted-foreground hover:border-l-accent/50 hover:bg-muted hover:text-foreground'
+            "
+            @click="ir(grupo.ruta)"
+          >
+            <component :is="grupo.icono" class="h-[18px] w-[18px] shrink-0" />
+            <span>{{ grupo.etiqueta }}</span>
+          </button>
+
+          <!-- Grupo con subpuntos -->
+          <template v-else-if="grupo.hijos?.length">
+            <button
+              type="button"
+              class="flex w-full items-center gap-3 border-l-[3px] px-3 py-2.5 text-sm font-semibold transition"
+              :class="
+                grupoActivo(grupo)
+                  ? 'border-l-primary bg-primary/10 text-primary'
+                  : 'border-l-transparent text-muted-foreground hover:border-l-accent/50 hover:bg-muted hover:text-foreground'
+              "
+              :aria-expanded="grupoExpandido(grupo)"
+              @click="alternarGrupo(grupo)"
+            >
+              <component :is="grupo.icono" class="h-[18px] w-[18px] shrink-0" />
+              <span class="flex-1 text-left">{{ grupo.etiqueta }}</span>
+              <ChevronDown
+                class="h-4 w-4 shrink-0 transition-transform duration-300 ease-out"
+                :class="grupoExpandido(grupo) ? 'rotate-0' : '-rotate-90'"
+              />
+            </button>
+            <div
+              class="grid transition-[grid-template-rows,opacity] duration-300 ease-out"
+              :class="
+                grupoExpandido(grupo)
+                  ? 'grid-rows-[1fr] opacity-100'
+                  : 'pointer-events-none grid-rows-[0fr] opacity-0'
+              "
+            >
+              <div class="min-h-0 overflow-hidden">
+                <div class="ml-2 space-y-0.5 border-l border-border py-0.5 pl-2">
+                  <button
+                    v-for="hijo in grupo.hijos"
+                    :key="hijo.ruta"
+                    class="flex w-full items-center gap-2.5 border-l-[3px] px-2.5 py-2 text-xs font-semibold transition-colors duration-200"
+                    :class="
+                      rutaActiva(hijo.ruta)
+                        ? 'border-l-accent bg-primary/10 text-primary'
+                        : 'border-l-transparent text-muted-foreground hover:border-l-accent/50 hover:bg-muted hover:text-foreground'
+                    "
+                    :tabindex="grupoExpandido(grupo) ? 0 : -1"
+                    @click="ir(hijo.ruta)"
+                  >
+                    <component :is="hijo.icono" class="h-3.5 w-3.5 shrink-0" />
+                    <span>{{ hijo.etiqueta }}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
       </nav>
       <div class="border-t border-border px-3 py-3">
         <p
           class="mb-1.5 px-2 text-[9px] font-black uppercase tracking-[.18em] text-muted-foreground"
         >
-          Ecosistema Tukuy
+          Ecosistema · configuración
         </p>
         <button
           v-for="x in itemsEcosistema"
           :key="x.r"
           class="flex w-full items-center gap-2 border-l-2 px-2 py-2 text-xs font-semibold transition"
           :class="
-            activa(x.r)
+            rutaActiva(x.r)
               ? 'border-l-accent bg-primary/10 text-primary'
               : 'border-l-transparent text-muted-foreground hover:border-l-accent/50 hover:bg-muted hover:text-foreground'
           "

@@ -11,6 +11,7 @@ import {
   Home,
   LogOut,
   Menu,
+  Network,
   Settings,
   ShieldCheck,
   UsersRound,
@@ -62,6 +63,11 @@ onMounted(() => {
 
 const navegacion = computed(() => [
   { etiqueta: "Panel global", ruta: "/admin/inicio", icono: Home },
+  {
+    etiqueta: "Ecosistema",
+    ruta: "/admin/ecosistema",
+    icono: Network,
+  },
   {
     etiqueta: "Organizaciones",
     ruta: "/admin/organizaciones",
@@ -152,16 +158,16 @@ async function navegar(ruta: string) {
       </div>
 
       <div
-        class="mx-4 mt-5 border border-violet-100 border-l-4 border-l-violet-700 bg-violet-50/70 p-3"
+        class="mx-4 mt-5 border border-border border-l-4 border-l-primary bg-primary/5 p-3"
       >
         <div class="flex items-center gap-2">
-          <ShieldCheck class="h-4 w-4 text-violet-700" />
-          <p class="text-xs font-black uppercase tracking-wide text-violet-800">
+          <ShieldCheck class="h-4 w-4 text-primary" />
+          <p class="text-xs font-black uppercase tracking-wide text-primary">
             Operación global
           </p>
         </div>
         <p class="mt-1 text-xs text-muted-foreground">
-          Todas las organizaciones y servicios
+          SaaS, marketplace, vivo y certificados
         </p>
       </div>
 
@@ -173,7 +179,7 @@ async function navegar(ruta: string) {
           class="flex w-full items-center gap-3 border-l-[3px] px-3 py-2.5 text-sm font-semibold transition"
           :class="
             estaActiva(item.ruta)
-              ? 'border-l-violet-700 bg-violet-50 text-violet-800'
+              ? 'border-l-primary bg-primary/10 text-primary'
               : 'border-l-transparent text-muted-foreground hover:border-l-border hover:bg-muted hover:text-foreground'
           "
           @click="navegar(item.ruta)"
@@ -247,7 +253,7 @@ async function navegar(ruta: string) {
               aria-label="Abrir menú de usuario"
             >
               <Avatar class="h-9 w-9">
-                <AvatarFallback class="bg-violet-800 text-xs text-white">
+                <AvatarFallback class="bg-primary text-xs text-primary-foreground">
                   {{ inicialesUsuario }}
                 </AvatarFallback>
               </Avatar>

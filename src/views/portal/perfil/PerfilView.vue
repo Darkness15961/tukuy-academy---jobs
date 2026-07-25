@@ -2,16 +2,24 @@
 import {
   Award,
   BriefcaseBusiness,
-  CheckCircle2,
+  CalendarDays,
+  ChevronDown,
   ClipboardCheck,
   FileText,
   MapPin,
-  RefreshCw,
   ShieldCheck,
   Sparkles,
   UserRound,
+  UsersRound,
 } from "lucide-vue-next";
-import { computed } from "vue";
+import {
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuRoot,
+  DropdownMenuTrigger,
+} from "reka-ui";
+import { computed, ref } from "vue";
+import { useRouter } from "vue-router";
 
 import PageTitle from "@/components/shared/PageTitle.vue";
 import PortalSection from "@/components/shared/PortalSection.vue";
@@ -19,11 +27,38 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
+import { portalPathByView } from "@/lib/portal-routes";
 import type { WorkExperience } from "@/types/academia";
 import { usePortalContext } from "../composables/usePortalContext";
 
 const portal = usePortalContext();
+const router = useRouter();
 const profilePhotoSrc = "/img/vistasimg/perfilfoto.png";
+const ecosistemaAbierto = ref(false);
+
+const herramientasEcosistema = [
+  {
+    id: "cv",
+    etiqueta: "CV / Perfil profesional",
+    detalle: "Tu carta de presentación y experiencia laboral",
+    ruta: "/perfil-profesional",
+    icono: FileText,
+  },
+  {
+    id: "bolsa",
+    etiqueta: "Bolsa Tukuy",
+    detalle: "Vacantes y postulaciones del ecosistema",
+    ruta: "/bolsa-tukuy",
+    icono: BriefcaseBusiness,
+  },
+  {
+    id: "comunidad",
+    etiqueta: "Comunidad Tukuy",
+    detalle: "Publicaciones, grupos y networking",
+    ruta: "/comunidad",
+    icono: UsersRound,
+  },
+] as const;
 
 const profileStats = computed(() => [
   {
@@ -82,6 +117,19 @@ function statusVariant(status: WorkExperience["status"]) {
   if (status === "Verificado") return "success";
   if (status === "Declarado") return "warning";
   return "default";
+}
+
+function irEcosistema(ruta: string) {
+  ecosistemaAbierto.value = false;
+  void router.push(ruta);
+}
+
+function irCalendario() {
+  void router.push(portalPathByView.calendar);
+}
+
+function irCertificados() {
+  void router.push(portalPathByView.certificates);
 }
 </script>
 
@@ -167,18 +215,109 @@ function statusVariant(status: WorkExperience["status"]) {
             />
           </div>
 
-          <div class="flex justify-end mt-4">
-            <Button
-              class="w-full sm:w-auto gap-2"
-              variant="outline"
-              type="button"
-              @click="portal.navigate('cv')"
-            >
-              <FileText class="h-4 w-4" />
-              Ver CV inteligente
-            </Button>
+          <div class="mt-4 flex flex-col gap-3 sm:flex-row sm:justify-end">
+            <DropdownMenuRoot v-model:open="ecosistemaAbierto">
+              <DropdownMenuTrigger as-child>
+                <Button
+                  class="w-full gap-2 sm:w-auto"
+                  variant="outline"
+                  type="button"
+                >
+                  <UsersRound class="h-4 w-4" />
+                  Comunidad Tukuy
+                  <span
+                    class="rounded-sm bg-accent/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#B87A00] dark:text-accent"
+                  >
+                    Pro
+                  </span>
+                  <ChevronDown
+                    class="h-4 w-4 text-muted-foreground transition-transform duration-200"
+                    :class="ecosistemaAbierto ? 'rotate-180' : ''"
+                  />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                class="z-50 w-[min(20rem,calc(100vw-2rem))] rounded-none border border-border bg-card p-1 shadow-lg"
+                :side-offset="8"
+                align="end"
+              >
+                <DropdownMenuItem
+                  v-for="item in herramientasEcosistema"
+                  :key="item.id"
+                  class="flex cursor-pointer items-center gap-2 rounded-none px-2 py-2 text-sm outline-none hover:bg-muted"
+                  @select="irEcosistema(item.ruta)"
+                >
+                  <component :is="item.icono" class="h-4 w-4" />
+                  {{ item.etiqueta }}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenuRoot>
           </div>
         </div>
+      </div>
+    </section>
+
+    <section class="border border-border bg-card shadow-sm">
+      <div
+        class="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4 sm:px-6"
+      >
+        <div class="min-w-0">
+          <div class="flex flex-wrap items-center gap-2">
+            <UsersRound class="h-4 w-4 text-primary" />
+            <h3 class="text-lg font-bold text-foreground">Comunidad Tukuy</h3>
+            <span
+              class="rounded-sm bg-accent/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#B87A00] dark:text-accent"
+            >
+              Pro
+            </span>
+          </div>
+          <p class="mt-1 text-sm text-muted-foreground">
+            Ecosistema: perfil profesional, bolsa laboral y comunidad.
+          </p>
+        </div>
+        <DropdownMenuRoot v-model:open="ecosistemaAbierto">
+          <DropdownMenuTrigger as-child>
+            <Button variant="outline" type="button" class="gap-2">
+              Abrir
+              <ChevronDown
+                class="h-4 w-4 text-muted-foreground transition-transform duration-200"
+                :class="ecosistemaAbierto ? 'rotate-180' : ''"
+              />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            class="z-50 w-[min(20rem,calc(100vw-2rem))] rounded-none border border-border bg-card p-1 shadow-lg"
+            :side-offset="8"
+            align="end"
+          >
+            <DropdownMenuItem
+              v-for="item in herramientasEcosistema"
+              :key="`card-${item.id}`"
+              class="flex cursor-pointer items-center gap-2 rounded-none px-2 py-2 text-sm outline-none hover:bg-muted"
+              @select="irEcosistema(item.ruta)"
+            >
+              <component :is="item.icono" class="h-4 w-4" />
+              {{ item.etiqueta }}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenuRoot>
+      </div>
+      <div class="grid gap-0 sm:grid-cols-3">
+        <button
+          v-for="item in herramientasEcosistema"
+          :key="`grid-${item.id}`"
+          type="button"
+          class="flex items-center gap-3 border-b border-border px-5 py-4 text-left transition hover:bg-muted/60 sm:border-b-0 sm:border-r sm:last:border-r-0"
+          @click="irEcosistema(item.ruta)"
+        >
+          <component :is="item.icono" class="h-4 w-4 shrink-0 text-primary" />
+          <span>
+            <strong class="block text-sm">{{ item.etiqueta }}</strong>
+            <span class="mt-0.5 block text-xs text-muted-foreground">{{
+              item.detalle
+            }}</span>
+          </span>
+        </button>
       </div>
     </section>
 
@@ -211,6 +350,67 @@ function statusVariant(status: WorkExperience["status"]) {
               }}</span>
             </div>
           </div>
+        </CardContent>
+      </Card>
+    </section>
+
+    <section class="grid gap-4 md:grid-cols-2">
+      <Card class="border-border shadow-sm">
+        <CardContent
+          class="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between"
+        >
+          <div class="flex items-start gap-3">
+            <span
+              class="grid h-12 w-12 place-items-center rounded-xl bg-emerald-50 text-emerald-700"
+            >
+              <Award class="h-5 w-5" />
+            </span>
+            <div>
+              <h3 class="text-base font-bold text-foreground">
+                Mis certificados
+              </h3>
+              <p class="mt-1 text-sm text-muted-foreground">
+                Revisa, descarga y comparte tus certificados verificables.
+              </p>
+            </div>
+          </div>
+          <Button
+            class="shrink-0 rounded-none"
+            variant="outline"
+            type="button"
+            @click="irCertificados"
+          >
+            Ver certificados
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card class="border-border shadow-sm">
+        <CardContent
+          class="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between"
+        >
+          <div class="flex items-start gap-3">
+            <span
+              class="grid h-12 w-12 place-items-center rounded-xl bg-primary/10 text-primary"
+            >
+              <CalendarDays class="h-5 w-5" />
+            </span>
+            <div>
+              <h3 class="text-base font-bold text-foreground">
+                Mi calendario
+              </h3>
+              <p class="mt-1 text-sm text-muted-foreground">
+                Clases en vivo y sesiones programadas de tus cursos.
+              </p>
+            </div>
+          </div>
+          <Button
+            class="shrink-0 rounded-none"
+            type="button"
+            @click="irCalendario"
+          >
+            Abrir calendario
+          </Button>
         </CardContent>
       </Card>
     </section>

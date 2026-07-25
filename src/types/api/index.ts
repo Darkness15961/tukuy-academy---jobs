@@ -22,6 +22,27 @@ export type LoginResponseDto = {
   memberships?: MembresiaOrganizacion[];
 };
 
+export type RegistroRequestDto = {
+  nombre: string;
+  apellidos: string;
+  correo: string;
+  password: string;
+  telefono?: string;
+};
+
+export type UsuarioRegistradoDto = {
+  id: string;
+  correo: string;
+  password: string;
+  nombre: string;
+  apellidos: string;
+  telefono?: string;
+  proveedor: "email" | "google";
+  creadoEn: string;
+  /** @deprecated cuentas antiguas; el acceso es por correo */
+  usuario?: string;
+};
+
 export type CarouselSlideDto = {
   title: string;
   description: string;

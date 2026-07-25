@@ -17,6 +17,7 @@ import {
 } from "@/api/services/docente.service";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import { Card, CardContent } from "@/components/ui/card";
 import Skeleton from "primevue/skeleton";
 import InputText from "primevue/inputtext";
@@ -267,10 +268,11 @@ async function descargarCertificado(certificado: CertificadoEmitidoDocente) {
 <template>
   <section class="mx-auto grid max-w-375 gap-6">
     <div>
-      <h1 class="text-2xl font-black">{{ props.titulo }}</h1>
-      <p class="mt-1 text-sm text-muted-foreground">
-        {{ props.descripcion }}
-      </p>
+      <TituloConAyuda
+        :titulo="props.titulo"
+        :ayuda="props.descripcion"
+        clase-titulo="text-2xl font-black"
+      />
       <p
         v-if="sincronizando && !cargando"
         class="mt-2 text-xs font-medium text-primary"

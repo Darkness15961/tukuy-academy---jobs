@@ -43,6 +43,13 @@ export const matriculasOrganizacion = [
   { id: "mat-027", alumnoId: "alu-013", cursoId: "doc-11", nombre: "Lucía Torres Benavides", iniciales: "LT", curso: "Control de calidad en obras civiles", organizacion: ORGANIZACION, progreso: 61, ultimoAcceso: "Hace 5 h", ultimoAccesoFecha: "2026-07-16", fechaInscripcion: "2026-06-27", estado: "ACTIVO" },
   { id: "mat-028", alumnoId: "alu-014", cursoId: "doc-1", nombre: "Fernando Quispe Ríos", iniciales: "FQ", curso: "Gestión digital de obras con Tukuy", organizacion: ORGANIZACION, progreso: 54, ultimoAcceso: "Hoy", ultimoAccesoFecha: "2026-07-16", fechaInscripcion: "2026-06-16", estado: "ACTIVO" },
   { id: "mat-029", alumnoId: "alu-014", cursoId: "doc-7", nombre: "Fernando Quispe Ríos", iniciales: "FQ", curso: "Lectura de planos para personal de campo", organizacion: ORGANIZACION, progreso: 38, ultimoAcceso: "Hace 3 días", ultimoAccesoFecha: "2026-07-13", fechaInscripcion: "2026-06-24", estado: "ACTIVO" },
+  // Alumnos externos: llevan cursos de la organización sin pertenecer a la estructura.
+  { id: "mat-030", alumnoId: "alu-ext-01", cursoId: "doc-1", nombre: "Camila Ortega Vargas", iniciales: "CO", curso: "Gestión digital de obras con Tukuy", organizacion: ORGANIZACION, progreso: 48, ultimoAcceso: "Hace 1 h", ultimoAccesoFecha: "2026-07-16", fechaInscripcion: "2026-06-28", estado: "ACTIVO", tipo: "EXTERNO", modalidad: "LIBRE" },
+  { id: "mat-031", alumnoId: "alu-ext-01", cursoId: "doc-11", nombre: "Camila Ortega Vargas", iniciales: "CO", curso: "Control de calidad en obras civiles", organizacion: ORGANIZACION, progreso: 22, ultimoAcceso: "Hace 4 días", ultimoAccesoFecha: "2026-07-12", fechaInscripcion: "2026-07-02", estado: "ACTIVO", tipo: "EXTERNO", modalidad: "LIBRE" },
+  { id: "mat-032", alumnoId: "alu-ext-02", cursoId: "doc-7", nombre: "Ricardo Peña Salas", iniciales: "RP", curso: "Lectura de planos para personal de campo", organizacion: ORGANIZACION, progreso: 100, ultimoAcceso: "Ayer", ultimoAccesoFecha: "2026-07-15", fechaInscripcion: "2026-05-04", estado: "COMPLETADO", tipo: "EXTERNO", modalidad: "LIBRE" },
+  { id: "mat-033", alumnoId: "alu-ext-03", cursoId: "doc-1", nombre: "Sofía Mendoza Aliaga", iniciales: "SM", curso: "Gestión digital de obras con Tukuy", organizacion: ORGANIZACION, progreso: 15, ultimoAcceso: "Hace 11 días", ultimoAccesoFecha: "2026-07-05", fechaInscripcion: "2026-06-20", estado: "EN_RIESGO", tipo: "EXTERNO", modalidad: "LIBRE" },
+  { id: "mat-034", alumnoId: "alu-ext-03", cursoId: "doc-7", nombre: "Sofía Mendoza Aliaga", iniciales: "SM", curso: "Lectura de planos para personal de campo", organizacion: ORGANIZACION, progreso: 61, ultimoAcceso: "Hoy", ultimoAccesoFecha: "2026-07-16", fechaInscripcion: "2026-06-22", estado: "ACTIVO", tipo: "EXTERNO", modalidad: "LIBRE" },
+  { id: "mat-035", alumnoId: "alu-ext-04", cursoId: "doc-11", nombre: "Andrés Quispe Loayza", iniciales: "AQ", curso: "Control de calidad en obras civiles", organizacion: ORGANIZACION, progreso: 0, ultimoAcceso: "Aún no ingresa", ultimoAccesoFecha: "2026-07-14", fechaInscripcion: "2026-07-14", estado: "PENDIENTE", tipo: "EXTERNO", modalidad: "SOLICITADA" },
 ];
 
 export const certificadosOrganizacion = [
@@ -69,6 +76,7 @@ export const certificadosPendientesOrganizacion = [
 export const usuariosOrganizacion = [
   {
     id: 1,
+    dni: "45678901",
     nombre: "María Fernanda Soto",
     iniciales: "MS",
     correo: "maria.soto@cipcusco.org.pe",
@@ -84,6 +92,7 @@ export const usuariosOrganizacion = [
   },
   {
     id: 2,
+    dni: "45781234",
     nombre: "Luis Alberto Rojas",
     iniciales: "LR",
     correo: "luis.rojas@cipcusco.org.pe",
@@ -99,6 +108,7 @@ export const usuariosOrganizacion = [
   },
   {
     id: 3,
+    dni: "40123456",
     nombre: "Diana Chávez Puma",
     iniciales: "DC",
     correo: "diana.chavez@cipcusco.org.pe",
@@ -114,6 +124,7 @@ export const usuariosOrganizacion = [
   },
   {
     id: 4,
+    dni: "41234567",
     nombre: "José Manuel Vera",
     iniciales: "JV",
     correo: "jose.vera@cipcusco.org.pe",
@@ -128,6 +139,7 @@ export const usuariosOrganizacion = [
   },
   {
     id: 5,
+    dni: "42345678",
     nombre: "Andrea Huamán Díaz",
     iniciales: "AH",
     correo: "andrea.huaman@cipcusco.org.pe",
@@ -143,6 +155,7 @@ export const usuariosOrganizacion = [
   },
   {
     id: 6,
+    dni: "43456789",
     nombre: "Renato Paredes León",
     iniciales: "RP",
     correo: "renato.paredes@cipcusco.org.pe",
@@ -158,6 +171,7 @@ export const usuariosOrganizacion = [
   },
   {
     id: 7,
+    dni: "44567890",
     nombre: "Elena Salazar Medina",
     iniciales: "ES",
     correo: "elena.salazar@cipcusco.org.pe",
@@ -173,6 +187,7 @@ export const usuariosOrganizacion = [
   },
   {
     id: 8,
+    dni: "45670123",
     nombre: "Carlos Mendoza Ruiz",
     iniciales: "CM",
     correo: "carlos.mendoza@cipcusco.org.pe",
@@ -188,6 +203,7 @@ export const usuariosOrganizacion = [
   },
   {
     id: 9,
+    dni: "46781234",
     nombre: "Rosa Mendoza Quispe",
     iniciales: "RM",
     correo: "rosa.mendoza@cipcusco.org.pe",
@@ -203,6 +219,7 @@ export const usuariosOrganizacion = [
   },
   {
     id: 10,
+    dni: "47892345",
     nombre: "Miguel Ángel Flores",
     iniciales: "MF",
     correo: "miguel.flores@cipcusco.org.pe",
@@ -218,6 +235,7 @@ export const usuariosOrganizacion = [
   },
   {
     id: 11,
+    dni: "48903456",
     nombre: "Patricia Gómez Ayala",
     iniciales: "PG",
     correo: "patricia.gomez@cipcusco.org.pe",
@@ -233,6 +251,7 @@ export const usuariosOrganizacion = [
   },
   {
     id: 12,
+    dni: "49014567",
     nombre: "Hugo Valdivia Cruz",
     iniciales: "HV",
     correo: "hugo.valdivia@cipcusco.org.pe",
@@ -247,6 +266,7 @@ export const usuariosOrganizacion = [
   },
   {
     id: 13,
+    dni: "40125678",
     nombre: "Lucía Torres Benavides",
     iniciales: "LT",
     correo: "lucia.torres@cipcusco.org.pe",
@@ -262,6 +282,7 @@ export const usuariosOrganizacion = [
   },
   {
     id: 14,
+    dni: "41236789",
     nombre: "Fernando Quispe Ríos",
     iniciales: "FQ",
     correo: "fernando.quispe@cipcusco.org.pe",
@@ -277,6 +298,7 @@ export const usuariosOrganizacion = [
   },
   {
     id: 15,
+    dni: "42347890",
     nombre: "Carlos Alberto",
     iniciales: "CA",
     correo: "carlos.alberto@cipcusco.org.pe",
@@ -289,6 +311,96 @@ export const usuariosOrganizacion = [
     colegiaturaActiva: true,
     unidadPrincipalId: "unidad-capitulo-civil",
     sedeId: "sede-cusco",
+  },
+  {
+    id: 16,
+    dni: "43458901",
+    nombre: "Valeria Quispe Mamani",
+    iniciales: "VQ",
+    correo: "valeria.quispe@cipcusco.org.pe",
+    area: "Sin nodo asignado",
+    sede: "Cusco",
+    rol: "Estudiante",
+    progreso: 12,
+    estado: "ACTIVO",
+    especialidad: "Ingeniería Civil",
+    colegiaturaActiva: true,
+    sedeId: "sede-cusco",
+  },
+  {
+    id: 17,
+    nombre: "Diego Armando Cárdenas",
+    iniciales: "DC",
+    correo: "diego.cardenas@cipcusco.org.pe",
+    area: "Sin nodo asignado",
+    sede: "Lima",
+    rol: "Estudiante",
+    progreso: 8,
+    estado: "INVITADO",
+    especialidad: "Ingeniería de Sistemas",
+    colegiaturaActiva: true,
+    sedeId: "sede-lima",
+  },
+  {
+    id: 18,
+    dni: "45670189",
+    nombre: "Fiorella Ramos Huillca",
+    iniciales: "FR",
+    correo: "fiorella.ramos@cipcusco.org.pe",
+    area: "Sin nodo asignado",
+    sede: "Cusco",
+    rol: "Colegiado",
+    progreso: 0,
+    estado: "ACTIVO",
+    especialidad: "Ingeniería Industrial",
+    colegiaturaActiva: true,
+    sedeId: "sede-cusco",
+  },
+  {
+    id: 19,
+    dni: "46781290",
+    nombre: "Jorge Luis Huamán",
+    iniciales: "JH",
+    correo: "jorge.huaman@cipcusco.org.pe",
+    area: "Sin nodo asignado",
+    sede: "Lima",
+    rol: "Estudiante",
+    progreso: 5,
+    estado: "ACTIVO",
+    especialidad: "Ingeniería Civil",
+    colegiaturaActiva: false,
+    sedeId: "sede-lima",
+  },
+  {
+    id: 20,
+    dni: "47890123",
+    nombre: "Natalia Paredes Quispe",
+    iniciales: "NP",
+    correo: "natalia.paredes@comunidad.tukuy",
+    area: "Solicitud desde Comunidad",
+    sede: "Cusco",
+    rol: "Colegiado",
+    progreso: 0,
+    estado: "INVITADO",
+    especialidad: "Ingeniería Civil",
+    colegiaturaActiva: true,
+    sedeId: "sede-cusco",
+    origenIngreso: "COMUNIDAD" as const,
+  },
+  {
+    id: 21,
+    nombre: "Ricardo Salas Mendoza",
+    iniciales: "RS",
+    correo: "ricardo.salas@comunidad.tukuy",
+    area: "Solicitud desde Comunidad",
+    sede: "Lima",
+    rol: "Colegiado",
+    progreso: 0,
+    estado: "INVITADO",
+    especialidad: "Ingeniería de Sistemas",
+    colegiaturaActiva: false,
+    sedeId: "sede-lima",
+    origenIngreso: "COMUNIDAD" as const,
   },
 ];
 
@@ -340,7 +452,7 @@ export const asignacionesOrganizacion = [
   {
     id: "asig-002",
     curso: "Control de almacén y Kardex",
-    destino: "Unidad Capítulo de Ingeniería Industrial",
+    destino: "Nodo Capítulo de Ingeniería Industrial",
     asignados: 2,
     completados: 1,
     vence: "05 Ago 2026",
@@ -349,7 +461,7 @@ export const asignacionesOrganizacion = [
   {
     id: "asig-003",
     curso: "Gestión digital de obras con Tukuy",
-    destino: "Unidad Administración",
+    destino: "Nodo Administración",
     asignados: 2,
     completados: 1,
     vence: "Sin fecha límite",
@@ -358,7 +470,7 @@ export const asignacionesOrganizacion = [
   {
     id: "asig-004",
     curso: "Lectura de planos para personal de campo",
-    destino: "Unidad Capítulo de Ingeniería Civil",
+    destino: "Nodo Capítulo de Ingeniería Civil",
     asignados: 4,
     completados: 3,
     vence: "15 Sep 2026",
@@ -367,7 +479,7 @@ export const asignacionesOrganizacion = [
   {
     id: "asig-005",
     curso: "Avance físico y financiero de obra",
-    destino: "Unidad Administración",
+    destino: "Nodo Administración",
     asignados: 2,
     completados: 1,
     vence: "30 Ago 2026",
@@ -376,7 +488,7 @@ export const asignacionesOrganizacion = [
   {
     id: "asig-006",
     curso: "Cuaderno de obra digital y evidencias",
-    destino: "Sede Lima",
+    destino: "Nodo Capítulo de Ingeniería Civil",
     asignados: 263,
     completados: 141,
     vence: "10 Sep 2026",
@@ -385,7 +497,7 @@ export const asignacionesOrganizacion = [
   {
     id: "asig-007",
     curso: "Valorizaciones, metrados y reportes de obra",
-    destino: "Unidad Administración",
+    destino: "Nodo Administración",
     asignados: 2,
     completados: 1,
     vence: "22 Ago 2026",
@@ -394,7 +506,7 @@ export const asignacionesOrganizacion = [
   {
     id: "asig-008",
     curso: "Tukuy Almacén: materiales, stock y movimientos",
-    destino: "Unidad Capítulo de Ingeniería Industrial",
+    destino: "Nodo Capítulo de Ingeniería Industrial",
     asignados: 2,
     completados: 1,
     vence: "18 Sep 2026",
@@ -403,7 +515,7 @@ export const asignacionesOrganizacion = [
   {
     id: "asig-009",
     curso: "Introducción a Tukuy Obra: gestión y control de proyectos",
-    destino: "Sede Cusco",
+    destino: "Nodo Capítulo de Ingeniería Industrial",
     asignados: 118,
     completados: 86,
     vence: "01 Sep 2026",
@@ -412,7 +524,7 @@ export const asignacionesOrganizacion = [
   {
     id: "asig-010",
     curso: "Empleabilidad y CV para perfiles de obra",
-    destino: "Unidad Administración",
+    destino: "Nodo Administración",
     asignados: 2,
     completados: 1,
     vence: "Sin fecha límite",
@@ -421,7 +533,7 @@ export const asignacionesOrganizacion = [
   {
     id: "asig-011",
     curso: "IA aplicada a reportes y decisiones de obra",
-    destino: "Unidad Administración",
+    destino: "Nodo Administración",
     asignados: 2,
     completados: 1,
     vence: "28 Sep 2026",
@@ -430,7 +542,7 @@ export const asignacionesOrganizacion = [
   {
     id: "asig-012",
     curso: "Inducción de personal de obra",
-    destino: "Unidad Capítulo de Ingeniería Civil",
+    destino: "Nodo Capítulo de Ingeniería Civil",
     asignados: 4,
     completados: 4,
     vence: "12 Jul 2026",
@@ -452,6 +564,8 @@ export const rutasOrganizacion = [
     id: "ruta-001",
     nombre: "Formación para supervisores",
     descripcion: "Itinerario para liderazgo y control de equipos en obra.",
+    imagen:
+      "https://images.unsplash.com/photo-1504307651254-35680f356dfd?auto=format&fit=crop&w=1200&q=80",
     cursos: 3,
     cursosSeleccionados: [
       {
@@ -480,15 +594,36 @@ export const rutasOrganizacion = [
     gratuito: false,
     moneda: "PEN" as const,
     alcance: "AREA" as const,
-    destinoArea: "Capítulo de Ingeniería Civil",
+    destinoArea: "unidad-capitulo-civil",
     descuentoInterno: 20,
     descuentoAplicaA: "AREA" as const,
-    descuentoArea: "Capítulo de Ingeniería Civil",
+    descuentoArea: "unidad-capitulo-civil",
+    politicaDescuentos: "SOLO_MEJOR" as const,
+    descuentos: [
+      {
+        id: "dto-ruta-001-nodo",
+        nombre: "Descuento Capítulo Civil",
+        modo: "AUTOMATICO" as const,
+        aplicaSobre: "CURSO_COMPLETO" as const,
+        moduloIds: [],
+        beneficiario: "NODOS" as const,
+        nodoIds: ["unidad-capitulo-civil"],
+        usuarioIds: [],
+        tipo: "PORCENTAJE" as const,
+        valor: 20,
+        acumulable: false,
+        prioridad: 1,
+        activa: true,
+      },
+    ],
+    estado: "PUBLICADA" as const,
   },
   {
     id: "ruta-002",
     nombre: "Inducción de personal de obra",
     descripcion: "Base operativa para personal nuevo en campo.",
+    imagen:
+      "https://images.unsplash.com/photo-1503387762-592deb58ef4e?auto=format&fit=crop&w=1200&q=80",
     cursos: 2,
     cursosSeleccionados: [
       {
@@ -515,11 +650,32 @@ export const rutasOrganizacion = [
     descuentoInterno: 100,
     descuentoAplicaA: "ORGANIZACION" as const,
     descuentoArea: null,
+    politicaDescuentos: "SOLO_MEJOR" as const,
+    descuentos: [
+      {
+        id: "dto-ruta-002-int",
+        nombre: "Inducción gratuita colaboradores",
+        modo: "AUTOMATICO" as const,
+        aplicaSobre: "CURSO_COMPLETO" as const,
+        moduloIds: [],
+        beneficiario: "INTERNOS" as const,
+        nodoIds: [],
+        usuarioIds: [],
+        tipo: "PORCENTAJE" as const,
+        valor: 100,
+        acumulable: false,
+        prioridad: 1,
+        activa: true,
+      },
+    ],
+    estado: "PUBLICADA" as const,
   },
   {
     id: "ruta-003",
     nombre: "Especialización en logística",
     descripcion: "Control de materiales y evidencias digitales.",
+    imagen:
+      "https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d?auto=format&fit=crop&w=1200&q=80",
     cursos: 2,
     cursosSeleccionados: [
       {
@@ -542,15 +698,18 @@ export const rutasOrganizacion = [
     gratuito: false,
     moneda: "PEN" as const,
     alcance: "AREA" as const,
-    destinoArea: "Capítulo de Ingeniería Industrial",
+    destinoArea: "unidad-capitulo-industrial",
     descuentoInterno: 30,
     descuentoAplicaA: "AREA" as const,
-    descuentoArea: "Capítulo de Ingeniería Industrial",
+    descuentoArea: "unidad-capitulo-industrial",
+    estado: "BORRADOR" as const,
   },
   {
     id: "ruta-004",
     nombre: "Digitalización de obra con Tukuy",
     descripcion: "Ruta completa de adopción digital institucional.",
+    imagen:
+      "https://images.unsplash.com/photo-1581094794329-c8112a89af12?auto=format&fit=crop&w=1200&q=80",
     cursos: 4,
     cursosSeleccionados: [
       {
@@ -589,11 +748,14 @@ export const rutasOrganizacion = [
     descuentoInterno: 0,
     descuentoAplicaA: "NINGUNO" as const,
     descuentoArea: null,
+    estado: "PUBLICADA" as const,
   },
   {
     id: "ruta-005",
     nombre: "Seguridad y cumplimiento normativo",
     descripcion: "Calidad y control para cumplimiento interno.",
+    imagen:
+      "https://images.unsplash.com/photo-1504917595217-d4dc5ebe6122?auto=format&fit=crop&w=1200&q=80",
     cursos: 2,
     cursosSeleccionados: [
       {
@@ -620,6 +782,7 @@ export const rutasOrganizacion = [
     descuentoInterno: 100,
     descuentoAplicaA: "ORGANIZACION" as const,
     descuentoArea: null,
+    estado: "ARCHIVADA" as const,
   },
 ];
 
@@ -678,8 +841,8 @@ export const actividadOrganizacion = [
     tiempo: "Hace 3 días",
   },
   {
-    titulo: "Asignación a sede",
-    detalle: "Cuaderno de obra digital publicado para Sede Lima.",
+    titulo: "Asignación a nodo",
+    detalle: "Cuaderno de obra digital publicado para el Capítulo de Ingeniería Civil.",
     tiempo: "Hace 5 h",
   },
   {
@@ -696,6 +859,7 @@ export const actividadOrganizacion = [
 
 export type EstadoPropuestaCursoOrganizacion =
   | "EN_REVISION"
+  | "CONTENIDO_REVISADO"
   | "APROBADO"
   | "OBSERVADO"
   | "PUBLICADO";
@@ -731,6 +895,7 @@ export interface PropuestaCursoOrganizacionMock {
   descuentoInterno?: number;
   descuentoAplicaA?: DestinatarioDescuento;
   descuentoArea?: string | null;
+  observacion?: string;
 }
 
 /** Propuestas enviadas por docentes de la organización para visto bueno. */
@@ -759,7 +924,22 @@ export const catalogoCursosOrganizacion: PropuestaCursoOrganizacionMock[] = [
     enviado: "Ayer, 10:40",
     lecciones: 12,
     duracion: "4 h 30 min",
-    estado: "EN_REVISION",
+    estado: "CONTENIDO_REVISADO",
+  },
+  {
+    id: "prop-doc-15",
+    cursoDocenteId: "doc-15",
+    titulo: "Gestión de riesgos en obras civiles",
+    imagen:
+      "https://images.unsplash.com/photo-1504307651254-35680f356dfd?auto=format&fit=crop&w=900&q=80",
+    docente: "Ing. Diana Chávez",
+    categoria: "Seguridad y riesgos",
+    enviado: "16 Jul 2026",
+    lecciones: 14,
+    duracion: "5 h",
+    estado: "OBSERVADO",
+    observacion:
+      "Completar la rúbrica de la evaluación final y agregar al menos un recurso descargable en el módulo 3.",
   },
   {
     id: "prop-doc-12",

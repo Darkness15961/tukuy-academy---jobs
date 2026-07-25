@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {
   ArrowRight,
+  Building2,
   CalendarDays,
   ImagePlus,
   LoaderCircle,
@@ -54,8 +55,22 @@ async function enviarPublicacion() {
 
 <template>
   <main>
-    <section class="bg-[#07152B] text-white">
-      <div class="mx-auto grid max-w-360 gap-10 px-5 py-12 lg:grid-cols-[1fr_420px] lg:px-8 lg:py-16">
+    <section class="relative overflow-hidden bg-[#07152B] text-white">
+      <img
+        src="https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=1920&q=88"
+        alt=""
+        class="absolute inset-0 h-full w-full object-cover object-center"
+        aria-hidden="true"
+      />
+      <div
+        class="absolute inset-0 bg-linear-to-r from-[#07152B]/95 via-[#07152B]/82 to-[#0B3A78]/45"
+      />
+      <div
+        class="absolute inset-0 bg-linear-to-t from-[#020817]/80 via-transparent to-[#07152B]/35"
+      />
+      <div
+        class="relative mx-auto grid max-w-360 gap-10 px-5 py-12 lg:grid-cols-[1fr_420px] lg:px-8 lg:py-16"
+      >
         <div>
           <p class="text-xs font-black uppercase tracking-[.25em] text-accent">
             Comunidad profesional
@@ -63,17 +78,17 @@ async function enviarPublicacion() {
           <h1 class="mt-4 max-w-4xl text-4xl font-black leading-tight sm:text-6xl">
             Experiencia que circula, conecta y transforma
           </h1>
-          <p class="mt-5 max-w-2xl text-base leading-7 text-blue-100">
+          <p class="mt-5 max-w-2xl text-base leading-7 text-white/80">
             Estudiantes, docentes, especialistas y organizaciones conversan sobre
             problemas reales, conocimientos aplicables y oportunidades del sector.
           </p>
         </div>
-        <div class="grid grid-cols-2 gap-px self-end bg-card/15">
-          <div class="bg-primary p-5">
+        <div class="grid grid-cols-2 gap-px self-end bg-white/10">
+          <div class="bg-[#07152B]/75 p-5 backdrop-blur-sm">
             <strong class="text-3xl font-black text-accent">2.9K</strong>
             <p class="mt-1 text-sm text-white/65">Miembros activos</p>
           </div>
-          <div class="bg-primary p-5">
+          <div class="bg-[#07152B]/75 p-5 backdrop-blur-sm">
             <strong class="text-3xl font-black text-accent">86</strong>
             <p class="mt-1 text-sm text-white/65">Especialistas</p>
           </div>
@@ -156,6 +171,69 @@ async function enviarPublicacion() {
       </section>
 
       <aside class="grid content-start gap-5">
+        <section class="border border-border border-t-4 border-t-primary bg-card p-5">
+          <p class="text-[11px] font-black uppercase tracking-wide text-primary">
+            Explorar en Comunidad
+          </p>
+          <div class="mt-3 grid gap-2">
+            <button
+              type="button"
+              class="flex items-center justify-between border border-border px-3 py-2.5 text-left text-sm font-bold transition hover:border-primary hover:bg-muted/40"
+              @click="router.push('/comunidad/entidades')"
+            >
+              <span class="flex items-center gap-2">
+                <Building2 class="h-4 w-4 text-primary" />
+                Entidades
+              </span>
+              <ArrowRight class="h-4 w-4 text-muted-foreground" />
+            </button>
+            <button
+              type="button"
+              class="flex items-center justify-between border border-border px-3 py-2.5 text-left text-sm font-bold transition hover:border-primary hover:bg-muted/40"
+              @click="router.push('/comunidad/grupos')"
+            >
+              <span class="flex items-center gap-2">
+                <UsersRound class="h-4 w-4 text-primary" />
+                Grupos
+              </span>
+              <ArrowRight class="h-4 w-4 text-muted-foreground" />
+            </button>
+            <button
+              type="button"
+              class="flex items-center justify-between border border-border px-3 py-2.5 text-left text-sm font-bold transition hover:border-primary hover:bg-muted/40"
+              @click="router.push('/comunidad/eventos')"
+            >
+              <span class="flex items-center gap-2">
+                <CalendarDays class="h-4 w-4 text-primary" />
+                Eventos
+              </span>
+              <ArrowRight class="h-4 w-4 text-muted-foreground" />
+            </button>
+          </div>
+        </section>
+
+        <section class="border-t-4 border-accent bg-card p-6">
+          <div class="flex items-center justify-between">
+            <h2 class="flex items-center gap-2 font-black">
+              <Building2 class="h-5 w-5 text-primary" />
+              Entidades
+            </h2>
+            <button
+              class="text-xs font-black text-primary"
+              @click="router.push('/comunidad/entidades')"
+            >
+              Explorar
+            </button>
+          </div>
+          <p class="mt-3 text-sm leading-6 text-muted-foreground">
+            Encuentra colegios, empresas y academias. Entra a su perfil para unirte o contactar.
+          </p>
+          <Button class="mt-5 w-full" @click="router.push('/comunidad/entidades')">
+            Ver directorio
+            <ArrowRight class="h-4 w-4" />
+          </Button>
+        </section>
+
         <section class="border-t-4 border-accent bg-card p-6">
           <div class="flex items-center justify-between">
             <h2 class="flex items-center gap-2 font-black">

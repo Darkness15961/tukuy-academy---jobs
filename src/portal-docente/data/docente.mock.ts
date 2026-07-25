@@ -26,6 +26,7 @@ export const cursosDocente: CursoDocente[] = [
     organizacionId: "org-empresa-abc",
     organizacionNombre: "COLEGIO DE INGENIEROS CUSCO",
     modeloAcceso: "ASIGNACION_INSTITUCIONAL",
+    modalidadImparticion: "HIBRIDA",
     titulo: "Gestión digital de obras con Tukuy",
     imagen:
       "https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?auto=format&fit=crop&w=900&q=80",
@@ -41,6 +42,7 @@ export const cursosDocente: CursoDocente[] = [
     organizacionId: null,
     organizacionNombre: "Curso propio",
     modeloAcceso: "VENTA_INDIVIDUAL",
+    modalidadImparticion: "HIBRIDA",
     titulo: "Control de almacén y Kardex",
     imagen:
       "https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d?auto=format&fit=crop&w=900&q=80",
@@ -56,6 +58,7 @@ export const cursosDocente: CursoDocente[] = [
     organizacionId: "org-empresa-abc",
     organizacionNombre: "COLEGIO DE INGENIEROS CUSCO",
     modeloAcceso: "ASIGNACION_INSTITUCIONAL",
+    modalidadImparticion: "HIBRIDA",
     titulo: "Valorizaciones y avance de obra",
     imagen:
       "https://images.unsplash.com/photo-1554224155-6726b3ff858f?auto=format&fit=crop&w=900&q=80",
@@ -71,6 +74,7 @@ export const cursosDocente: CursoDocente[] = [
     organizacionId: null,
     organizacionNombre: "Curso propio",
     modeloAcceso: "VENTA_INDIVIDUAL",
+    modalidadImparticion: "VIRTUAL",
     titulo: "Seguridad operativa en campo",
     imagen:
       "https://images.unsplash.com/photo-1504917595217-d4dc5ebe6122?auto=format&fit=crop&w=900&q=80",
@@ -86,6 +90,7 @@ export const cursosDocente: CursoDocente[] = [
     organizacionId: "org-empresa-abc",
     organizacionNombre: "COLEGIO DE INGENIEROS CUSCO",
     modeloAcceso: "ASIGNACION_INSTITUCIONAL",
+    modalidadImparticion: "VIRTUAL",
     titulo: "Supervisión de equipos de obra",
     imagen:
       "https://images.unsplash.com/photo-1521737711867-e3b97375f902?auto=format&fit=crop&w=900&q=80",
@@ -101,6 +106,7 @@ export const cursosDocente: CursoDocente[] = [
     organizacionId: null,
     organizacionNombre: "Curso propio",
     modeloAcceso: "VENTA_INDIVIDUAL",
+    modalidadImparticion: "VIRTUAL",
     titulo: "Excel aplicado al control de obra",
     imagen:
       "https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=900&q=80",
@@ -116,6 +122,7 @@ export const cursosDocente: CursoDocente[] = [
     organizacionId: "org-empresa-abc",
     organizacionNombre: "COLEGIO DE INGENIEROS CUSCO",
     modeloAcceso: "ASIGNACION_INSTITUCIONAL",
+    modalidadImparticion: "HIBRIDA",
     titulo: "Lectura de planos para personal de campo",
     imagen:
       "https://images.unsplash.com/photo-1503387762-592deb58ef4e?auto=format&fit=crop&w=900&q=80",
@@ -131,12 +138,13 @@ export const cursosDocente: CursoDocente[] = [
     organizacionId: "org-empresa-abc",
     organizacionNombre: "COLEGIO DE INGENIEROS CUSCO",
     modeloAcceso: "ASIGNACION_INSTITUCIONAL",
+    modalidadImparticion: "HIBRIDA",
     titulo: "Cuaderno de obra digital y evidencias",
     imagen:
       "https://images.unsplash.com/photo-1517048676732-d65bc937f952?auto=format&fit=crop&w=900&q=80",
-    estado: "EN_REVISION",
+    estado: "CONTENIDO_REVISADO",
     estudiantes: 0,
-    progreso: 78,
+    progreso: 100,
     valoracion: 0,
     actualizado: "Ayer, 10:40",
   },
@@ -146,6 +154,7 @@ export const cursosDocente: CursoDocente[] = [
     organizacionId: "org-empresa-abc",
     organizacionNombre: "COLEGIO DE INGENIEROS CUSCO",
     modeloAcceso: "ASIGNACION_INSTITUCIONAL",
+    modalidadImparticion: "VIRTUAL",
     titulo: "IA aplicada a reportes y decisiones de obra",
     imagen:
       "https://images.unsplash.com/photo-1526628953301-3e589a6a8b74?auto=format&fit=crop&w=900&q=80",
@@ -161,6 +170,7 @@ export const cursosDocente: CursoDocente[] = [
     organizacionId: "org-empresa-abc",
     organizacionNombre: "COLEGIO DE INGENIEROS CUSCO",
     modeloAcceso: "ASIGNACION_INSTITUCIONAL",
+    modalidadImparticion: "VIRTUAL",
     titulo: "Metrados y presupuestos con Tukuy",
     imagen:
       "https://images.unsplash.com/photo-1581091226825-a6a2a5aee158?auto=format&fit=crop&w=900&q=80",
@@ -176,6 +186,7 @@ export const cursosDocente: CursoDocente[] = [
     organizacionId: "org-empresa-abc",
     organizacionNombre: "COLEGIO DE INGENIEROS CUSCO",
     modeloAcceso: "ASIGNACION_INSTITUCIONAL",
+    modalidadImparticion: "HIBRIDA",
     titulo: "Control de calidad en obras civiles",
     imagen:
       "https://images.unsplash.com/photo-1503387762-592deb58ef4e?auto=format&fit=crop&w=900&q=80",
@@ -191,6 +202,7 @@ export const cursosDocente: CursoDocente[] = [
     organizacionId: "org-empresa-abc",
     organizacionNombre: "COLEGIO DE INGENIEROS CUSCO",
     modeloAcceso: "ASIGNACION_INSTITUCIONAL",
+    modalidadImparticion: "VIRTUAL",
     titulo: "Gestión de expedientes técnicos",
     imagen:
       "https://images.unsplash.com/photo-1450101499163-c8848c66ca85?auto=format&fit=crop&w=900&q=80",
@@ -206,6 +218,7 @@ export const cursosDocente: CursoDocente[] = [
     organizacionId: "org-empresa-abc",
     organizacionNombre: "COLEGIO DE INGENIEROS CUSCO",
     modeloAcceso: "ASIGNACION_INSTITUCIONAL",
+    modalidadImparticion: "VIRTUAL",
     titulo: "Programación de obra con MS Project",
     imagen:
       "https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&fit=crop&w=900&q=80",
@@ -221,6 +234,7 @@ export const cursosDocente: CursoDocente[] = [
     organizacionId: "org-empresa-abc",
     organizacionNombre: "COLEGIO DE INGENIEROS CUSCO",
     modeloAcceso: "ASIGNACION_INSTITUCIONAL",
+    modalidadImparticion: "VIRTUAL",
     titulo: "Topografía aplicada a obras viales",
     imagen:
       "https://images.unsplash.com/photo-1516156008625-3a9d6067fab5?auto=format&fit=crop&w=900&q=80",
@@ -229,6 +243,40 @@ export const cursosDocente: CursoDocente[] = [
     progreso: 22,
     valoracion: 0,
     actualizado: "15 Jul 2026",
+  },
+  {
+    id: "doc-15",
+    ambito: "ORGANIZACION",
+    organizacionId: "org-empresa-abc",
+    organizacionNombre: "COLEGIO DE INGENIEROS CUSCO",
+    modeloAcceso: "ASIGNACION_INSTITUCIONAL",
+    modalidadImparticion: "EN_VIVO",
+    titulo: "Gestión de riesgos en obras civiles",
+    imagen:
+      "https://images.unsplash.com/photo-1504307651254-35680f356dfd?auto=format&fit=crop&w=900&q=80",
+    estado: "OBSERVADO",
+    estudiantes: 0,
+    progreso: 85,
+    valoracion: 0,
+    actualizado: "16 Jul 2026",
+    observacion:
+      "Completar la rúbrica de la evaluación final y agregar al menos un recurso descargable en el módulo 3.",
+  },
+  {
+    id: "doc-16",
+    ambito: "ORGANIZACION",
+    organizacionId: "org-empresa-abc",
+    organizacionNombre: "COLEGIO DE INGENIEROS CUSCO",
+    modeloAcceso: "ASIGNACION_INSTITUCIONAL",
+    modalidadImparticion: "VIRTUAL",
+    titulo: "Introducción a BIM para obra",
+    imagen:
+      "https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?auto=format&fit=crop&w=900&q=80",
+    estado: "ARCHIVADO",
+    estudiantes: 18,
+    progreso: 100,
+    valoracion: 4.2,
+    actualizado: "01 Jun 2026",
   },
 ];
 
@@ -391,32 +439,47 @@ export const sesionesDocente: SesionDocente[] = [
   {
     id: "s-1",
     titulo: "Control de avance diario",
-    curso: "Gestión digital de obras",
+    curso: "Gestión digital de obras con Tukuy",
+    cursoId: "doc-1",
     fecha: "14 JUL",
     hora: "04:00 p. m.",
     duracion: "60 min",
     inscritos: 42,
     estado: "HOY",
+    calendarEventId: "gcal_doc_s1",
+    enlace: "https://meet.google.com/tuk-obras-demo",
+    invitadosEmails: [
+      "maria.soto@cipcusco.org.pe",
+      "luis.rojas@cipcusco.org.pe",
+    ],
   },
   {
     id: "s-2",
     titulo: "Taller práctico de Kardex",
     curso: "Control de almacén y Kardex",
+    cursoId: "doc-2",
     fecha: "17 JUL",
     hora: "06:30 p. m.",
     duracion: "90 min",
     inscritos: 31,
     estado: "PROGRAMADA",
+    calendarEventId: "gcal_doc_s2",
+    enlace: "https://meet.google.com/tuk-kardex-demo",
+    invitadosEmails: ["alumno@ejemplo.com"],
   },
   {
     id: "s-3",
     titulo: "Resolución de caso de valorización",
     curso: "Valorizaciones y avance de obra",
+    cursoId: "doc-3",
     fecha: "22 JUL",
     hora: "05:00 p. m.",
     duracion: "60 min",
     inscritos: 24,
     estado: "PROGRAMADA",
+    calendarEventId: "gcal_doc_s3",
+    enlace: "https://meet.google.com/tuk-valoriz-demo",
+    invitadosEmails: ["andrea.huaman@cipcusco.org.pe"],
   },
 ];
 

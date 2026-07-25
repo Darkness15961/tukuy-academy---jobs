@@ -22,6 +22,8 @@ const props = withDefaults(
     showActions?: boolean;
     showDetail?: boolean;
     fluid?: boolean;
+    /** En Mi aprendizaje: avance y metadatos en lugar de precio. */
+    modoAprendizaje?: boolean;
   }>(),
   {
     variant: "light",
@@ -30,6 +32,7 @@ const props = withDefaults(
     showActions: true,
     showDetail: true,
     fluid: false,
+    modoAprendizaje: false,
   },
 );
 
@@ -42,6 +45,24 @@ const emit = defineEmits<{
 
 const displayCourse = computed(() => enrichCourse(props.course));
 
+const progreso = computed(() =>
+  Math.min(100, Math.max(0, displayCourse.value.progress ?? 0)),
+);
+
+const etiquetaProgreso = computed(() => {
+  if (displayCourse.value.status === "Completado" || progreso.value >= 100) {
+    return "Completado";
+  }
+  if (progreso.value <= 0) return "Sin iniciar";
+  return `${progreso.value}% completado`;
+});
+
+const metaAprendizaje = computed(() =>
+  [displayCourse.value.duration, displayCourse.value.level, displayCourse.value.mode]
+    .filter(Boolean)
+    .join(" · "),
+);
+
 const statusBadge = computed(() => {
   if (displayCourse.value.status === "Completado") return "Completado";
   if (
@@ -49,10 +70,57 @@ const statusBadge = computed(() => {
     displayCourse.value.status === "En curso"
   )
     return "En curso";
+  if (props.modoAprendizaje) return "Matriculado";
+  if (displayCourse.value.alcance === "INTERNO") return "Restringido";
+  if (displayCourse.value.origen === "entidad") return "Entidad";
   if (displayCourse.value.bestseller) return "Lo más vendido";
   if (displayCourse.value.pricing === "free") return "Gratis";
   return null;
 });
+
+const puedeContinuar = computed(
+  () =>
+    props.modoAprendizaje ||
+    displayCourse.value.status === "Completado" ||
+    displayCourse.value.status === "En curso" ||
+    displayCourse.value.progress > 0,
+);
+
+const etiquetaContinuar = computed(() =>
+  displayCourse.value.status === "Completado" || progreso.value >= 100
+    ? "Revisar"
+    : "Continuar",
+);
+
+const etiquetaAccionDetalle = computed(() => {
+  if (props.modoAprendizaje) {
+    return displayCourse.value.status === "Completado"
+      ? "Revisar curso"
+      : "Continuar curso";
+  }
+  if (puedeContinuar.value) return "Continuar curso";
+  if (displayCourse.value.alcance === "INTERNO") return "Ver requisitos";
+  if (displayCourse.value.pricing === "paid") {
+    return props.inCart ? "En carrito" : "Agregar";
+  }
+  return "Inscribirme al curso";
+});
+
+function emitirAccionPrincipal() {
+  if (props.modoAprendizaje || puedeContinuar.value) {
+    emit("continueCourse");
+    return;
+  }
+  if (displayCourse.value.alcance === "INTERNO") {
+    emit("select");
+    return;
+  }
+  if (displayCourse.value.pricing === "paid") {
+    emit("addToCart");
+    return;
+  }
+  emit("continueCourse");
+}
 
 const statusBadgeClass = computed(() => {
   if (displayCourse.value.status === "Completado")
@@ -63,6 +131,10 @@ const statusBadgeClass = computed(() => {
   ) {
     return "border-primary/20 bg-primary/10 text-primary";
   }
+  if (displayCourse.value.alcance === "INTERNO")
+    return "border-amber-500/25 bg-amber-500/10 text-amber-800 dark:text-amber-300";
+  if (displayCourse.value.origen === "entidad")
+    return "border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400";
   if (displayCourse.value.bestseller)
     return "border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400";
   return "border-border bg-card text-muted-foreground";
@@ -204,8 +276,17 @@ function calculatePanelPosition() {
       >
         {{ displayCourse.instructor }}
       </p>
+      <p
+        v-if="displayCourse.organizacionNombre"
+        class="truncate text-xs font-semibold text-primary"
+      >
+        {{ displayCourse.organizacionNombre }}
+      </p>
 
-      <div class="flex flex-wrap items-center gap-2">
+      <div
+        v-if="!modoAprendizaje"
+        class="flex flex-wrap items-center gap-2"
+      >
         <Badge
           v-if="statusBadge"
           :class="
@@ -236,7 +317,91 @@ function calculatePanelPosition() {
         </span>
       </div>
 
-      <div class="mt-auto flex items-end justify-between gap-2 pt-1">
+      <div v-else class="grid gap-2">
+        <div class="flex flex-wrap items-center gap-2">
+          <Badge
+            v-if="statusBadge"
+            :class="
+              cn(
+                'rounded-none px-2.5 py-0.5 text-[11px] font-semibold leading-5 shadow-none',
+                isDark
+                  ? 'border-white/10 bg-card/90 text-foreground'
+                  : statusBadgeClass,
+              )
+            "
+            variant="outline"
+          >
+            {{ statusBadge }}
+          </Badge>
+          <span
+            class="text-xs font-semibold"
+            :class="isDark ? 'text-white/70' : 'text-muted-foreground'"
+          >
+            {{ displayCourse.category }}
+          </span>
+        </div>
+        <p
+          class="text-xs"
+          :class="isDark ? 'text-white/55' : 'text-muted-foreground'"
+        >
+          {{ metaAprendizaje }}
+        </p>
+      </div>
+
+      <template v-if="modoAprendizaje">
+        <div class="mt-auto grid gap-2.5 pt-2">
+          <div class="flex items-center justify-between gap-2">
+            <span
+              class="text-xs font-semibold uppercase tracking-wide"
+              :class="isDark ? 'text-white/60' : 'text-muted-foreground'"
+            >
+              Avance
+            </span>
+            <strong
+              class="text-sm font-black tabular-nums"
+              :class="isDark ? 'text-white' : 'text-primary'"
+            >
+              {{ progreso }}%
+            </strong>
+          </div>
+          <div
+            class="relative h-2.5 w-full overflow-hidden rounded-none"
+            :class="isDark ? 'bg-white/15' : 'bg-slate-200'"
+            role="progressbar"
+            :aria-valuenow="progreso"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            :aria-label="`Avance del curso: ${progreso}%`"
+          >
+            <div
+              class="h-full rounded-none bg-primary transition-[width] duration-500 ease-out"
+              :class="progreso >= 100 ? 'bg-emerald-500' : 'bg-primary'"
+              :style="{ width: `${progreso}%` }"
+            />
+          </div>
+          <div class="flex items-center justify-between gap-2">
+            <span
+              class="text-xs"
+              :class="isDark ? 'text-white/55' : 'text-muted-foreground'"
+            >
+              {{ etiquetaProgreso }}
+            </span>
+            <Button
+              v-if="showActions"
+              size="sm"
+              class="shrink-0"
+              @click.stop="emit('continueCourse')"
+            >
+              {{ etiquetaContinuar }}
+            </Button>
+          </div>
+        </div>
+      </template>
+
+      <div
+        v-else
+        class="mt-auto flex items-end justify-between gap-3 pt-1"
+      >
         <strong
           class="text-lg font-black"
           :class="isDark ? 'text-white' : 'text-foreground'"
@@ -245,14 +410,20 @@ function calculatePanelPosition() {
         </strong>
 
         <Button
-          v-if="
-            showActions &&
-            (displayCourse.progress > 0 || displayCourse.status === 'En curso')
-          "
+          v-if="showActions && puedeContinuar"
           size="sm"
+          class="shrink-0"
           @click.stop="emit('continueCourse')"
         >
           Continuar
+        </Button>
+        <Button
+          v-else-if="showActions && displayCourse.alcance === 'INTERNO'"
+          size="sm"
+          variant="outline"
+          @click.stop="emit('continueCourse')"
+        >
+          Ver acceso
         </Button>
         <Button
           v-else-if="showActions && displayCourse.pricing === 'paid'"
@@ -261,7 +432,7 @@ function calculatePanelPosition() {
           @click.stop="emit('addToCart')"
         >
           <ShoppingCart class="h-4 w-4" />
-          {{ inCart ? "En carrito" : "Comprar" }}
+          {{ inCart ? "En carrito" : "Agregar" }}
         </Button>
         <Button
           v-else-if="showActions"
@@ -347,17 +518,9 @@ function calculatePanelPosition() {
         <Button
           class="mt-5 w-full"
           type="button"
-          @click.stop="
-            displayCourse.pricing === 'paid'
-              ? emit('addToCart')
-              : emit('continueCourse')
-          "
+          @click.stop="emitirAccionPrincipal"
         >
-          {{
-            displayCourse.pricing === "paid"
-              ? "Añadir al carrito"
-              : "Inscribirme al curso"
-          }}
+          {{ etiquetaAccionDetalle }}
         </Button>
       </div>
     </Transition>

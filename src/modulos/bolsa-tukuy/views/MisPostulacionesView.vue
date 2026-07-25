@@ -5,6 +5,7 @@ import { useRouter } from "vue-router";
 
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import LogoEmpleador from "../components/LogoEmpleador.vue";
 import { vacantesService } from "../services/vacantes.service";
 import type { Postulacion, Vacante } from "../types/vacante.types";
 
@@ -67,13 +68,37 @@ onMounted(async () => {
         :key="fila.postulacion.id"
         class="grid gap-5 border border-border bg-card p-6 md:grid-cols-[auto_1fr_auto] md:items-center"
       >
-        <span class="grid h-12 w-12 place-items-center bg-primary/10 text-primary">
+        <LogoEmpleador
+          v-if="fila.vacante"
+          :empleador="fila.vacante.empleador"
+        />
+        <span
+          v-else
+          class="grid h-12 w-12 place-items-center bg-primary/10 text-primary"
+        >
           <BriefcaseBusiness class="h-5 w-5" />
         </span>
         <div>
-          <p class="text-xs font-black uppercase tracking-wide text-primary">
-            {{ fila.vacante?.empresa ?? "Empresa" }}
-          </p>
+          <div class="flex flex-wrap items-center gap-2">
+            <p class="text-xs font-black uppercase tracking-wide text-primary">
+              {{ fila.vacante?.empleador.nombre ?? fila.vacante?.empresa ?? "Empresa" }}
+            </p>
+            <span
+              v-if="fila.vacante"
+              class="border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide"
+              :class="
+                fila.vacante.empleador.origen === 'plataforma'
+                  ? 'border-primary/25 bg-primary/10 text-primary'
+                  : 'border-border bg-muted text-muted-foreground'
+              "
+            >
+              {{
+                fila.vacante.empleador.origen === "plataforma"
+                  ? "Interna"
+                  : fila.vacante.empleador.fuenteExterna ?? "Externa"
+              }}
+            </span>
+          </div>
           <h2 class="mt-1 text-lg font-black">
             {{ fila.vacante?.titulo ?? "Vacante" }}
           </h2>

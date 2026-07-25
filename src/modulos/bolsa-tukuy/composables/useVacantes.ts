@@ -1,6 +1,6 @@
 import { computed, onMounted, ref } from "vue";
 import { vacantesService } from "../services/vacantes.service";
-import type { Vacante } from "../types/vacante.types";
+import type { OrigenVacante, Vacante } from "../types/vacante.types";
 
 export function useVacantes() {
   const vacantes = ref<Vacante[]>([]);
@@ -8,6 +8,7 @@ export function useVacantes() {
   const error = ref<string | null>(null);
   const busqueda = ref("");
   const modalidad = ref("todas");
+  const origen = ref<"todas" | OrigenVacante>("todas");
   const soloCompatibles = ref(false);
 
   const filtradas = computed(() => {
@@ -18,14 +19,23 @@ export function useVacantes() {
         [
           vacante.titulo,
           vacante.empresa,
+          vacante.empleador.nombre,
+          vacante.empleador.fuenteExterna ?? "",
           vacante.ubicacion,
           ...vacante.etiquetas,
         ].some((valor) => valor.toLowerCase().includes(termino));
       const coincideModalidad =
         modalidad.value === "todas" || vacante.modalidad === modalidad.value;
+      const coincideOrigen =
+        origen.value === "todas" || vacante.empleador.origen === origen.value;
       const coincideCompatibilidad =
         !soloCompatibles.value || vacante.compatibilidad >= 80;
-      return coincideBusqueda && coincideModalidad && coincideCompatibilidad;
+      return (
+        coincideBusqueda &&
+        coincideModalidad &&
+        coincideOrigen &&
+        coincideCompatibilidad
+      );
     });
   });
 
@@ -34,6 +44,10 @@ export function useVacantes() {
       .filter((vacante) => vacante.compatibilidad >= 80)
       .sort((a, b) => b.compatibilidad - a.compatibilidad)
       .slice(0, 3),
+  );
+
+  const vacantesPlataforma = computed(() =>
+    vacantes.value.filter((item) => item.empleador.origen === "plataforma"),
   );
 
   async function cargar() {
@@ -55,12 +69,13 @@ export function useVacantes() {
     vacantes,
     filtradas,
     recomendadas,
+    vacantesPlataforma,
     cargando,
     error,
     busqueda,
     modalidad,
+    origen,
     soloCompatibles,
     recargar: cargar,
   };
 }
-

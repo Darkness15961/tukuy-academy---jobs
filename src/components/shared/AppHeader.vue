@@ -5,6 +5,7 @@ import {
   Bell,
   BookOpen,
   BriefcaseBusiness,
+  CalendarDays,
   ChevronDown,
   FileText,
   GraduationCap,
@@ -80,6 +81,38 @@ const {
 } = useContextoSesion();
 const isDropdownOpen = ref(false);
 const mobileMenuOpen = ref(false);
+const ecosistemaUsuarioAbierto = ref(false);
+
+const herramientasEcosistema = [
+  {
+    id: "cv",
+    etiqueta: "CV / Perfil profesional",
+    ruta: "/perfil-profesional",
+    icono: FileText,
+  },
+  {
+    id: "bolsa",
+    etiqueta: "Bolsa Tukuy",
+    ruta: "/bolsa-tukuy",
+    icono: BriefcaseBusiness,
+  },
+  {
+    id: "comunidad",
+    etiqueta: "Comunidad Tukuy",
+    ruta: "/comunidad",
+    icono: UsersRound,
+  },
+] as const;
+
+function irEcosistema(ruta: string) {
+  ecosistemaUsuarioAbierto.value = false;
+  mobileMenuOpen.value = false;
+  void router.push(ruta);
+}
+
+function alCambiarMenuUsuario(abierto: boolean) {
+  if (!abierto) ecosistemaUsuarioAbierto.value = false;
+}
 
 const isPortal = computed(() => props.mode === "portal");
 const profilePhotoSrc = "/img/vistasimg/perfilfoto.png";
@@ -97,7 +130,9 @@ const otrasFunciones = computed(() =>
 const navBreakpoint = computed(() => (isPortal.value ? "lg" : "md"));
 
 const mainNavItems = computed(() =>
-  props.navItems.filter((item) => item.id !== "learning"),
+  props.navItems.filter(
+    (item) => item.id !== "learning" && item.id !== "calendar",
+  ),
 );
 
 const publicNavItems = [
@@ -112,6 +147,7 @@ watch(
   () => {
     mobileMenuOpen.value = false;
     isDropdownOpen.value = false;
+    ecosistemaUsuarioAbierto.value = false;
   },
 );
 
@@ -124,6 +160,7 @@ function favoriteLabel(course: Course) {
 function getNavIcon(id: ViewId) {
   if (id === "courses") return GraduationCap;
   if (id === "learning") return BookOpen;
+  if (id === "calendar") return CalendarDays;
   if (id === "favorites") return Heart;
   if (id === "jobs") return BriefcaseBusiness;
   if (id === "cv") return FileText;
@@ -164,6 +201,10 @@ async function goHome() {
 
 function goToLogin() {
   router.push("/login");
+}
+
+function goToRegistro() {
+  router.push("/registro");
 }
 
 async function activarFuncion(membresiaId: string) {
@@ -332,7 +373,7 @@ async function activarFuncion(membresiaId: string) {
         <Button
           v-for="item in publicNavItems"
           :key="item.id"
-          class="text-[#52657A] hover:bg-[#DDEAF7] hover:text-[#07152B]"
+          class="text-muted-foreground hover:bg-muted hover:text-foreground"
           variant="ghost"
           type="button"
           @click="emit('scrollTo', item.id)"
@@ -444,7 +485,7 @@ async function activarFuncion(membresiaId: string) {
             <Bell class="h-5 w-5" />
           </Button>
 
-          <DropdownMenuRoot>
+          <DropdownMenuRoot @update:open="alCambiarMenuUsuario">
             <DropdownMenuTrigger as-child>
               <Button
                 class="h-auto rounded-full p-1"
@@ -519,26 +560,65 @@ async function activarFuncion(membresiaId: string) {
                 v-if="contextoActivo"
                 class="my-1 h-px bg-border"
               />
-              <DropdownMenuItem
-                class="flex cursor-pointer items-center gap-2 px-2 py-2 text-sm outline-none hover:bg-muted"
-                @select="router.push('/bolsa-tukuy')"
+              <button
+                type="button"
+                class="flex w-full items-center gap-2 px-2 py-2 text-left text-sm outline-none hover:bg-muted"
+                @click.stop="
+                  ecosistemaUsuarioAbierto = !ecosistemaUsuarioAbierto
+                "
               >
-                <BriefcaseBusiness class="h-4 w-4" />
-                Bolsa Tukuy
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                class="flex cursor-pointer items-center gap-2 px-2 py-2 text-sm outline-none hover:bg-muted"
-                @select="router.push('/comunidad')"
+                <UsersRound class="h-4 w-4 shrink-0" />
+                <span class="min-w-0 flex-1 font-semibold">Comunidad Tukuy</span>
+                <span
+                  class="rounded-sm bg-accent/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#B87A00] dark:text-accent"
+                >
+                  Pro
+                </span>
+                <ChevronDown
+                  class="h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-300 ease-out"
+                  :class="ecosistemaUsuarioAbierto ? 'rotate-180' : ''"
+                />
+              </button>
+              <div
+                class="grid transition-[grid-template-rows] duration-300 ease-out"
+                :class="
+                  ecosistemaUsuarioAbierto
+                    ? 'grid-rows-[1fr]'
+                    : 'grid-rows-[0fr]'
+                "
               >
-                <UsersRound class="h-4 w-4" />
-                Comunidad Tukuy
-              </DropdownMenuItem>
+                <div class="min-h-0 overflow-hidden">
+                  <div
+                    class="pb-1 pl-2 transition-opacity duration-300 ease-out"
+                    :class="
+                      ecosistemaUsuarioAbierto ? 'opacity-100' : 'opacity-0'
+                    "
+                  >
+                    <DropdownMenuItem
+                      v-for="item in herramientasEcosistema"
+                      :key="`user-${item.id}`"
+                      class="flex cursor-pointer items-center gap-2 rounded-none px-2 py-2 text-sm text-muted-foreground outline-none hover:bg-muted hover:text-foreground"
+                      @select="irEcosistema(item.ruta)"
+                    >
+                      <component :is="item.icono" class="h-4 w-4" />
+                      {{ item.etiqueta }}
+                    </DropdownMenuItem>
+                  </div>
+                </div>
+              </div>
               <DropdownMenuItem
                 class="flex cursor-pointer items-center gap-2 px-2 py-2 text-sm outline-none hover:bg-muted"
                 @select="emit('navigate', 'certificates')"
               >
                 <Award class="h-4 w-4" />
                 Mis certificados
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                class="flex cursor-pointer items-center gap-2 px-2 py-2 text-sm outline-none hover:bg-muted"
+                @select="emit('navigate', 'calendar')"
+              >
+                <CalendarDays class="h-4 w-4" />
+                Mi calendario
               </DropdownMenuItem>
               <DropdownMenuItem
                 class="flex cursor-pointer items-center gap-2 px-2 py-2 text-sm outline-none hover:bg-muted"
@@ -559,7 +639,10 @@ async function activarFuncion(membresiaId: string) {
           </DropdownMenuRoot>
         </template>
 
-        <Button v-else @click="goToLogin">Acceder</Button>
+        <div v-else class="flex items-center gap-2">
+          <Button variant="outline" @click="goToRegistro">Registrarse</Button>
+          <Button @click="goToLogin">Acceder</Button>
+        </div>
       </div>
     </div>
 
@@ -571,7 +654,7 @@ async function activarFuncion(membresiaId: string) {
     >
       <template v-if="isPortal">
         <Button
-          v-for="item in props.navItems"
+          v-for="item in props.navItems.filter((n) => n.id !== 'calendar')"
           :key="item.id"
           class="h-11 w-full justify-start px-3 font-semibold text-muted-foreground hover:text-foreground"
           :class="
@@ -591,7 +674,7 @@ async function activarFuncion(membresiaId: string) {
         <Button
           v-for="item in publicNavItems"
           :key="item.id"
-          class="h-11 w-full justify-start px-3 text-[#52657A] hover:bg-[#DDEAF7] hover:text-[#07152B]"
+          class="h-11 w-full justify-start px-3 text-muted-foreground hover:bg-muted hover:text-foreground"
           variant="ghost"
           type="button"
           @click="handleMobileScroll(item.id)"

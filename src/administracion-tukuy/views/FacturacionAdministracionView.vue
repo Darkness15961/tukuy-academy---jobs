@@ -14,6 +14,7 @@ import Tag from "primevue/tag";
 import { computed, onMounted, ref } from "vue";
 
 import { Button } from "@/components/ui/button";
+import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -86,13 +87,12 @@ async function marcarPagada(factura: FacturaAdministrada) {
   <section class="mx-auto grid max-w-400 gap-6">
     <div class="flex flex-wrap items-end justify-between gap-4">
       <div>
-        <p class="text-xs font-black uppercase tracking-[.2em] text-violet-700">
-          Control financiero
-        </p>
-        <h1 class="mt-2 text-3xl font-black">Facturación</h1>
-        <p class="mt-2 text-sm text-muted-foreground">
-          Consolida cobros de licencias, vencimientos y conciliación de pagos.
-        </p>
+        <TituloConAyuda
+          clase-eyebrow="text-primary"
+          eyebrow="Control financiero"
+          titulo="Facturación"
+          ayuda="Consolida cobros de licencias, vencimientos y conciliación de pagos."
+        />
       </div>
       <Button
         variant="outline"

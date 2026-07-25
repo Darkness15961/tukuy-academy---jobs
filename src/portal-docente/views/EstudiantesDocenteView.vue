@@ -17,6 +17,7 @@ import Tag from "primevue/tag";
 import { computed, onMounted, ref } from "vue";
 
 import { Button } from "@/components/ui/button";
+import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import { Card, CardContent } from "@/components/ui/card";
 import Skeleton from "primevue/skeleton";
 import {
@@ -304,17 +305,15 @@ function exportarResultados() {
   <section class="mx-auto grid max-w-375 gap-6">
     <div class="flex flex-wrap items-end justify-between gap-4">
       <div>
-        <p class="text-xs font-black uppercase tracking-[.2em] text-primary">
-          {{ props.etiqueta }}
-        </p>
-        <h1 class="mt-2 text-3xl font-black">{{ props.titulo }}</h1>
-        <p class="mt-2 text-sm text-muted-foreground">
-          <template v-if="props.descripcion">{{ props.descripcion }}</template>
-          <template v-else>
-            Participantes de <strong>{{ nombreAmbito }}</strong>. Los estudiantes
-            de otros ámbitos permanecen separados.
-          </template>
-        </p>
+        <TituloConAyuda
+          :eyebrow="props.etiqueta"
+          :ayuda="
+            props.descripcion ||
+            `Participantes de ${nombreAmbito}. Los estudiantes de otros ámbitos permanecen separados.`
+          "
+        >
+          {{ props.titulo }}
+        </TituloConAyuda>
       </div>
       <Button
         variant="outline"

@@ -6,6 +6,7 @@ import {
   type ConfiguracionDocente,
 } from "@/api/services/docente.service";
 import { Button } from "@/components/ui/button";
+import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import Skeleton from "primevue/skeleton";
@@ -38,10 +39,11 @@ async function guardar() {
 <template>
   <section class="mx-auto grid max-w-4xl gap-6">
     <div>
-      <h1 class="text-2xl font-black">Configuración docente</h1>
-      <p class="mt-1 text-sm text-muted-foreground">
-        Administra tu identidad, preferencias y seguridad.
-      </p>
+      <TituloConAyuda
+        titulo="Configuración docente"
+        clase-titulo="text-2xl font-black"
+        ayuda="Administra tu identidad, preferencias y seguridad."
+      />
     </div>
     <div v-if="cargando" class="grid gap-4">
       <Skeleton v-for="item in 3" :key="item" class="h-44 w-full" />

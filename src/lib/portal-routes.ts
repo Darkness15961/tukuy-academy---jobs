@@ -3,6 +3,7 @@ import type { ViewId } from "@/types/academia";
 export const portalPathByView: Record<ViewId, string> = {
   courses: "/tukuy-academy/cursos",
   learning: "/tukuy-academy/mi-aprendizaje",
+  calendar: "/tukuy-academy/calendario",
   favorites: "/tukuy-academy/favoritos",
   jobs: "/bolsa-tukuy",
   cv: "/perfil-profesional",
@@ -17,6 +18,7 @@ export function resolvePortalView(value: unknown): ViewId {
   if (
     value === "courses" ||
     value === "learning" ||
+    value === "calendar" ||
     value === "favorites" ||
     value === "jobs" ||
     value === "cv" ||

@@ -1,14 +1,16 @@
 <script setup lang="ts">
 import {
   ArrowRight,
-  BriefcaseBusiness,
   CalendarDays,
+  Building2,
+  Globe2,
   MapPin,
   Sparkles,
 } from "lucide-vue-next";
 
 import { Button } from "@/components/ui/button";
-import type { Vacante } from "../types/vacante.types";
+import LogoEmpleador from "./LogoEmpleador.vue";
+import { etiquetaOrigen, type Vacante } from "../types/vacante.types";
 
 defineProps<{
   vacante: Vacante;
@@ -25,12 +27,15 @@ const emit = defineEmits<{
   <article
     class="group flex h-full flex-col border border-border bg-card transition hover:-translate-y-1 hover:border-primary/40 hover:shadow-[0_22px_50px_rgba(7,21,43,.10)]"
   >
-    <div class="h-1.5 bg-primary" />
+    <div
+      class="h-1.5"
+      :class="
+        vacante.empleador.origen === 'plataforma' ? 'bg-primary' : 'bg-accent'
+      "
+    />
     <div class="flex flex-1 flex-col p-6">
       <div class="flex items-start justify-between gap-4">
-        <span class="grid h-12 w-12 shrink-0 place-items-center bg-primary/10 text-primary">
-          <BriefcaseBusiness class="h-5 w-5" />
-        </span>
+        <LogoEmpleador :empleador="vacante.empleador" />
         <span
           class="inline-flex items-center gap-1 bg-emerald-500/10 px-3 py-1.5 text-xs font-black text-emerald-700 dark:text-emerald-400"
         >
@@ -39,12 +44,39 @@ const emit = defineEmits<{
         </span>
       </div>
 
-      <p class="mt-5 text-xs font-black uppercase tracking-[.16em] text-primary">
-        {{ vacante.empresa }}
-      </p>
+      <div class="mt-5 flex flex-wrap items-center gap-2">
+        <p class="text-xs font-black uppercase tracking-[.16em] text-primary">
+          {{ vacante.empleador.nombre }}
+        </p>
+        <span
+          class="inline-flex items-center gap-1 border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide"
+          :class="
+            vacante.empleador.origen === 'plataforma'
+              ? 'border-primary/25 bg-primary/10 text-primary'
+              : 'border-border bg-muted text-muted-foreground'
+          "
+        >
+          <Building2
+            v-if="vacante.empleador.origen === 'plataforma'"
+            class="h-3 w-3"
+          />
+          <Globe2 v-else class="h-3 w-3" />
+          {{
+            vacante.empleador.origen === "plataforma"
+              ? "Interna"
+              : vacante.empleador.fuenteExterna ?? "Externa"
+          }}
+        </span>
+      </div>
       <h2 class="mt-2 text-xl font-black leading-7 text-foreground">
         {{ vacante.titulo }}
       </h2>
+      <p class="mt-2 text-xs text-muted-foreground">
+        {{ etiquetaOrigen(vacante.empleador.origen) }}
+        <template v-if="vacante.empleador.fuenteExterna">
+          · vía {{ vacante.empleador.fuenteExterna }}
+        </template>
+      </p>
 
       <div class="mt-5 grid gap-2 text-sm text-muted-foreground">
         <p class="flex items-center gap-2">
@@ -86,4 +118,3 @@ const emit = defineEmits<{
     </div>
   </article>
 </template>
-

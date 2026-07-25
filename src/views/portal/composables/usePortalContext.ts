@@ -10,6 +10,8 @@ import type {
 } from "@/types/academia";
 
 export type PricingFilter = "all" | "free" | "paid";
+export type FuenteCursoFilter = "all" | "tukuy" | "entidad";
+export type AccesoCursoFilter = "all" | "publico" | "restringido";
 
 export type PortalContext = {
   activeView: ComputedRef<ViewId>;
@@ -21,6 +23,13 @@ export type PortalContext = {
   featuredCourses: ComputedRef<Course[]>;
   topCourses: ComputedRef<Course[]>;
   catalogCourses: ComputedRef<Course[]>;
+  contadoresCatalogo: ComputedRef<{
+    total: number;
+    tukuy: number;
+    entidad: number;
+    publico: number;
+    restringido: number;
+  }>;
   favoriteCourses: ComputedRef<Course[]>;
   workExperiences: Ref<WorkExperience[]>;
   jobs: Ref<Job[]>;
@@ -28,6 +37,8 @@ export type PortalContext = {
   forYouJobs: ComputedRef<Job[]>;
   searchTerm: Ref<string>;
   pricingFilter: Ref<PricingFilter>;
+  fuenteFilter: Ref<FuenteCursoFilter>;
+  accesoFilter: Ref<AccesoCursoFilter>;
   jobSearchTerm: Ref<string>;
   scopeFilter: Ref<"all" | "for-you">;
   dateFilter: Ref<"all" | "recent" | "closing-soon" | "this-month">;
@@ -41,12 +52,17 @@ export type PortalContext = {
   navigate: (view: ViewId) => void;
   logout: () => void | Promise<void>;
   handleAddToCart: (courseId: string) => void;
+  comprarAhora: (courseId: string) => void;
+  irAlCarrito: () => void;
+  verDetalleCurso: (course: Course) => void;
   isInCart: (courseId: string) => boolean;
   isFavorite: (courseId: string) => boolean;
   toggleFavorite: (courseId: string) => void;
   handleViewCertificate: (course: Course) => Promise<void>;
   handleDownloadCertificate: (course: Course) => Promise<void>;
   openSimuladorCurso: (course: Course) => void | Promise<void>;
+  matricularTrasCompra: (cursoIds: string[]) => Promise<void>;
+  sincronizarProgresosCursos: () => Promise<void>;
   updateUserProfile?: (updates: Partial<UserProfile>) => void | Promise<void>;
 };
 

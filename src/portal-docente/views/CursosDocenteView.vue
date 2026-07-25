@@ -19,6 +19,7 @@ import {
 } from "@/api/services/docente.service";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useContextoSesion } from "@/composables/useContextoSesion";
@@ -53,8 +54,11 @@ const opcionesFiltro: Array<{
   { valor: "TODOS", etiqueta: "Todos" },
   { valor: "PUBLICADO", etiqueta: "Publicado" },
   { valor: "APROBADO", etiqueta: "Aprobado" },
+  { valor: "CONTENIDO_REVISADO", etiqueta: "Contenido OK" },
   { valor: "EN_REVISION", etiqueta: "Por revisar" },
+  { valor: "OBSERVADO", etiqueta: "Observado" },
   { valor: "BORRADOR", etiqueta: "En elaboración" },
+  { valor: "ARCHIVADO", etiqueta: "Archivado" },
 ];
 
 onMounted(async () => {
@@ -72,18 +76,29 @@ const ambitoActivo = computed(() =>
     : "ORGANIZACION",
 );
 
-const cursosDelContexto = computed(() =>
-  cursos.value.filter((curso) => {
+const cursosDelContexto = computed(() => {
+  const idsAlcance = contextoActivo.value?.alcance?.cursoIds;
+  return cursos.value.filter((curso) => {
     if (ambitoActivo.value === "INDEPENDIENTE") {
       return curso.ambito === "INDEPENDIENTE";
     }
 
-    return (
+    const deLaOrg =
       curso.ambito === "ORGANIZACION" &&
-      curso.organizacionId === contextoActivo.value?.organizacionId
-    );
-  }),
-);
+      curso.organizacionId === contextoActivo.value?.organizacionId;
+
+    if (!deLaOrg) return false;
+
+    if (
+      contextoActivo.value?.portal === "docente" &&
+      idsAlcance?.length
+    ) {
+      return idsAlcance.includes(curso.id);
+    }
+
+    return true;
+  });
+});
 
 function crearCurso() {
   router.push({
@@ -121,6 +136,8 @@ function etiquetaEstado(estado: EstadoCursoDocente) {
     {
       BORRADOR: "En elaboración",
       EN_REVISION: "Por revisar",
+      CONTENIDO_REVISADO: "Contenido OK",
+      OBSERVADO: "Observado",
       APROBADO: "Aprobado",
       PUBLICADO: "Publicado",
       ARCHIVADO: "Archivado",
@@ -134,6 +151,12 @@ function claseEstado(estado: EstadoCursoDocente) {
   }
   if (estado === "APROBADO") {
     return "border-transparent bg-sky-600 text-white";
+  }
+  if (estado === "CONTENIDO_REVISADO") {
+    return "border-transparent bg-teal-600 text-white";
+  }
+  if (estado === "OBSERVADO") {
+    return "border-transparent bg-orange-500 text-white";
   }
   if (estado === "EN_REVISION") {
     return "border-transparent bg-amber-500 text-slate-950";
@@ -164,10 +187,11 @@ async function archivar(curso: CursoDocente) {
   <section class="mx-auto grid max-w-375 gap-6">
     <div class="flex flex-wrap items-end justify-between gap-4">
       <div>
-        <h1 class="text-2xl font-black">{{ tituloPagina }}</h1>
-        <p class="mt-1 text-sm text-muted-foreground">
-          {{ descripcionPagina }}
-        </p>
+        <TituloConAyuda
+          :titulo="tituloPagina"
+          :ayuda="descripcionPagina"
+          clase-titulo="text-2xl font-black"
+        />
       </div>
       <Button
         v-if="!esGestionOrganizacion || tienePermiso('cursos.crear')"
@@ -279,7 +303,7 @@ async function archivar(curso: CursoDocente) {
 
         <CardContent class="p-5">
           <div
-            class="mb-3 flex items-center gap-2 text-[10px] font-black uppercase tracking-wide text-primary"
+            class="mb-3 flex flex-wrap items-center gap-2 text-[10px] font-black uppercase tracking-wide text-primary"
           >
             <CircleUserRound
               v-if="curso.ambito === 'INDEPENDIENTE'"
@@ -291,8 +315,26 @@ async function archivar(curso: CursoDocente) {
                 ? "Curso propio · Venta individual"
                 : curso.organizacionNombre
             }}
+            <Badge
+              variant="outline"
+              class="border-border text-[9px] text-muted-foreground"
+            >
+              {{
+                curso.modalidadImparticion === "EN_VIVO"
+                  ? "En vivo"
+                  : curso.modalidadImparticion === "HIBRIDA"
+                    ? "Híbrida"
+                    : "Virtual"
+              }}
+            </Badge>
           </div>
           <h2 class="min-h-12 text-lg font-black">{{ curso.titulo }}</h2>
+          <p
+            v-if="curso.estado === 'OBSERVADO' && curso.observacion"
+            class="mt-3 rounded-md border border-orange-500/30 bg-orange-500/10 px-3 py-2 text-xs text-orange-800 dark:text-orange-200"
+          >
+            <span class="font-bold">Observación: </span>{{ curso.observacion }}
+          </p>
           <div
             class="mt-4 flex items-center justify-between text-xs text-muted-foreground"
           >
@@ -344,6 +386,16 @@ async function archivar(curso: CursoDocente) {
             <h2 class="mt-3 text-3xl font-black">
               {{ cursoVistaPrevia.titulo }}
             </h2>
+            <p
+              v-if="
+                cursoVistaPrevia.estado === 'OBSERVADO' &&
+                cursoVistaPrevia.observacion
+              "
+              class="mt-3 rounded-md border border-orange-400/40 bg-orange-500/20 px-3 py-2 text-sm text-orange-50"
+            >
+              <span class="font-bold">Observación: </span
+              >{{ cursoVistaPrevia.observacion }}
+            </p>
             <p class="mt-2 text-sm text-slate-200">
               {{ cursoVistaPrevia.estudiantes }} estudiantes ·
               {{ cursoVistaPrevia.valoracion || "Sin valoraciones" }}

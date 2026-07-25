@@ -3,9 +3,11 @@ import {
   ArrowLeft,
   Award,
   BriefcaseBusiness,
+  Building2,
   CalendarDays,
   Check,
   CheckCircle2,
+  Globe2,
   LoaderCircle,
   MapPin,
   ShieldCheck,
@@ -16,8 +18,9 @@ import { useRoute, useRouter } from "vue-router";
 
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import LogoEmpleador from "../components/LogoEmpleador.vue";
 import { vacantesService } from "../services/vacantes.service";
-import type { Vacante } from "../types/vacante.types";
+import { etiquetaOrigen, type Vacante } from "../types/vacante.types";
 
 const route = useRoute();
 const router = useRouter();
@@ -83,14 +86,44 @@ async function postular() {
       <div class="mt-8 grid gap-8 lg:grid-cols-[minmax(0,1fr)_380px]">
         <section class="border border-border bg-card">
           <div class="border-b border-border p-7 sm:p-9">
-            <div class="flex flex-wrap items-center gap-3">
-              <span class="bg-primary px-3 py-1.5 text-xs font-black uppercase tracking-wide text-white">
-                {{ vacante.empresa }}
-              </span>
-              <span class="inline-flex items-center gap-1 bg-emerald-500/10 px-3 py-1.5 text-xs font-black text-emerald-700 dark:text-emerald-400">
-                <Sparkles class="h-3.5 w-3.5" />
-                {{ vacante.compatibilidad }}% compatible
-              </span>
+            <div class="flex flex-wrap items-start gap-4">
+              <LogoEmpleador :empleador="vacante.empleador" size="lg" />
+              <div class="min-w-0 flex-1">
+                <div class="flex flex-wrap items-center gap-3">
+                  <span class="bg-primary px-3 py-1.5 text-xs font-black uppercase tracking-wide text-white">
+                    {{ vacante.empleador.nombre }}
+                  </span>
+                  <span
+                    class="inline-flex items-center gap-1 border px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide"
+                    :class="
+                      vacante.empleador.origen === 'plataforma'
+                        ? 'border-primary/25 bg-primary/10 text-primary'
+                        : 'border-border bg-muted text-muted-foreground'
+                    "
+                  >
+                    <Building2
+                      v-if="vacante.empleador.origen === 'plataforma'"
+                      class="h-3.5 w-3.5"
+                    />
+                    <Globe2 v-else class="h-3.5 w-3.5" />
+                    {{
+                      vacante.empleador.origen === "plataforma"
+                        ? "Organización Tukuy"
+                        : vacante.empleador.fuenteExterna ?? "Fuente externa"
+                    }}
+                  </span>
+                  <span class="inline-flex items-center gap-1 bg-emerald-500/10 px-3 py-1.5 text-xs font-black text-emerald-700 dark:text-emerald-400">
+                    <Sparkles class="h-3.5 w-3.5" />
+                    {{ vacante.compatibilidad }}% compatible
+                  </span>
+                </div>
+                <p class="mt-3 text-sm text-muted-foreground">
+                  {{ etiquetaOrigen(vacante.empleador.origen) }}
+                  <template v-if="vacante.empleador.fuenteExterna">
+                    · datos simulados desde {{ vacante.empleador.fuenteExterna }}
+                  </template>
+                </p>
+              </div>
             </div>
             <h1 class="mt-5 text-4xl font-black leading-tight sm:text-5xl">
               {{ vacante.titulo }}

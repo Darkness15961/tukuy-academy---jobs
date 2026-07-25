@@ -27,6 +27,7 @@ const {
   error,
   busqueda,
   modalidad,
+  origen,
   soloCompatibles,
   recargar,
 } = useVacantes();
@@ -121,14 +122,14 @@ async function postular(vacanteId: string) {
 
     <section v-else class="mx-auto max-w-360 px-5 py-12 lg:px-8 lg:py-16">
       <div
-        class="grid gap-4 border border-border bg-card p-5 lg:grid-cols-[minmax(0,1fr)_220px_auto]"
+        class="grid gap-4 border border-border bg-card p-5 lg:grid-cols-[minmax(0,1fr)_200px_200px_auto]"
       >
         <label class="relative block">
           <Search class="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             v-model="busqueda"
             class="h-12 pl-11"
-            placeholder="Cargo, empresa, ubicación o competencia"
+            placeholder="Cargo, empresa, fuente o competencia"
           />
         </label>
         <label class="relative">
@@ -141,6 +142,17 @@ async function postular(vacanteId: string) {
             <option value="Presencial">Presencial</option>
             <option value="Híbrido">Híbrido</option>
             <option value="Remoto">Remoto</option>
+          </select>
+        </label>
+        <label>
+          <select
+            v-model="origen"
+            class="h-12 w-full appearance-none border border-border bg-card px-4 text-sm font-semibold"
+            aria-label="Origen de la vacante"
+          >
+            <option value="todas">Todas las fuentes</option>
+            <option value="plataforma">Organizaciones Tukuy</option>
+            <option value="externa">Portales externos</option>
           </select>
         </label>
         <button

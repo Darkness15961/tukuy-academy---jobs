@@ -8,6 +8,7 @@ import {
 } from "lucide-vue-next";
 import { computed, onMounted, ref } from "vue";
 import { Button } from "@/components/ui/button";
+import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import { Card, CardContent } from "@/components/ui/card";
 import Skeleton from "primevue/skeleton";
 import { useContextoSesion } from "@/composables/useContextoSesion";
@@ -111,14 +112,15 @@ function descargarReporte() {
   <section class="mx-auto grid max-w-375 gap-6">
     <div class="flex justify-between">
       <div>
-        <h1 class="text-2xl font-black">Ingresos</h1>
-        <p class="mt-1 text-sm text-muted-foreground">
-          {{
+        <TituloConAyuda
+          titulo="Ingresos"
+          clase-titulo="text-2xl font-black"
+          :ayuda="
             esIndependiente
-              ? "Ventas directas de tus cursos propios."
+              ? 'Ventas directas de tus cursos propios.'
               : `Honorarios y liquidaciones de ${contextoActivo?.organizacionNombre}.`
-          }}
-        </p>
+          "
+        />
       </div>
       <Button variant="outline" @click="descargarReporte"
         ><Download class="h-4 w-4" />Descargar reporte</Button

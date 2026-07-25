@@ -3,6 +3,8 @@ import { apiConfig } from "@/api/config";
 import { API } from "@/api/endpoints";
 import {
   asignacionesPerfilUsuario,
+  estructurasOrganizacionales,
+  nivelesOrganizacionales,
   perfilesEntidad,
   politicasIncorporacionEntidad,
   reglasAccesoCursoEntidad,
@@ -12,6 +14,8 @@ import {
 } from "@/portal-organizacion/data/estructura-organizacional.mock";
 import type {
   AsignacionPerfilUsuario,
+  EstructuraOrganizacional,
+  NivelOrganizacional,
   PerfilEntidad,
   PoliticaIncorporacionUnidad,
   EvaluacionAccesoCursoEntidad,
@@ -24,6 +28,7 @@ import {
   crearAlmacenDocumento,
   crearRepositorioLocal,
 } from "@/api/repositorio-local";
+import { resolveMock } from "@/api/mock";
 import { CONTEXTO_SESION_KEY } from "@/lib/constants";
 import {
   areasOrganizacion,
@@ -35,6 +40,11 @@ import {
   rutasOrganizacion,
   usuariosOrganizacion,
 } from "@/portal-organizacion/data/organizacion.mock";
+import { sesionesEnVivoCompartidas } from "@/api/services/sesiones-en-vivo-compartidas.service";
+import type {
+  ProgramarSesionEnVivoInput,
+  SesionEnVivoOrganizacion,
+} from "@/portal-organizacion/types/sesiones-en-vivo.types";
 import type { ContextoSesion } from "@/types/membresia.types";
 import type {
   CertificadoEmitidoDocente,
@@ -59,6 +69,25 @@ export interface UsuarioOrganizacion {
   colegiaturaActiva?: boolean;
   unidadPrincipalId?: string | null;
   sedeId?: string;
+  dni?: string;
+  /** Cómo llegó la persona al directorio de la entidad. */
+  origenIngreso?: "COMUNIDAD" | "INVITACION_ADMIN" | "IMPORTACION";
+}
+
+export interface IncorporacionPersonaOrganizacion {
+  nombre: string;
+  correo: string;
+  dni?: string;
+  unidadId: string;
+  sedeId?: string;
+  perfilId: string;
+  especialidad?: string;
+}
+
+export interface ResultadoIncorporacionPersona {
+  usuario: UsuarioOrganizacion;
+  vinculacion: VinculacionUnidad;
+  asignacionPerfil: AsignacionPerfilUsuario;
 }
 
 /** Una inscripción por alumno y curso dentro de la organización. */
@@ -75,6 +104,15 @@ export interface MatriculaAlumnoOrganizacion {
   ultimoAccesoFecha: string;
   fechaInscripcion: string;
   estado: "ACTIVO" | "COMPLETADO" | "EN_RIESGO" | "PENDIENTE";
+  /** Interno: persona vinculada a la entidad. Externo: lleva cursos sin pertenecer a la estructura. */
+  tipo: "INTERNO" | "EXTERNO";
+  /** Instantánea auditable: la condición no cambia si luego cambia la estructura. */
+  condicionAlInscribirse?: "INTERNO" | "EXTERNO";
+  origenAcceso?:
+    | "CURSO_PUBLICO"
+    | "NODO_INTERNO"
+    | "ASIGNACION"
+    | "APROBACION";
   unidadOrigenId?: string;
   modalidad?: "LIBRE" | "ASIGNADA" | "SOLICITADA" | "INVITACION";
 }
@@ -104,6 +142,8 @@ export interface AsignacionOrganizacion {
   completados: number;
   vence: string;
   obligatorio: boolean;
+  destinoUnidadId?: string;
+  incluirDescendientes?: boolean;
   estado?: "ACTIVA" | "FINALIZADA" | "CANCELADA";
   creadaEn?: string;
 }
@@ -119,6 +159,8 @@ export interface RutaOrganizacion {
   id: string;
   nombre: string;
   descripcion?: string;
+  /** Portada visual de la ruta (URL). */
+  imagen?: string;
   cursos: number;
   cursosSeleccionados?: CursoEnRutaOrganizacion[];
   usuarios: number;
@@ -132,6 +174,10 @@ export interface RutaOrganizacion {
   descuentoInterno?: number;
   descuentoAplicaA?: DestinatarioDescuento;
   descuentoArea?: string | null;
+  /** Política de combinación (mismo motor que aprobación de cursos). */
+  politicaDescuentos?: import("@/types/comercializacion-curso.types").PoliticaCombinacionDescuentos;
+  /** Reglas editables de descuento (automáticos, códigos, nodo, persona). */
+  descuentos?: import("@/types/comercializacion-curso.types").ReglaDescuentoCurso[];
   estado?: "BORRADOR" | "PUBLICADA" | "ARCHIVADA";
 }
 
@@ -142,6 +188,8 @@ export interface ConfiguracionOrganizacion {
   dominio: string;
   zonaHoraria: string;
   restringirDominio: boolean;
+  /** Si es true, el enrolamiento exige DNI. Algunas entidades lo desactivan. */
+  requiereDniEnrolamiento: boolean;
 }
 
 export interface IntegracionOrganizacion {
@@ -201,6 +249,7 @@ export interface NotificacionOrganizacion {
 
 export type EstadoPropuestaCursoOrganizacion =
   | "EN_REVISION"
+  | "CONTENIDO_REVISADO"
   | "APROBADO"
   | "OBSERVADO"
   | "PUBLICADO";
@@ -244,6 +293,8 @@ export interface PropuestaCursoOrganizacion {
   descuentoAplicaA?: DestinatarioDescuento;
   /** Área beneficiaria cuando descuentoAplicaA === AREA. */
   descuentoArea?: string | null;
+  /** Configuración comercial completa del wizard (demo / mock). */
+  configuracionPublicacion?: import("@/types/comercializacion-curso.types").ConfiguracionPublicacionCurso;
 }
 
 export interface AprobacionCursoOrganizacion {
@@ -257,12 +308,14 @@ export interface AprobacionCursoOrganizacion {
   obligatorio?: boolean;
   vence?: string;
   publicar?: boolean;
+  /** Snapshot completo para simular guardado de descuentos y precios. */
+  configuracionPublicacion?: import("@/types/comercializacion-curso.types").ConfiguracionPublicacionCurso;
 }
 
 export function etiquetaAlcanceCorto(
   alcance: AlcanceCursoOrganizacion | undefined,
 ): string {
-  if (alcance === "AREA") return "Solo un área";
+  if (alcance === "AREA") return "Solo un nodo";
   if (alcance === "EXTERNO") return "Público externo";
   if (alcance === "ORGANIZACION") return "Toda la organización";
   if (alcance === "TODOS") return "Todo el público";
@@ -276,7 +329,7 @@ export function etiquetaDescuentoAplicaA(
   if (!aplicaA || aplicaA === "NINGUNO") return "Sin descuento";
   if (aplicaA === "ORGANIZACION") return "Colaboradores";
   if (aplicaA === "EXTERNO") return "Público externo";
-  return area ? `Área ${area}` : "Un área";
+  return area ? `Nodo ${area}` : "Un nodo";
 }
 
 /** Precio con descuento para el grupo beneficiario. */
@@ -374,7 +427,7 @@ function crearRepositorioOrganizacion<T extends RegistroIdentificable>(
       clave: claveContextual(recurso),
       ruta,
       semilla,
-      version: 13,
+      version: 21,
     });
   }
   return {
@@ -472,6 +525,18 @@ const perfiles = crearRepositorioOrganizacion<PerfilEntidad>(
   perfilesEntidad,
 );
 
+const estructuras = crearRepositorioOrganizacion<EstructuraOrganizacional>(
+  "estructuras-organizacion",
+  `${API.organizacion.unidades}/estructuras`,
+  estructurasOrganizacionales,
+);
+
+const niveles = crearRepositorioOrganizacion<NivelOrganizacional>(
+  "niveles-organizacion",
+  `${API.organizacion.unidades}/niveles`,
+  nivelesOrganizacionales,
+);
+
 const asignacionesPerfil =
   crearRepositorioOrganizacion<AsignacionPerfilUsuario>(
     "asignaciones-perfil",
@@ -479,145 +544,58 @@ const asignacionesPerfil =
     asignacionesPerfilUsuario,
   );
 
-/**
- * Migra datos demostrativos creados con la jerarquía anterior. Mantiene las
- * unidades personalizadas, pero garantiza una única cadena de gobierno:
- * Entidad > Dirección > Administración > unidades operativas.
- */
+/** Migra el árbol histórico a gobierno protegido + estructuras independientes.
+ *  Solo toca nodos del mock original; los creados por el usuario pasan intactos. */
 async function normalizarJerarquiaOrganizacional() {
   if (!apiConfig.useMock) return;
+  const actuales = await unidades.listar();
 
-  const idAnterior = "unidad-direccion-academica";
-  const idDireccion = "unidad-direccion-gobierno";
-  const idAdministracion = "unidad-administracion";
-  const idCertificacion = "unidad-comision-certificacion";
-  const [actuales, relacionesActuales, perfilesActuales, personasActuales] =
-    await Promise.all([
-      unidades.listar(),
-      vinculaciones.listar(),
-      asignacionesPerfil.listar(),
-      usuarios.listar(),
-    ]);
+  // IDs de la semilla original: solo estos se normalizan
+  const idsOriginales = new Set(unidadesOrganizacionales.map((item) => item.id));
 
-  const direccionBase = unidadesOrganizacionales.find(
-    (item) => item.id === idDireccion,
+  const protegidas = new Map(
+    unidadesOrganizacionales
+      .filter((item) => item.esSistema)
+      .map((item) => [item.id, item]),
   );
-  const administracionBase = unidadesOrganizacionales.find(
-    (item) => item.id === idAdministracion,
-  );
-  if (!direccionBase || !administracionBase) return;
+  const idsGobierno = new Set(protegidas.keys());
 
-  const mapa = new Map(
-    actuales
-      .filter((item) => item.id !== idAnterior)
-      .map((item) => [item.id, { ...item }]),
-  );
-  mapa.set(idDireccion, {
-    ...direccionBase,
-    ...mapa.get(idDireccion),
-    nombre: "Dirección",
-    unidadPadreId: null,
-    orden: 1,
-    estado: "ACTIVA",
+  const normalizadas: UnidadOrganizacional[] = actuales
+    .filter((item) => item.id !== "unidad-direccion-academica")
+    .map((item) => {
+      // Nodo creado por el usuario → no tocar
+      if (!idsOriginales.has(item.id)) return item;
+
+      const base = protegidas.get(item.id);
+      if (base) {
+        return {
+          ...item,
+          ...base,
+          responsableUsuarioId: item.responsableUsuarioId ?? base.responsableUsuarioId,
+        };
+      }
+      const padreOperativo =
+        item.unidadPadreId && !idsGobierno.has(item.unidadPadreId)
+          ? item.unidadPadreId
+          : null;
+      const tienePadreOperativo = Boolean(padreOperativo);
+      return {
+        ...item,
+        estructuraId: item.estructuraId ?? "estructura-funcional",
+        nivelId: item.nivelId ?? (tienePadreOperativo ? "nivel-equipo" : "nivel-area"),
+        unidadPadreId: padreOperativo,
+        esSistema: false,
+      };
+    });
+
+  protegidas.forEach((unidad, id) => {
+    if (!normalizadas.some((item) => item.id === id)) normalizadas.push(unidad);
   });
-  mapa.set(idAdministracion, {
-    ...administracionBase,
-    ...mapa.get(idAdministracion),
-    nombre: "Administración",
-    unidadPadreId: idDireccion,
-    orden: 1,
-    estado: "ACTIVA",
-  });
-  const comisionCertificacion = mapa.get(idCertificacion);
-  if (
-    comisionCertificacion &&
-    comisionCertificacion.permiteSubunidades === undefined
-  ) {
-    comisionCertificacion.permiteSubunidades = true;
-  }
-
-  const ordenPreferido = new Map([
-    ["unidad-capitulo-civil", 1],
-    ["unidad-capitulo-industrial", 2],
-    ["unidad-capitulo-sistemas", 3],
-    [idCertificacion, 4],
-  ]);
-  mapa.forEach((unidad, id) => {
-    if (id === idDireccion || id === idAdministracion) return;
-    const padreExiste = unidad.unidadPadreId && mapa.has(unidad.unidadPadreId);
-    if (
-      !padreExiste ||
-      unidad.unidadPadreId === idAnterior ||
-      ordenPreferido.has(id)
-    ) {
-      unidad.unidadPadreId = idAdministracion;
-    }
-    unidad.orden = ordenPreferido.get(id) ?? unidad.orden;
-  });
-
-  const unidadesNormalizadas = [...mapa.values()];
-  if (JSON.stringify(actuales) !== JSON.stringify(unidadesNormalizadas)) {
-    await unidades.reemplazar(unidadesNormalizadas);
-  }
-
-  const destinoPorUsuario: Record<string, string> = {
-    "3": idDireccion,
-    "5": idCertificacion,
-    "9": idAdministracion,
-    "13": idAdministracion,
-  };
-  const relacionesMigradas = relacionesActuales
-    .map((relacion) =>
-      relacion.unidadId === idAnterior
-        ? {
-            ...relacion,
-            unidadId: destinoPorUsuario[relacion.usuarioId] ?? idAdministracion,
-          }
-        : relacion,
-    )
-    .filter(
-      (relacion, indice, lista) =>
-        lista.findIndex(
-          (item) =>
-            item.usuarioId === relacion.usuarioId &&
-            item.unidadId === relacion.unidadId,
-        ) === indice,
-    );
-  if (JSON.stringify(relacionesActuales) !== JSON.stringify(relacionesMigradas)) {
-    await vinculaciones.reemplazar(relacionesMigradas);
-  }
-
-  const perfilesMigrados = perfilesActuales.map((asignacion) => ({
-    ...asignacion,
-    unidadIds: asignacion.unidadIds.map((unidadId) =>
-      unidadId === idAnterior
-        ? asignacion.perfilId === "perfil-direccion"
-          ? idDireccion
-          : asignacion.perfilId === "perfil-director-academico"
-            ? idCertificacion
-            : idAdministracion
-        : unidadId,
-    ),
-  }));
-  if (JSON.stringify(perfilesActuales) !== JSON.stringify(perfilesMigrados)) {
-    await asignacionesPerfil.reemplazar(perfilesMigrados);
-  }
-
-  const personasMigradas = personasActuales.map((persona) => {
-    if (persona.unidadPrincipalId !== idAnterior) return persona;
-    const unidadPrincipalId = destinoPorUsuario[String(persona.id)] ?? idAdministracion;
-    const area =
-      unidadPrincipalId === idDireccion
-        ? "Dirección"
-        : unidadPrincipalId === idCertificacion
-          ? "Comisión de Certificación"
-          : "Administración";
-    return { ...persona, unidadPrincipalId, area };
-  });
-  if (JSON.stringify(personasActuales) !== JSON.stringify(personasMigradas)) {
-    await usuarios.reemplazar(personasMigradas);
+  if (JSON.stringify(actuales) !== JSON.stringify(normalizadas)) {
+    await unidades.reemplazar(normalizadas);
   }
 }
+
 
 const reglasAccesoCursos =
   crearRepositorioOrganizacion<ReglaAccesoCursoEntidad>(
@@ -657,19 +635,20 @@ export interface ResultadoEliminacionUnidad {
 async function eliminarUnidadConDependencias(
   unidadId: string,
 ): Promise<ResultadoEliminacionUnidad> {
-  if (["unidad-direccion-gobierno", "unidad-administracion"].includes(unidadId)) {
-    throw new Error("Los niveles de Dirección y Administración están protegidos.");
-  }
-
   const listaUnidades = await unidades.listar();
+  if (listaUnidades.find((item) => item.id === unidadId)?.esSistema) {
+    throw new Error(
+      "Dirección, Administración y Certificación son funciones protegidas.",
+    );
+  }
   const hijosDirectos = listaUnidades.filter(
     (unidad) => unidad.unidadPadreId === unidadId,
   );
   if (hijosDirectos.length) {
     throw new Error(
       `No se puede eliminar esta unidad porque contiene ${hijosDirectos.length} ${
-        hijosDirectos.length === 1 ? "subnivel" : "subniveles"
-      }. Elimina primero las unidades del último nivel.`,
+        hijosDirectos.length === 1 ? "nodo descendiente" : "nodos descendientes"
+      }. Elimina primero los nodos del último nivel.`,
     );
   }
 
@@ -720,7 +699,7 @@ async function eliminarUnidadConDependencias(
     personasAActualizar.map((item) =>
       usuarios.actualizar(item.id, {
         unidadPrincipalId: null,
-        area: "Sin unidad asignada",
+        area: "Sin nodo asignado",
       }),
     ),
   );
@@ -777,6 +756,316 @@ async function aprobarVinculacion(id: string, aprobadaPor: string) {
     estado: "ACTIVA",
     fechaInicio: new Date().toISOString().slice(0, 10),
     aprobadaPor,
+  });
+}
+
+async function vincularPersonaANodo(
+  entrada: Omit<VinculacionUnidad, "id" | "estado" | "fechaInicio">,
+) {
+  const [persona, unidad, relaciones, listaUnidades] = await Promise.all([
+    usuarios.obtener(Number(entrada.usuarioId)),
+    unidades.obtener(entrada.unidadId),
+    vinculaciones.listar(),
+    unidades.listar(),
+  ]);
+  if (!persona) throw new Error("La persona seleccionada no existe.");
+  if (!unidad || unidad.estado !== "ACTIVA" || !unidad.estructuraId) {
+    throw new Error("Selecciona un nodo activo de una estructura válida.");
+  }
+  if (
+    relaciones.some(
+      (item) =>
+        item.usuarioId === entrada.usuarioId &&
+        item.unidadId === entrada.unidadId &&
+        ["ACTIVA", "PENDIENTE"].includes(item.estado),
+    )
+  ) {
+    throw new Error("La persona ya está vinculada a este nodo.");
+  }
+  if (entrada.tipo === "PRINCIPAL") {
+    const unidadesEstructura = new Set(
+      listaUnidades
+        .filter((item) => item.estructuraId === unidad.estructuraId)
+        .map((item) => item.id),
+    );
+    const principalExistente = relaciones.find(
+      (item) =>
+        item.usuarioId === entrada.usuarioId &&
+        item.tipo === "PRINCIPAL" &&
+        item.estado === "ACTIVA" &&
+        unidadesEstructura.has(item.unidadId),
+    );
+    if (principalExistente) {
+      throw new Error(
+        "La persona ya tiene un nodo principal en esta estructura. Usa una vinculación secundaria o temporal.",
+      );
+    }
+  }
+  return vinculaciones.crear({
+    ...entrada,
+    id: `vin-${Date.now()}`,
+    estado: "ACTIVA",
+    fechaInicio: new Date().toISOString().slice(0, 10),
+  });
+}
+
+function inicialesPersona(nombre: string) {
+  return nombre
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((parte) => parte[0] ?? "")
+    .join("")
+    .toUpperCase();
+}
+
+/**
+ * Crea de forma coherente el directorio, la pertenencia estructural y el
+ * perfil de acceso. En producción este contrato debe resolverse en una única
+ * transacción del backend.
+ */
+async function incorporarPersona(
+  entrada: IncorporacionPersonaOrganizacion,
+): Promise<ResultadoIncorporacionPersona> {
+  if (!apiConfig.useMock) {
+    const { data } = await api.post<ResultadoIncorporacionPersona>(
+      `${API.organizacion.usuarios}/incorporaciones`,
+      entrada,
+    );
+    return data;
+  }
+
+  const [personas, listaUnidades, listaEstructuras, listaNiveles, listaPerfiles, listaSedes] =
+    await Promise.all([
+      usuarios.listar(),
+      unidades.listar(),
+      estructuras.listar(),
+      niveles.listar(),
+      perfiles.listar(),
+      sedes.listar(),
+    ]);
+  const correo = entrada.correo.trim().toLowerCase();
+  const dni = entrada.dni?.trim();
+  if (!entrada.nombre.trim() || !correo) {
+    throw new Error("Nombre y correo son obligatorios.");
+  }
+  const configuracion = await almacenConfiguracion().leer();
+  if (configuracion.requiereDniEnrolamiento) {
+    if (!dni) {
+      throw new Error("Esta entidad exige DNI para enrolar personas.");
+    }
+    if (!/^\d{8}$/.test(dni)) {
+      throw new Error("El DNI debe contener 8 dígitos.");
+    }
+  }
+  if (personas.some((item) => item.correo.trim().toLowerCase() === correo)) {
+    throw new Error("Ya existe una persona registrada con este correo.");
+  }
+  if (dni && personas.some((item) => item.dni === dni)) {
+    throw new Error("Ya existe una persona registrada con este DNI.");
+  }
+
+  const unidad = listaUnidades.find(
+    (item) => item.id === entrada.unidadId && item.estado === "ACTIVA",
+  );
+  if (!unidad?.estructuraId || !unidad.nivelId) {
+    throw new Error("Selecciona un nodo activo perteneciente a una estructura y nivel.");
+  }
+  const estructura = listaEstructuras.find(
+    (item) => item.id === unidad.estructuraId && item.estado === "ACTIVA",
+  );
+  const nivel = listaNiveles.find(
+    (item) => item.id === unidad.nivelId && item.estructuraId === unidad.estructuraId,
+  );
+  if (!estructura || !nivel) {
+    throw new Error("El nodo seleccionado tiene una estructura incompleta.");
+  }
+  const perfil = listaPerfiles.find(
+    (item) => item.id === entrada.perfilId && item.estado === "ACTIVO",
+  );
+  if (!perfil) throw new Error("Selecciona un perfil institucional activo.");
+  const sede = entrada.sedeId
+    ? listaSedes.find((item) => item.id === entrada.sedeId)
+    : undefined;
+  if (entrada.sedeId && !sede) throw new Error("La sede seleccionada no existe.");
+
+  const perfilGobierno: Partial<Record<NonNullable<UnidadOrganizacional["codigoSistema"]>, PerfilEntidad["plantilla"]>> = {
+    DIRECCION: "DIRECCION",
+    ADMINISTRACION: "ADMINISTRACION",
+  };
+  const plantillaRequerida = unidad.codigoSistema
+    ? perfilGobierno[unidad.codigoSistema]
+    : undefined;
+  if (plantillaRequerida && perfil.plantilla !== plantillaRequerida) {
+    throw new Error(
+      `${unidad.nombre} solo puede incorporar personas con el perfil protegido correspondiente.`,
+    );
+  }
+
+  const id = Date.now();
+  const usuario: UsuarioOrganizacion = {
+    id,
+    dni: dni || undefined,
+    nombre: entrada.nombre.trim(),
+    iniciales: inicialesPersona(entrada.nombre) || "NU",
+    correo,
+    area: unidad.nombre,
+    sede: sede?.ciudad ?? sede?.nombre ?? "Sin sede",
+    rol: perfil.nombre,
+    progreso: 0,
+    estado: "INVITADO",
+    especialidad: entrada.especialidad?.trim() || undefined,
+    colegiaturaActiva: false,
+    unidadPrincipalId: unidad.id,
+    sedeId: sede?.id,
+  };
+  const vinculacion: VinculacionUnidad = {
+    id: `vin-incorporacion-${id}`,
+    usuarioId: String(id),
+    unidadId: unidad.id,
+    sedeId: sede?.id,
+    tipo: "PRINCIPAL",
+    origen: "ASIGNACION_ADMINISTRATIVA",
+    estado: "PENDIENTE",
+  };
+  const asignacion: AsignacionPerfilUsuario = {
+    id: `apu-incorporacion-${id}`,
+    usuarioId: String(id),
+    perfilId: perfil.id,
+    unidadIds: [unidad.id],
+    sedeIds: sede ? [sede.id] : [],
+    incluirDescendientes: false,
+    esPrincipal: true,
+    estado: "INACTIVA",
+  };
+
+  await usuarios.crear(usuario);
+  await vinculaciones.crear(vinculacion);
+  await asignacionesPerfil.crear(asignacion);
+  return { usuario, vinculacion, asignacionPerfil: asignacion };
+}
+
+async function activarIncorporacion(usuarioId: string, aprobadaPor: string) {
+  const [personas, relaciones, asignaciones] = await Promise.all([
+    usuarios.listar(),
+    vinculaciones.listar(),
+    asignacionesPerfil.listar(),
+  ]);
+  const persona = personas.find((item) => String(item.id) === usuarioId);
+  if (!persona) throw new Error("No se encontró la persona invitada.");
+  const relacionesPendientes = relaciones.filter(
+    (item) => item.usuarioId === usuarioId && item.estado === "PENDIENTE",
+  );
+  const perfilesPendientes = asignaciones.filter(
+    (item) => item.usuarioId === usuarioId && item.estado === "INACTIVA",
+  );
+  await Promise.all([
+    ...relacionesPendientes.map((item) => aprobarVinculacion(item.id, aprobadaPor)),
+    ...perfilesPendientes.map((item) =>
+      asignacionesPerfil.actualizar(item.id, { estado: "ACTIVA" }),
+    ),
+  ]);
+  return usuarios.actualizar(persona.id, { estado: "ACTIVO" });
+}
+
+/**
+ * Registra una solicitud de ingreso iniciada desde Comunidad / Explorar entidades.
+ * Escribe en el directorio de la organización destino (clave fija por orgId).
+ */
+async function registrarSolicitudDesdeComunidad(entrada: {
+  organizacionId: string;
+  nombre: string;
+  correo: string;
+  dni?: string;
+  iniciales?: string;
+}): Promise<{
+  estado: "SOLICITADA" | "MIEMBRO";
+  usuario: UsuarioOrganizacion;
+  yaExistia: boolean;
+}> {
+  if (!apiConfig.useMock) {
+    const { data } = await api.post<{
+      estado: "SOLICITADA" | "MIEMBRO";
+      usuario: UsuarioOrganizacion;
+      yaExistia: boolean;
+    }>(`${API.organizacion.usuarios}/solicitudes-comunidad`, entrada);
+    return data;
+  }
+
+  const organizacionId = entrada.organizacionId.trim();
+  if (!organizacionId) throw new Error("Organización no válida.");
+
+  const repo = crearRepositorioLocal<UsuarioOrganizacion>({
+    clave: `tukuy_demo_organizacion_${organizacionId}_usuarios`,
+    ruta: API.organizacion.usuarios,
+    semilla: usuariosOrganizacion.map((usuario) => ({
+      ...usuario,
+      estado: usuario.estado as UsuarioOrganizacion["estado"],
+    })),
+    version: 18,
+  });
+
+  const correo = entrada.correo.trim().toLowerCase();
+  const dni = entrada.dni?.trim();
+  const nombre = entrada.nombre.trim();
+  if (!nombre || !correo) {
+    throw new Error("Nombre y correo son obligatorios para solicitar el ingreso.");
+  }
+
+  // Config de DNI: solo se exige con certeza para la org activa del portal;
+  // en Comunidad usamos el flag de la entidad pública (pasado vía validación previa).
+  if (dni && !/^\d{8}$/.test(dni)) {
+    throw new Error("El DNI debe contener 8 dígitos.");
+  }
+
+  const personas = await repo.listar();
+  const existente = personas.find(
+    (item) => item.correo.trim().toLowerCase() === correo,
+  );
+  if (existente?.estado === "ACTIVO") {
+    return resolveMock({
+      estado: "MIEMBRO" as const,
+      usuario: existente,
+      yaExistia: true,
+    });
+  }
+  if (existente?.estado === "INVITADO") {
+    const actualizado = await repo.actualizar(existente.id, {
+      nombre,
+      dni: dni || existente.dni,
+      origenIngreso: "COMUNIDAD",
+      area: "Solicitud desde Comunidad",
+    });
+    return resolveMock({
+      estado: "SOLICITADA" as const,
+      usuario: actualizado,
+      yaExistia: true,
+    });
+  }
+  if (dni && personas.some((item) => item.dni === dni)) {
+    throw new Error("Ya existe una persona registrada con este DNI.");
+  }
+
+  const id = Date.now();
+  const usuario: UsuarioOrganizacion = {
+    id,
+    dni: dni || undefined,
+    nombre,
+    iniciales: entrada.iniciales?.trim() || inicialesPersona(nombre) || "SC",
+    correo,
+    area: "Solicitud desde Comunidad",
+    sede: "Por definir",
+    rol: "Colegiado",
+    progreso: 0,
+    estado: "INVITADO",
+    colegiaturaActiva: false,
+    origenIngreso: "COMUNIDAD",
+  };
+  const creado = await repo.crear(usuario);
+  return resolveMock({
+    estado: "SOLICITADA" as const,
+    usuario: creado,
+    yaExistia: false,
   });
 }
 
@@ -876,7 +1165,7 @@ async function evaluarAccesoCurso(
       requiereAprobacion: false,
       modalidad: regla.modalidad,
       motivo:
-        "El curso está dirigido a otra unidad, especialidad o perfil institucional.",
+        "El curso está dirigido a otro nodo, especialidad o perfil institucional.",
       reglaId: regla.id,
     };
   }
@@ -929,6 +1218,16 @@ async function matricularUsuarioEnCurso(datos: {
     ultimoAccesoFecha: new Date().toISOString().slice(0, 10),
     fechaInscripcion: new Date().toISOString().slice(0, 10),
     estado: datos.estadoInicial ?? "ACTIVO",
+    tipo: datos.unidadOrigenId ? "INTERNO" : "EXTERNO",
+    condicionAlInscribirse: datos.unidadOrigenId ? "INTERNO" : "EXTERNO",
+    origenAcceso:
+      datos.modalidad === "ASIGNADA"
+        ? "ASIGNACION"
+        : datos.modalidad === "SOLICITADA"
+          ? "APROBACION"
+          : datos.unidadOrigenId
+            ? "NODO_INTERNO"
+            : "CURSO_PUBLICO",
     unidadOrigenId: datos.unidadOrigenId,
     modalidad: datos.modalidad,
   });
@@ -958,16 +1257,34 @@ const matriculas =
   crearRepositorioOrganizacion<MatriculaAlumnoOrganizacion>(
     "matriculas-alumnos",
     API.organizacion.alumnos,
-    matriculasOrganizacion.map((matricula) => ({
-      ...matricula,
-      estado: matricula.estado as MatriculaAlumnoOrganizacion["estado"],
-      unidadOrigenId:
-        usuariosOrganizacion.find(
-          (usuario) =>
-            `alu-${String(usuario.id).padStart(3, "0")}` === matricula.alumnoId,
-        )?.unidadPrincipalId ?? undefined,
-      modalidad: "ASIGNADA",
-    })),
+    matriculasOrganizacion.map((matricula) => {
+      const usuario = usuariosOrganizacion.find(
+        (item) =>
+          `alu-${String(item.id).padStart(3, "0")}` === matricula.alumnoId,
+      );
+      const unidadOrigenId = usuario?.unidadPrincipalId;
+      const tipoExplicito = (
+        matricula as { tipo?: MatriculaAlumnoOrganizacion["tipo"] }
+      ).tipo;
+      return {
+        ...matricula,
+        estado: matricula.estado as MatriculaAlumnoOrganizacion["estado"],
+        tipo:
+          tipoExplicito ??
+          (unidadOrigenId ? ("INTERNO" as const) : ("EXTERNO" as const)),
+        condicionAlInscribirse:
+          tipoExplicito ??
+          (unidadOrigenId ? ("INTERNO" as const) : ("EXTERNO" as const)),
+        origenAcceso:
+          (matricula as { origenAcceso?: MatriculaAlumnoOrganizacion["origenAcceso"] })
+            .origenAcceso ??
+          (unidadOrigenId ? "ASIGNACION" : "CURSO_PUBLICO"),
+        unidadOrigenId,
+        modalidad:
+          ((matricula as { modalidad?: MatriculaAlumnoOrganizacion["modalidad"] })
+            .modalidad ?? "ASIGNADA") as MatriculaAlumnoOrganizacion["modalidad"],
+      };
+    }),
   );
 
 const certificados =
@@ -1044,7 +1361,10 @@ const asignaciones = crearRepositorioOrganizacion<AsignacionOrganizacion>(
 const rutas = crearRepositorioOrganizacion<RutaOrganizacion>(
   "rutas",
   API.organizacion.rutas,
-  rutasOrganizacion.map((ruta) => ({ ...ruta, estado: "PUBLICADA" })),
+  rutasOrganizacion.map((ruta) => ({
+    ...ruta,
+    estado: ruta.estado ?? "PUBLICADA",
+  })),
 );
 
 const comprobantes = crearRepositorioOrganizacion<ComprobanteOrganizacion>(
@@ -1072,6 +1392,43 @@ const catalogoCursos = crearRepositorioOrganizacion<PropuestaCursoOrganizacion>(
   API.organizacion.catalogoCursos,
   catalogoCursosOrganizacion,
 );
+
+async function programarSesionEnVivo(
+  input: Omit<ProgramarSesionEnVivoInput, "organizacionId" | "creadoPor"> & {
+    organizacionId?: string;
+    creadoPor?: ProgramarSesionEnVivoInput["creadoPor"];
+  },
+) {
+  const contexto = contextoActual();
+  const organizacionId =
+    input.organizacionId ?? contexto.organizacionId ?? "org-empresa-abc";
+  return sesionesEnVivoCompartidas.programar({
+    ...input,
+    organizacionId,
+    creadoPor: input.creadoPor ?? {
+      portal: "organizacion",
+      nombre: contexto.organizacionNombre || "Administración",
+    },
+  });
+}
+
+async function iniciarSesionEnVivo(id: string) {
+  const organizacionId =
+    contextoActual().organizacionId ?? "org-empresa-abc";
+  return sesionesEnVivoCompartidas.iniciar(organizacionId, id);
+}
+
+async function cancelarSesionEnVivo(id: string) {
+  const organizacionId =
+    contextoActual().organizacionId ?? "org-empresa-abc";
+  return sesionesEnVivoCompartidas.cancelar(organizacionId, id);
+}
+
+async function reenviarInvitacionesSesion(id: string) {
+  const organizacionId =
+    contextoActual().organizacionId ?? "org-empresa-abc";
+  return sesionesEnVivoCompartidas.reenviarInvitaciones(organizacionId, id);
+}
 
 async function registrarCursoParaRevision(datos: {
   cursoDocenteId: string;
@@ -1115,11 +1472,12 @@ async function registrarCursoParaRevision(datos: {
 async function sincronizarEstadoDocente(
   cursoDocenteId: string,
   estado: EstadoCursoDocente,
+  extras?: { observacion?: string },
 ) {
   if (!apiConfig.useMock) return;
   try {
     const { docenteService } = await import("@/api/services/docente.service");
-    await docenteService.actualizarEstadoCurso(cursoDocenteId, estado);
+    await docenteService.actualizarEstadoCurso(cursoDocenteId, estado, extras);
   } catch {
     // El portal docente puede no tener ese curso en el contexto activo.
   }
@@ -1168,10 +1526,29 @@ async function aprobarCursoPropuesto(
     descuentoInterno,
     descuentoAplicaA,
     descuentoArea,
+    configuracionPublicacion: configuracion?.configuracionPublicacion,
   });
   await sincronizarEstadoDocente(
     actualizado.cursoDocenteId,
     publicar ? "PUBLICADO" : "APROBADO",
+  );
+  return actualizado;
+}
+
+async function marcarContenidoRevisado(id: string) {
+  if (!apiConfig.useMock) {
+    const { data } = await api.post<PropuestaCursoOrganizacion>(
+      API.organizacion.revisarContenidoCurso(id),
+    );
+    return data;
+  }
+  const actualizado = await catalogoCursos.actualizar(id, {
+    estado: "CONTENIDO_REVISADO",
+    observacion: undefined,
+  });
+  await sincronizarEstadoDocente(
+    actualizado.cursoDocenteId,
+    "CONTENIDO_REVISADO",
   );
   return actualizado;
 }
@@ -1188,7 +1565,9 @@ async function observarCursoPropuesto(id: string, observacion: string) {
     estado: "OBSERVADO",
     observacion,
   });
-  await sincronizarEstadoDocente(actualizado.cursoDocenteId, "BORRADOR");
+  await sincronizarEstadoDocente(actualizado.cursoDocenteId, "OBSERVADO", {
+    observacion,
+  });
   return actualizado;
 }
 
@@ -1260,8 +1639,9 @@ function almacenConfiguracion() {
       dominio: "cipcusco.org.pe",
       zonaHoraria: "America/Lima",
       restringirDominio: true,
+      requiereDniEnrolamiento: true,
     },
-    3,
+    4,
   );
 }
 
@@ -1270,10 +1650,18 @@ function almacenIntegraciones() {
     claveContextual("integraciones"),
     [
       { id: "tukuy-obra", nombre: "Tukuy Obra", descripcion: "Sincronización de proyectos, equipos y especialidades.", activa: true, endpoint: "https://api.tukuyobra.com/v1" },
+      {
+        id: "google-calendar-meet",
+        nombre: "Google Calendar + Meet",
+        descripcion:
+          "Agenda sesiones en vivo, genera enlace Meet e invita alumnos por correo (attendees).",
+        activa: true,
+        endpoint: "https://www.googleapis.com/calendar/v3",
+      },
       { id: "siadeg", nombre: "SIADEG", descripcion: "Intercambio de personal y estructura organizacional.", activa: false, endpoint: "" },
       { id: "api", nombre: "API empresarial", descripcion: "Integración personalizada con sistemas internos.", activa: false, endpoint: "" },
     ],
-    2,
+    3,
   );
 }
 
@@ -1332,6 +1720,9 @@ async function guardarDocumento<T>(ruta: string, almacen: ReturnType<typeof crea
 
 export const organizacionService = {
   usuarios,
+  incorporarPersona,
+  activarIncorporacion,
+  registrarSolicitudDesdeComunidad,
   matriculas,
   certificados,
   certificadosPendientes,
@@ -1341,6 +1732,8 @@ export const organizacionService = {
   aprobarSolicitudMatricula,
   areas,
   estructura: {
+    estructuras,
+    niveles,
     tiposUnidad,
     unidades,
     vinculaciones,
@@ -1351,6 +1744,7 @@ export const organizacionService = {
     idsDescendientes,
     eliminarUnidadConDependencias,
     aprobarVinculacion,
+    vincularPersonaANodo,
     normalizarJerarquia: normalizarJerarquiaOrganizacional,
     reglasAccesoCursos,
     evaluarAccesoCurso,
@@ -1364,9 +1758,24 @@ export const organizacionService = {
     listar: () => catalogoCursos.listar(),
     obtener: (id: Identificador) => catalogoCursos.obtener(id),
     registrarParaRevision: registrarCursoParaRevision,
+    marcarContenidoRevisado,
     aprobar: aprobarCursoPropuesto,
     observar: observarCursoPropuesto,
     publicar: publicarCursoPropuesto,
+  },
+  sesionesEnVivo: {
+    listar: () =>
+      sesionesEnVivoCompartidas.listarParaContexto(contextoActual()),
+    obtener: async (id: Identificador) => {
+      const lista = await sesionesEnVivoCompartidas.listarParaContexto(
+        contextoActual(),
+      );
+      return lista.find((item) => item.id === id) ?? null;
+    },
+    programar: programarSesionEnVivo,
+    iniciar: iniciarSesionEnVivo,
+    cancelar: cancelarSesionEnVivo,
+    reenviarInvitaciones: reenviarInvitacionesSesion,
   },
   obtenerConfiguracion: () =>
     leerDocumento(API.organizacion.configuracion, almacenConfiguracion()),

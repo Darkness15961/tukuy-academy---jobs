@@ -7,6 +7,7 @@ import {
   crearRepositorioLocal,
 } from "@/api/repositorio-local";
 import { CONTEXTO_SESION_KEY } from "@/lib/constants";
+import { sesionesEnVivoCompartidas } from "@/api/services/sesiones-en-vivo-compartidas.service";
 import {
   actividadRecienteDocente,
   analiticaDocente,
@@ -113,7 +114,7 @@ function crearRepositorioDocente<T extends RegistroIdentificable>(
       clave: claveContextual(recurso, contexto.membresiaId),
       ruta,
       semilla: crearSemilla(contexto),
-      version: 3,
+      version: 6,
     });
   }
 
@@ -152,7 +153,7 @@ function normalizar(texto: string) {
 
 function cursosDelContexto(contexto: ContextoSesion): CursoDocente[] {
   const ambito = contexto.ambitoDocencia ?? "ORGANIZACION";
-  return cursosDocente.filter((curso) => {
+  const base = cursosDocente.filter((curso) => {
     if (ambito === "INDEPENDIENTE") return curso.ambito === "INDEPENDIENTE";
     return (
       curso.ambito === "ORGANIZACION" &&
@@ -160,6 +161,19 @@ function cursosDelContexto(contexto: ContextoSesion): CursoDocente[] {
         curso.organizacionId === contexto.organizacionId)
     );
   });
+
+  // Docente de organización: solo cursos asignados en la membresía.
+  const idsAlcance = contexto.alcance?.cursoIds;
+  if (
+    contexto.portal === "docente" &&
+    ambito === "ORGANIZACION" &&
+    idsAlcance?.length
+  ) {
+    const permitidos = new Set(idsAlcance);
+    return base.filter((curso) => permitidos.has(curso.id));
+  }
+
+  return base;
 }
 
 function coincideConCurso(nombre: string, cursos: CursoDocente[]) {
@@ -188,10 +202,8 @@ function evaluacionesDelContexto(
 }
 
 function sesionesDelContexto(contexto: ContextoSesion): SesionDocente[] {
-  const permitidos = cursosDelContexto(contexto);
-  return sesionesDocente.filter((sesion) =>
-    coincideConCurso(sesion.curso, permitidos),
-  );
+  const ids = new Set(cursosDelContexto(contexto).map((curso) => curso.id));
+  return sesionesDocente.filter((sesion) => ids.has(sesion.cursoId));
 }
 
 function conversacionesDelContexto(): ConversacionDocente[] {
@@ -402,11 +414,47 @@ const evaluaciones = crearRepositorioDocente(
   API.docente.evaluaciones,
   evaluacionesDelContexto,
 );
-const sesiones = crearRepositorioDocente(
+const sesionesRepositorio = crearRepositorioDocente(
   "sesiones",
   API.docente.sesiones,
   sesionesDelContexto,
 );
+
+const sesiones = {
+  async listar(): Promise<SesionDocente[]> {
+    const contexto = obtenerContextoActual();
+    const lista = await sesionesEnVivoCompartidas.listarParaContexto(contexto);
+    return lista.map(sesionesEnVivoCompartidas.aSesionDocente);
+  },
+  async obtener(id: string) {
+    const lista = await this.listar();
+    return lista.find((item) => item.id === id) ?? null;
+  },
+  async crear(sesion: SesionDocente) {
+    const contexto = obtenerContextoActual();
+    const creada = await sesionesEnVivoCompartidas.programar({
+      organizacionId: sesionesEnVivoCompartidas.claveSesionesContexto(contexto),
+      titulo: sesion.titulo,
+      cursoId: sesion.cursoId,
+      cursoTitulo: sesion.curso,
+      docenteNombre: "Docente",
+      docenteEmail: "docente@cipcusco.org.pe",
+      fechaHoraInicio: sesion.fechaHoraIso ?? new Date().toISOString(),
+      duracionMinutos: Number.parseInt(sesion.duracion, 10) || 60,
+      emailsInvitados: sesion.invitadosEmails ?? [],
+      creadoPor: {
+        portal: "docente",
+        nombre: contexto.organizacionNombre || "Docente",
+      },
+    });
+    return sesionesEnVivoCompartidas.aSesionDocente(creada);
+  },
+  actualizar: (id: string, cambios: Partial<SesionDocente>) =>
+    sesionesRepositorio.actualizar(id, cambios),
+  eliminar: (id: string) => sesionesRepositorio.eliminar(id),
+  reemplazar: (regs: SesionDocente[]) => sesionesRepositorio.reemplazar(regs),
+  reiniciar: () => sesionesRepositorio.reiniciar(),
+};
 const conversaciones = crearRepositorioDocente(
   "conversaciones",
   API.docente.conversaciones,
@@ -712,24 +760,32 @@ export const docenteService = {
   async actualizarEstadoCurso(
     id: string,
     estado: EstadoCursoDocente,
+    extras?: { observacion?: string },
   ): Promise<CursoDocente | null> {
+    const cambiosEstado: Partial<CursoDocente> = {
+      estado,
+      actualizado: "Ahora",
+      ...(estado === "APROBADO" ||
+      estado === "PUBLICADO" ||
+      estado === "CONTENIDO_REVISADO"
+        ? { progreso: 100 }
+        : {}),
+      ...(estado === "OBSERVADO"
+        ? { observacion: extras?.observacion }
+        : { observacion: undefined }),
+    };
+
     if (!apiConfig.useMock) {
       const { data } = await api.patch<CursoDocente>(
         API.docente.cursoPorId(id),
-        { estado },
+        { estado, ...extras },
       );
       return data;
     }
 
     const actual = await cursos.obtener(id);
     if (actual) {
-      return cursos.actualizar(id, {
-        estado,
-        actualizado: "Ahora",
-        ...(estado === "APROBADO" || estado === "PUBLICADO"
-          ? { progreso: 100 }
-          : {}),
-      });
+      return cursos.actualizar(id, cambiosEstado);
     }
 
     // La organización aprueba desde otro contexto: sincroniza el repo del docente.
@@ -747,11 +803,7 @@ export const docenteService = {
       if (indice < 0) return null;
       const actualizado: CursoDocente = {
         ...sobre.datos[indice]!,
-        estado,
-        actualizado: "Ahora",
-        ...(estado === "APROBADO" || estado === "PUBLICADO"
-          ? { progreso: 100 }
-          : {}),
+        ...cambiosEstado,
       };
       sobre.datos[indice] = actualizado;
       sobre.actualizadoEn = new Date().toISOString();
@@ -1165,12 +1217,14 @@ export const docenteService = {
       );
       return data;
     }
-    const actualizada = await sesiones.actualizar(sesionId, {
-      estado: "EN_VIVO",
-      enlace: `https://meet.tukuy.academy/${sesionId}`,
-    });
+    const contexto = obtenerContextoActual();
+    const clave = sesionesEnVivoCompartidas.claveSesionesContexto(contexto);
+    const actualizada = await sesionesEnVivoCompartidas.iniciar(
+      clave,
+      sesionId,
+    );
     await registrarActividad("Sesión iniciada", actualizada.titulo);
-    return actualizada;
+    return sesionesEnVivoCompartidas.aSesionDocente(actualizada);
   },
 
   async cancelarSesion(sesionId: string) {
@@ -1180,7 +1234,13 @@ export const docenteService = {
       );
       return data;
     }
-    return sesiones.actualizar(sesionId, { estado: "CANCELADA" });
+    const contexto = obtenerContextoActual();
+    const clave = sesionesEnVivoCompartidas.claveSesionesContexto(contexto);
+    const actualizada = await sesionesEnVivoCompartidas.cancelar(
+      clave,
+      sesionId,
+    );
+    return sesionesEnVivoCompartidas.aSesionDocente(actualizada);
   },
 
   async marcarNotificacionesLeidas() {

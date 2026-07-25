@@ -8,6 +8,7 @@ import Tag from "primevue/tag";
 import { computed, onMounted, ref } from "vue";
 
 import { Button } from "@/components/ui/button";
+import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -53,14 +54,12 @@ function severidad(valor: string) {
   <section class="mx-auto grid max-w-400 gap-6">
     <div class="flex flex-wrap items-end justify-between gap-4">
       <div>
-        <p class="text-xs font-black uppercase tracking-[.2em] text-violet-700">
-          Trazabilidad global
-        </p>
-        <h1 class="mt-2 text-3xl font-black">Auditoría</h1>
-        <p class="mt-2 text-sm text-muted-foreground">
-          Consulta acciones administrativas, automatizaciones y accesos de
-          soporte.
-        </p>
+        <TituloConAyuda
+          clase-eyebrow="text-primary"
+          eyebrow="Trazabilidad global"
+          titulo="Auditoría"
+          ayuda="Consulta acciones administrativas, automatizaciones y accesos de soporte."
+        />
       </div>
       <Button
         variant="outline"
@@ -71,12 +70,12 @@ function severidad(valor: string) {
       >
     </div>
 
-    <div class="border-l-4 border-l-violet-700 bg-violet-50 p-4">
+    <div class="border-l-4 border-l-primary bg-primary/10 p-4">
       <div class="flex gap-3">
-        <ShieldCheck class="h-5 w-5 shrink-0 text-violet-700" />
+        <ShieldCheck class="h-5 w-5 shrink-0 text-primary" />
         <div>
-          <p class="text-sm font-black text-violet-950">Registro protegido</p>
-          <p class="mt-1 text-xs leading-5 text-violet-900">
+          <p class="text-sm font-black text-foreground">Registro protegido</p>
+          <p class="mt-1 text-xs leading-5 text-primary">
             Los eventos mostrados son inmutables y conservan autor, fecha,
             origen y contexto afectado.
           </p>

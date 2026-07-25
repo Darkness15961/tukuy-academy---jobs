@@ -166,7 +166,11 @@ watch(
 
             <div class="mt-5 flex flex-wrap gap-3">
               <Button
-                v-if="course.progress > 0 || course.status === 'En curso'"
+                v-if="
+                  course.progress > 0 ||
+                  course.status === 'En curso' ||
+                  course.status === 'Completado'
+                "
                 class="h-11 rounded-none bg-[#F5B400] px-6 font-bold text-[#07152B] hover:bg-amber-400"
                 @click="emit('continueCourse', course.id)"
               >
@@ -177,7 +181,7 @@ watch(
                 class="h-11 rounded-none bg-[#F5B400] px-6 font-bold text-[#07152B] hover:bg-amber-400"
                 @click="emit('addToCart', course.id)"
               >
-                Añadir al carrito
+                Agregar
               </Button>
               <Button
                 v-else

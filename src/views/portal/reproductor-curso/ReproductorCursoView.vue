@@ -33,6 +33,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { useContextoSesion } from "@/composables/useContextoSesion";
 import { Progress } from "@/components/ui/progress";
+import {
+  cursoEstaMatriculado,
+  cursoRequiereCompra,
+} from "@/lib/acceso-curso";
 import type { Course } from "@/types/academia";
 import type {
   ContenidoCursoAprendizaje,
@@ -156,6 +160,21 @@ async function cargarCurso() {
   cargando.value = true;
   errorCarga.value = null;
   try {
+    await portal.sincronizarProgresosCursos();
+    const cursoActual = course.value;
+    if (!cursoActual) {
+      errorCarga.value = "No encontramos este curso.";
+      return;
+    }
+    if (!cursoEstaMatriculado(cursoActual)) {
+      if (cursoRequiereCompra(cursoActual)) {
+        portal.handleAddToCart(cursoActual.id);
+        return;
+      }
+      await router.replace(`/tukuy-academy/cursos/${cursoActual.id}`);
+      return;
+    }
+
     const [contenidoCurso, progreso] = await Promise.all([
       aprendizajeService.obtenerContenido(courseId.value),
       aprendizajeService.obtenerProgreso(courseId.value),

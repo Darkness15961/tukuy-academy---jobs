@@ -77,14 +77,22 @@ const ambitoActivo = computed(() =>
     ? "INDEPENDIENTE"
     : "ORGANIZACION",
 );
-const cursosContexto = computed(() =>
-  cursos.value.filter((curso) =>
-    ambitoActivo.value === "INDEPENDIENTE"
-      ? curso.ambito === "INDEPENDIENTE"
-      : curso.ambito === "ORGANIZACION" &&
-        curso.organizacionId === contextoActivo.value?.organizacionId,
-  ),
-);
+const cursosContexto = computed(() => {
+  const idsAlcance = contextoActivo.value?.alcance?.cursoIds;
+  return cursos.value.filter((curso) => {
+    if (ambitoActivo.value === "INDEPENDIENTE") {
+      return curso.ambito === "INDEPENDIENTE";
+    }
+    const deLaOrg =
+      curso.ambito === "ORGANIZACION" &&
+      curso.organizacionId === contextoActivo.value?.organizacionId;
+    if (!deLaOrg) return false;
+    if (contextoActivo.value?.portal === "docente" && idsAlcance?.length) {
+      return idsAlcance.includes(curso.id);
+    }
+    return true;
+  });
+});
 const nombreContexto = computed(() =>
   ambitoActivo.value === "INDEPENDIENTE"
     ? "tu espacio de docencia independiente"
@@ -253,9 +261,13 @@ function fechaActividad(fecha: string) {
                         ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
                         : curso.estado === 'APROBADO'
                           ? 'border-sky-500/40 bg-sky-500/15 text-sky-700 dark:text-sky-300'
-                          : curso.estado === 'BORRADOR'
-                            ? 'border-primary/30 bg-primary/10 text-primary'
-                            : 'border-accent/40 bg-accent/15 text-[#B87A00] dark:text-accent'
+                          : curso.estado === 'CONTENIDO_REVISADO'
+                            ? 'border-teal-500/40 bg-teal-500/15 text-teal-700 dark:text-teal-300'
+                            : curso.estado === 'OBSERVADO'
+                              ? 'border-orange-500/40 bg-orange-500/15 text-orange-700 dark:text-orange-300'
+                              : curso.estado === 'BORRADOR'
+                                ? 'border-primary/30 bg-primary/10 text-primary'
+                                : 'border-accent/40 bg-accent/15 text-[#B87A00] dark:text-accent'
                     "
                   >
                     {{
@@ -263,6 +275,8 @@ function fechaActividad(fecha: string) {
                         {
                           BORRADOR: "En elaboración",
                           EN_REVISION: "Por revisar",
+                          CONTENIDO_REVISADO: "Contenido OK",
+                          OBSERVADO: "Observado",
                           APROBADO: "Aprobado",
                           PUBLICADO: "Publicado",
                           ARCHIVADO: "Archivado",

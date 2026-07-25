@@ -6,28 +6,30 @@ import {
   ShoppingBag,
   Trash2,
 } from "lucide-vue-next";
-import { computed } from "vue";
+import { computed, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 
 import PasarelaIzipaySimulada from "@/components/shared/PasarelaIzipaySimulada.vue";
 import PortalSection from "@/components/shared/PortalSection.vue";
 import { Button } from "@/components/ui/button";
 import { useCarrito } from "@/composables/useCarrito";
-import { useCursos } from "@/composables/useCursos";
 import {
   formatPrecioSoles,
   usePasarelaIzipay,
 } from "@/composables/usePasarelaIzipay";
 import { enrichCourse } from "@/lib/presentacion-curso";
 import type { Course } from "@/types/academia";
+import { entidadesComunidadService } from "@/modulos/comunidad/services/entidades.service";
+import { usePortalContext } from "../composables/usePortalContext";
 
 const router = useRouter();
-const { courses } = useCursos();
+const portal = usePortalContext();
 const { cartCourseIds, removeFromCart, clearCart } = useCarrito();
 const pasarela = usePasarelaIzipay();
+const matriculaAplicada = ref(false);
 
 const cursosCarrito = computed(() => {
-  const mapa = new Map(courses.value.map((curso) => [curso.id, curso]));
+  const mapa = new Map(portal.courses.value.map((curso) => [curso.id, curso]));
   return cartCourseIds.value
     .map((id) => mapa.get(id))
     .filter((curso): curso is Course => Boolean(curso))
@@ -57,8 +59,29 @@ async function pagarConIzipay() {
   await pasarela.iniciarPagoCarrito(cursosPagados.value.map((curso) => curso.id));
 }
 
+watch(
+  () => pasarela.fase.value,
+  async (fase) => {
+    if (fase !== "pagado" || matriculaAplicada.value) return;
+    const ids =
+      pasarela.sesion.value?.cursoIds ??
+      cursosPagados.value.map((curso) => curso.id);
+    await portal.matricularTrasCompra(ids);
+    await entidadesComunidadService.sincronizarMatriculaTrasPago(ids);
+    matriculaAplicada.value = true;
+  },
+);
+
 async function finalizarCompra() {
   if (pasarela.fase.value !== "pagado") return;
+  if (!matriculaAplicada.value) {
+    const ids =
+      pasarela.sesion.value?.cursoIds ??
+      cursosPagados.value.map((curso) => curso.id);
+    await portal.matricularTrasCompra(ids);
+    await entidadesComunidadService.sincronizarMatriculaTrasPago(ids);
+    matriculaAplicada.value = true;
+  }
   clearCart();
   pasarela.reiniciar();
   await router.push("/tukuy-academy/mi-aprendizaje");
@@ -100,7 +123,7 @@ function irACursos() {
         class="border border-border bg-card px-6 py-16 text-center"
       >
         <span
-          class="mx-auto grid h-16 w-16 place-items-center bg-[#EDF4FC] text-primary"
+          class="mx-auto grid h-16 w-16 place-items-center bg-primary/10 text-primary"
         >
           <ShoppingBag class="h-8 w-8" />
         </span>
@@ -176,7 +199,7 @@ function irACursos() {
 
           <section
             v-if="cursosGratuitos.length"
-            class="border border-border border-l-4 border-l-[#F5B400] bg-[#FFF9E8] p-5"
+            class="border border-border border-l-4 border-l-[#F5B400] bg-accent/10 p-5"
           >
             <p class="font-black">Cursos gratuitos en tu selección</p>
             <p class="mt-2 text-sm leading-6 text-muted-foreground">

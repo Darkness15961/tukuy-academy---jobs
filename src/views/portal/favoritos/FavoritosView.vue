@@ -67,7 +67,7 @@ const metrics = computed(() => [
     <section class="grid gap-7">
       <!-- Hero header -->
       <div
-        class="rounded-xl border border-border bg-[#F7F9FE] p-6 shadow-sm lg:p-8"
+        class="rounded-xl border border-border bg-muted/60 p-6 shadow-sm lg:p-8"
       >
         <div
           class="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between"
@@ -187,7 +187,7 @@ const metrics = computed(() => [
           :is-favorite="true"
           @add-to-cart="portal.handleAddToCart(course.id)"
           @continue-course="portal.openSimuladorCurso(course)"
-          @select="portal.openSimuladorCurso(course)"
+          @select="portal.verDetalleCurso(course)"
           @toggle-favorite="portal.toggleFavorite(course.id)"
         />
       </div>

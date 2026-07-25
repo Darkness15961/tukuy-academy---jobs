@@ -21,9 +21,9 @@ const classes = computed(() =>
   cn(
     "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-none text-sm font-bold transition-[background-color,color,border-color,box-shadow,transform] duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 active:translate-y-px disabled:pointer-events-none disabled:opacity-50",
     {
-      "bg-primary text-primary-foreground hover:bg-[#0a3268]":
+      "bg-primary text-primary-foreground hover:bg-[#0a3268] dark:hover:bg-[#3d6eb0]":
         props.variant === "default",
-      "bg-secondary text-secondary-foreground hover:bg-[#0a3268]":
+      "bg-secondary text-secondary-foreground hover:bg-[#0a3268] dark:hover:bg-[#243f66]":
         props.variant === "secondary",
       "border border-input bg-card hover:bg-muted": props.variant === "outline",
       "hover:bg-muted": props.variant === "ghost",

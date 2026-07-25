@@ -846,7 +846,6 @@ function seleccionarImagen(evento: Event) {
                     :options="opcionesDocenteResponsable"
                     option-label="nombre"
                     option-value="id"
-                    filter
                     class="min-w-0 flex-1 font-normal"
                     placeholder="Selecciona al autor académico"
                     @change="asignarDocente"
@@ -921,7 +920,6 @@ function seleccionarImagen(evento: Event) {
                     :options="opcionesUnidadesDestino"
                     option-label="ruta"
                     option-value="id"
-                    filter
                     display="chip"
                     class="w-full font-normal"
                     placeholder="Selecciona unidades del organigrama"

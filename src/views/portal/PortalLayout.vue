@@ -21,9 +21,23 @@ import {
   downloadCertificatePdf,
   viewCourseCertificate,
 } from "@/lib/certificado-pdf";
+import {
+  cursoEstaMatriculado,
+  cursoPuedeInscribirseGratis,
+  cursoRequiereCompra,
+  matricularCurso,
+  matricularCursos,
+} from "@/lib/acceso-curso";
+import { cursosPerfilesEntidadesMock } from "@/modulos/comunidad/data/entidades-publicas.mock";
+import { entidadesComunidadService } from "@/modulos/comunidad/services/entidades.service";
 import { portalPathByView, resolvePortalView } from "@/lib/portal-routes";
 import type { Course, UserProfile, ViewId } from "@/types/academia";
 import { providePortalContext } from "./composables/usePortalContext";
+import type {
+  AccesoCursoFilter,
+  FuenteCursoFilter,
+  PricingFilter,
+} from "./composables/usePortalContext";
 
 const route = useRoute();
 const router = useRouter();
@@ -50,7 +64,9 @@ const { cartCount, addToCart, removeFromCart, clearCart, isInCart } = useCarrito
 const { favoritesCount, isFavorite, toggleFavorite, favoriteCourseIds } =
   useFavoritos();
 
-const pricingFilter = ref<"all" | "free" | "paid">("all");
+const pricingFilter = ref<PricingFilter>("all");
+const fuenteFilter = ref<FuenteCursoFilter>("all");
+const accesoFilter = ref<AccesoCursoFilter>("all");
 const openingCertificateId = ref<string | null>(null);
 const mensajeAccesoCurso = ref("");
 
@@ -74,16 +90,38 @@ const enrolledCourses = computed(() =>
 );
 
 const catalogCourses = computed(() => {
-  if (pricingFilter.value === "free") {
-    return filteredCourses.value.filter((course) => course.pricing === "free");
-  }
-  if (pricingFilter.value === "paid") {
-    return filteredCourses.value.filter((course) => course.pricing === "paid");
-  }
-  return filteredCourses.value;
+  return filteredCourses.value.filter((course) => {
+    const coincidePrecio =
+      pricingFilter.value === "all" ||
+      course.pricing === pricingFilter.value;
+    const coincideFuente =
+      fuenteFilter.value === "all" ||
+      (course.origen ?? "tukuy") === fuenteFilter.value;
+    const alcance = course.alcance ?? "PUBLICO";
+    const coincideAcceso =
+      accesoFilter.value === "all" ||
+      (accesoFilter.value === "publico" && alcance === "PUBLICO") ||
+      (accesoFilter.value === "restringido" && alcance === "INTERNO");
+    return coincidePrecio && coincideFuente && coincideAcceso;
+  });
 });
 
-const featuredCourses = computed(() => courses.value.slice(0, 6));
+const featuredCourses = computed(() => {
+  const tukuy = courses.value.filter((c) => (c.origen ?? "tukuy") === "tukuy");
+  const entidades = courses.value.filter(
+    (c) => c.origen === "entidad" && (c.alcance ?? "PUBLICO") === "PUBLICO",
+  );
+  return [...tukuy.slice(0, 3), ...entidades.slice(0, 3)].slice(0, 6);
+});
+
+const contadoresCatalogo = computed(() => ({
+  total: courses.value.length,
+  tukuy: courses.value.filter((c) => (c.origen ?? "tukuy") === "tukuy").length,
+  entidad: courses.value.filter((c) => c.origen === "entidad").length,
+  publico: courses.value.filter((c) => (c.alcance ?? "PUBLICO") === "PUBLICO")
+    .length,
+  restringido: courses.value.filter((c) => c.alcance === "INTERNO").length,
+}));
 
 const topCourses = computed(() => {
   const enriched = courses.value.map((course) => ({
@@ -102,8 +140,40 @@ function navigate(view: ViewId) {
   router.push(portalPathByView[view]);
 }
 
+function verDetalleCurso(course: Course) {
+  mensajeAccesoCurso.value = "";
+  void router.push(`/tukuy-academy/cursos/${course.id}`);
+}
+
 function handleAddToCart(courseId: string) {
+  mensajeAccesoCurso.value = "";
+  const course = courses.value.find((item) => item.id === courseId);
+  if (course && cursoEstaMatriculado(course)) {
+    void router.push(`/tukuy-academy/aprendizaje/${courseId}`);
+    return;
+  }
+  if (isInCart(courseId)) {
+    mensajeAccesoCurso.value =
+      "Este curso ya está en tu carrito. Ábrelo desde el ícono para pagar.";
+    return;
+  }
   addToCart(courseId);
+  mensajeAccesoCurso.value =
+    "Agregado al carrito. Puedes seguir explorando o pagar desde el ícono.";
+}
+
+function irAlCarrito() {
+  void router.push("/tukuy-academy/carrito");
+}
+
+function comprarAhora(courseId: string) {
+  const course = courses.value.find((item) => item.id === courseId);
+  if (course && cursoEstaMatriculado(course)) {
+    void router.push(`/tukuy-academy/aprendizaje/${courseId}`);
+    return;
+  }
+  if (!isInCart(courseId)) addToCart(courseId);
+  void router.push("/tukuy-academy/carrito");
 }
 
 async function handleViewCertificate(course: Course) {
@@ -128,22 +198,30 @@ async function handleDownloadCertificate(course: Course) {
   }
 }
 
+async function sincronizarProgresosCursos() {
+  if (courses.value.length === 0) return;
+  const conProgreso = await aprendizajeService.aplicarProgresosACursos(
+    courses.value,
+  );
+  conProgreso.forEach((actualizado) => {
+    const curso = courses.value.find((c) => c.id === actualizado.id);
+    if (!curso) return;
+    curso.progress = actualizado.progress;
+    curso.status = actualizado.status;
+  });
+}
+
 // Restaura progreso desde el repositorio de aprendizaje (localStorage / API).
+watch(courses, () => void sincronizarProgresosCursos(), { immediate: true });
 watch(
-  courses,
-  async (newCourses) => {
-    if (newCourses.length === 0) return;
-    const conProgreso =
-      await aprendizajeService.aplicarProgresosACursos(newCourses);
-    conProgreso.forEach((actualizado) => {
-      const curso = courses.value.find((c) => c.id === actualizado.id);
-      if (!curso) return;
-      curso.progress = actualizado.progress;
-      curso.status = actualizado.status;
-    });
-  },
-  { immediate: true },
+  () => route.fullPath,
+  () => void sincronizarProgresosCursos(),
 );
+
+async function matricularTrasCompra(cursoIds: string[]) {
+  await matricularCursos(cursoIds, courses.value);
+  await sincronizarProgresosCursos();
+}
 
 async function openSimuladorCurso(course: Course) {
   mensajeAccesoCurso.value = "";
@@ -152,6 +230,43 @@ async function openSimuladorCurso(course: Course) {
     contexto?.portal === "estudiante" &&
     Boolean(contexto.organizacionId) &&
     !contexto.organizacionId?.startsWith("org-personal-");
+
+  if (cursoEstaMatriculado(course)) {
+    await router.push(`/tukuy-academy/aprendizaje/${course.id}`);
+    return;
+  }
+
+  if (cursoRequiereCompra(course)) {
+    mensajeAccesoCurso.value =
+      "Este curso requiere compra. Agrégalo al carrito y completa el pago para continuar.";
+    handleAddToCart(course.id);
+    return;
+  }
+
+  if (course.origen === "entidad" && course.alcance === "INTERNO") {
+    const cursoEntidad = cursosPerfilesEntidadesMock.find(
+      (item) => item.id === course.id,
+    );
+    if (cursoEntidad) {
+      const acceso =
+        await entidadesComunidadService.evaluarAccesoCurso(cursoEntidad);
+      if (!acceso.disponible) {
+        mensajeAccesoCurso.value = `${acceso.motivo} Puedes solicitar acceso desde el perfil de la entidad.`;
+        void router.push(`/comunidad/entidades/${cursoEntidad.organizacionId}`);
+        return;
+      }
+      if (acceso.origenAcceso === "APROBACION") {
+        await entidadesComunidadService.matricularEnCurso(cursoEntidad);
+        mensajeAccesoCurso.value =
+          "Solicitud de matrícula enviada. La entidad debe aprobarla antes de habilitar el curso.";
+        return;
+      }
+      await entidadesComunidadService.matricularEnCurso(cursoEntidad);
+      await matricularCurso(course.id, courses.value);
+      await router.push(`/tukuy-academy/aprendizaje/${course.id}`);
+      return;
+    }
+  }
 
   if (
     course.status === "Disponible" &&
@@ -184,14 +299,20 @@ async function openSimuladorCurso(course: Course) {
       unidadOrigenId: evaluacion.unidadOrigenId,
       modalidad: "LIBRE",
     });
-    course.status = "En curso";
-    course.progress = 0;
-    await aprendizajeService.guardarProgreso(course.id, {
-      progreso: 0,
-      estado: "En curso",
-    });
+    await matricularCurso(course.id, courses.value);
+    await router.push(`/tukuy-academy/aprendizaje/${course.id}`);
+    return;
   }
-  router.push(`/tukuy-academy/aprendizaje/${course.id}`);
+
+  if (cursoPuedeInscribirseGratis(course)) {
+    await matricularCurso(course.id, courses.value);
+    await router.push(`/tukuy-academy/aprendizaje/${course.id}`);
+    return;
+  }
+
+  mensajeAccesoCurso.value =
+    "No tienes acceso a este curso todavía. Revisa el detalle o el carrito.";
+  verDetalleCurso(course);
 }
 
 async function updateUserProfile(updates: Partial<UserProfile>) {
@@ -233,6 +354,7 @@ const portalContext = {
   featuredCourses,
   topCourses,
   catalogCourses,
+  contadoresCatalogo,
   favoriteCourses,
   workExperiences,
   jobs,
@@ -240,6 +362,8 @@ const portalContext = {
   forYouJobs,
   searchTerm,
   pricingFilter,
+  fuenteFilter,
+  accesoFilter,
   jobSearchTerm,
   scopeFilter,
   dateFilter,
@@ -253,6 +377,9 @@ const portalContext = {
   navigate,
   logout,
   handleAddToCart,
+  comprarAhora,
+  irAlCarrito,
+  verDetalleCurso,
   isInCart,
   removeFromCart,
   clearCart,
@@ -261,6 +388,8 @@ const portalContext = {
   handleViewCertificate,
   handleDownloadCertificate,
   openSimuladorCurso,
+  matricularTrasCompra,
+  sincronizarProgresosCursos,
   updateUserProfile,
 };
 
@@ -290,10 +419,15 @@ providePortalContext(portalContext);
     :class="
       route.meta.hideHeaderFooter
         ? ''
-        : 'bg-background min-h-[calc(100vh-4rem)] flex flex-col justify-between'
+        : route.meta.hideFooter
+          ? 'bg-background h-[calc(100dvh-4rem)] overflow-hidden'
+          : 'bg-background min-h-[calc(100vh-4rem)] flex flex-col justify-between'
     "
   >
     <RouterView />
-    <SiteFooter v-if="!route.meta.hideHeaderFooter" variant="light" />
+    <SiteFooter
+      v-if="!route.meta.hideHeaderFooter && !route.meta.hideFooter"
+      variant="light"
+    />
   </main>
 </template>

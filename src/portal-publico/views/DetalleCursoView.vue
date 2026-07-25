@@ -16,8 +16,11 @@ import { useRoute, useRouter } from "vue-router";
 import SiteFooter from "@/components/shared/SiteFooter.vue";
 import { Button } from "@/components/ui/button";
 import { cursoPublicoService } from "@/api/services/curso-publico.service";
+import { aprendizajeService } from "@/api/services/aprendizaje.service";
 import { useAuth } from "@/composables/useAuth";
+import { useCarrito } from "@/composables/useCarrito";
 import { useCursos } from "@/composables/useCursos";
+import { cursoEstaMatriculado } from "@/lib/acceso-curso";
 import {
   enrichCourse,
   formatCourseRating,
@@ -31,6 +34,7 @@ const route = useRoute();
 const router = useRouter();
 const { courses, loading } = useCursos();
 const { isAuthenticated } = useAuth();
+const { addToCart, isInCart } = useCarrito();
 
 const curso = computed(() =>
   courses.value.find((item) => item.id === String(route.params.cursoId)),
@@ -40,6 +44,24 @@ const cursoPresentado = computed(() =>
 );
 const detalle = ref<DetalleCursoPublico | null>(null);
 const cargandoDetalle = ref(false);
+const yaMatriculado = computed(() =>
+  cursoPresentado.value ? cursoEstaMatriculado(cursoPresentado.value) : false,
+);
+
+watch(
+  courses,
+  async (lista) => {
+    if (!lista.length) return;
+    const conProgreso = await aprendizajeService.aplicarProgresosACursos(lista);
+    conProgreso.forEach((actualizado) => {
+      const item = courses.value.find((c) => c.id === actualizado.id);
+      if (!item) return;
+      item.progress = actualizado.progress;
+      item.status = actualizado.status;
+    });
+  },
+  { immediate: true },
+);
 
 watch(
   curso,
@@ -75,19 +97,51 @@ function formatPrecio(precio?: number) {
   return `S/ ${(precio ?? 0).toFixed(2).replace(".", ",")}`;
 }
 
+function agregarAlCarrito() {
+  if (!cursoPresentado.value) return;
+  if (!isAuthenticated.value) {
+    router.push({
+      name: "login",
+      query: { continuar: `/cursos/${cursoPresentado.value.id}` },
+    });
+    return;
+  }
+  if (!isInCart(cursoPresentado.value.id)) {
+    addToCart(cursoPresentado.value.id);
+  }
+}
+
+function comprarAhora() {
+  if (!cursoPresentado.value) return;
+  const destino = "/tukuy-academy/carrito";
+  if (!isAuthenticated.value) {
+    router.push({ name: "login", query: { continuar: destino } });
+    return;
+  }
+  if (!isInCart(cursoPresentado.value.id)) {
+    addToCart(cursoPresentado.value.id);
+  }
+  router.push(destino);
+}
+
 function iniciarInscripcion() {
   if (!cursoPresentado.value) return;
 
-  const destino =
-    cursoPresentado.value.pricing === "paid"
-      ? `/pago/curso/${cursoPresentado.value.id}`
-      : "/tukuy-academy/cursos";
+  if (yaMatriculado.value) {
+    router.push(`/tukuy-academy/aprendizaje/${cursoPresentado.value.id}`);
+    return;
+  }
 
+  if (cursoPresentado.value.pricing === "paid") {
+    comprarAhora();
+    return;
+  }
+
+  const destino = "/tukuy-academy/cursos";
   if (isAuthenticated.value) {
     router.push(destino);
     return;
   }
-
   router.push({ name: "login", query: { continuar: destino } });
 }
 </script>
@@ -227,18 +281,44 @@ function iniciarInscripcion() {
                 Acceso gratuito
               </strong>
 
+              <div
+                v-if="
+                  cursoPresentado.pricing === 'paid' &&
+                  isAuthenticated &&
+                  !yaMatriculado
+                "
+                class="mt-6 grid gap-2"
+              >
+                <Button
+                  class="h-13 w-full bg-[#F5B400] px-6 text-[#07152B] hover:bg-amber-400"
+                  @click="comprarAhora"
+                >
+                  Comprar ahora
+                  <ArrowRight class="h-4 w-4" />
+                </Button>
+                <Button
+                  class="h-11 w-full border-white/25 bg-transparent text-white hover:bg-white/10"
+                  variant="outline"
+                  @click="agregarAlCarrito"
+                >
+                  {{
+                    isInCart(cursoPresentado.id) ? "En carrito" : "Agregar"
+                  }}
+                </Button>
+              </div>
               <Button
+                v-else
                 class="mt-6 h-13 w-full bg-[#F5B400] px-6 text-[#07152B] hover:bg-amber-400"
                 @click="iniciarInscripcion"
               >
                 {{
-                  cursoPresentado.pricing === "paid"
-                    ? isAuthenticated
-                      ? "Comprar curso"
-                      : "Iniciar sesión para comprar"
-                    : isAuthenticated
-                      ? "Inscribirme gratis"
-                      : "Iniciar sesión para inscribirme"
+                  yaMatriculado
+                    ? "Continuar curso"
+                    : cursoPresentado.pricing === "paid"
+                      ? "Iniciar sesión para comprar"
+                      : isAuthenticated
+                        ? "Inscribirme gratis"
+                        : "Iniciar sesión para inscribirme"
                 }}
                 <ArrowRight class="h-4 w-4" />
               </Button>

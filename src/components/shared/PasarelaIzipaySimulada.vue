@@ -99,7 +99,7 @@ const iconos = {
 
     <div
       v-if="sesion?.demostracion && fase === 'checkout'"
-      class="mt-8 border-l-4 border-[#F5B400] bg-[#FFF9E8] p-5"
+      class="mt-8 border-l-4 border-[#F5B400] bg-accent/10 p-5"
     >
       <p class="font-black">Vista de demostración</p>
       <p class="mt-1 text-sm leading-6 text-[#52657A]">

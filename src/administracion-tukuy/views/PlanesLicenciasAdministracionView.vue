@@ -13,6 +13,7 @@ import Tag from "primevue/tag";
 import { onMounted, ref } from "vue";
 
 import { Button } from "@/components/ui/button";
+import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -60,14 +61,12 @@ function severidad(valor: string) {
 <template>
   <section class="mx-auto grid max-w-400 gap-6">
     <div>
-      <p class="text-xs font-black uppercase tracking-[.2em] text-violet-700">
-        Modelo comercial
-      </p>
-      <h1 class="mt-2 text-3xl font-black">Planes y licencias</h1>
-      <p class="mt-2 text-sm text-muted-foreground">
-        Define la oferta SaaS y controla límites, consumo y vigencia por
-        organización.
-      </p>
+      <TituloConAyuda
+          clase-eyebrow="text-primary"
+        eyebrow="Modelo comercial"
+        titulo="Planes y licencias"
+        ayuda="Define la oferta SaaS y controla límites, consumo y vigencia por organización."
+      />
     </div>
 
     <div
@@ -116,25 +115,25 @@ function severidad(valor: string) {
           </div>
           <div class="mt-5 grid gap-3 text-sm">
             <p class="flex items-center gap-3">
-              <UsersRound class="h-4 w-4 text-violet-700" /><b>{{
+              <UsersRound class="h-4 w-4 text-primary" /><b>{{
                 plan.estudiantes.toLocaleString("es-PE")
               }}</b>
               estudiantes
             </p>
             <p class="flex items-center gap-3">
-              <ShieldCheck class="h-4 w-4 text-violet-700" /><b>{{
+              <ShieldCheck class="h-4 w-4 text-primary" /><b>{{
                 plan.docentes < 0 ? "Ilimitados" : plan.docentes
               }}</b>
               docentes
             </p>
             <p class="flex items-center gap-3">
-              <Check class="h-4 w-4 text-violet-700" /><b>{{
+              <Check class="h-4 w-4 text-primary" /><b>{{
                 plan.cursos < 0 ? "Ilimitados" : plan.cursos
               }}</b>
               cursos
             </p>
             <p class="flex items-center gap-3">
-              <Database class="h-4 w-4 text-violet-700" /><b
+              <Database class="h-4 w-4 text-primary" /><b
                 >{{ plan.almacenamiento }} GB</b
               >
               de almacenamiento
@@ -154,7 +153,7 @@ function severidad(valor: string) {
             <p class="text-xs text-muted-foreground">Vigencia y consumo contratado</p>
           </div>
           <span
-            class="bg-violet-50 px-3 py-1 text-xs font-black text-violet-800"
+            class="bg-primary/10 px-3 py-1 text-xs font-black text-primary"
             >{{ licencias.length }} licencias</span
           >
         </div>
@@ -203,7 +202,7 @@ function severidad(valor: string) {
                 </div>
                 <div class="mt-1.5 h-1.5 w-40 bg-muted">
                   <div
-                    class="h-full bg-violet-700"
+                    class="h-full bg-primary"
                     :style="{
                       width: `${Math.min((data.usuarios / data.limiteUsuarios) * 100, 100)}%`,
                     }"
@@ -239,7 +238,7 @@ function severidad(valor: string) {
                   >Editar límites</Button
                 ><Button
                   size="sm"
-                  class="bg-violet-800 hover:bg-violet-900"
+                  class="bg-primary hover:bg-primary/90"
                   @click="renovar(data)"
                   >Renovar</Button
                 >

@@ -4,10 +4,11 @@ import { useRouter } from "vue-router";
 
 import { Button } from "@/components/ui/button";
 import EsqueletoBolsaTukuy from "../components/EsqueletoBolsaTukuy.vue";
+import LogoEmpleador from "../components/LogoEmpleador.vue";
 import { useVacantes } from "../composables/useVacantes";
 
 const router = useRouter();
-const { vacantes, cargando } = useVacantes();
+const { vacantesPlataforma, cargando } = useVacantes();
 </script>
 
 <template>
@@ -20,7 +21,8 @@ const { vacantes, cargando } = useVacantes();
         </p>
         <h1 class="mt-3 text-4xl font-black sm:text-5xl">Gestión de vacantes</h1>
         <p class="mt-4 text-muted-foreground">
-          Publica oportunidades y revisa el interés generado en la comunidad.
+          Publica oportunidades de tu organización en la plataforma (no incluye
+          ofertas externas agregadas).
         </p>
       </div>
       <Button class="bg-primary text-white" disabled>
@@ -32,7 +34,9 @@ const { vacantes, cargando } = useVacantes();
     <div class="mt-10 grid gap-4 sm:grid-cols-3">
       <div class="border-l-4 border-primary bg-card p-6">
         <BriefcaseBusiness class="h-5 w-5 text-primary" />
-        <strong class="mt-4 block text-3xl font-black">{{ vacantes.length }}</strong>
+        <strong class="mt-4 block text-3xl font-black">{{
+          vacantesPlataforma.length
+        }}</strong>
         <span class="text-sm text-muted-foreground">Vacantes publicadas</span>
       </div>
       <div class="border-l-4 border-accent bg-card p-6">
@@ -53,17 +57,21 @@ const { vacantes, cargando } = useVacantes();
       </div>
       <div class="divide-y divide-border">
         <article
-          v-for="vacante in vacantes.slice(0, 8)"
+          v-for="vacante in vacantesPlataforma.slice(0, 8)"
           :key="vacante.id"
-          class="grid gap-4 p-5 md:grid-cols-[1fr_auto_auto] md:items-center"
+          class="grid gap-4 p-5 md:grid-cols-[auto_1fr_auto_auto] md:items-center"
         >
+          <LogoEmpleador :empleador="vacante.empleador" size="sm" />
           <div>
             <p class="font-black">{{ vacante.titulo }}</p>
             <p class="mt-1 text-xs text-muted-foreground">
-              {{ vacante.ubicacion }} · cierra {{ vacante.cierreTexto }}
+              {{ vacante.empleador.nombre }} · {{ vacante.ubicacion }} · cierra
+              {{ vacante.cierreTexto }}
             </p>
           </div>
-          <span class="bg-emerald-50 px-3 py-1.5 text-xs font-black text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+          <span
+            class="bg-emerald-50 px-3 py-1.5 text-xs font-black text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
+          >
             Publicada
           </span>
           <div class="flex gap-2">
@@ -84,4 +92,3 @@ const { vacantes, cargando } = useVacantes();
     </section>
   </main>
 </template>
-
