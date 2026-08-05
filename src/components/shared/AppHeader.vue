@@ -121,7 +121,7 @@ const otrasFunciones = computed(() =>
   contextoActivo.value?.organizacionId &&
   !contextoActivo.value.organizacionId.startsWith("org-personal-")
     ? funcionesEntidadActiva.value.filter(
-        (item) => item.id !== contextoActivo.value?.membresiaId,
+        (item) => item.id !== contextoActivo.value?.funcionId,
       )
     : [],
 );

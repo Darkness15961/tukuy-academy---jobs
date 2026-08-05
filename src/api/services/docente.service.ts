@@ -72,6 +72,8 @@ export interface ConfiguracionDocente {
 
 const contextoPredeterminado: ContextoSesion = {
   membresiaId: "mem-docente-organizacion",
+  funcionId: "mem-docente-organizacion",
+  rolId: "INSTRUCTOR",
   usuarioId: "usuario-actual",
   organizacionId: "org-empresa-abc",
   organizacionNombre: "COLEGIO DE INGENIEROS CUSCO",
@@ -789,7 +791,7 @@ export const docenteService = {
     }
 
     // La organización aprueba desde otro contexto: sincroniza el repo del docente.
-    const claveDocenteOrg = claveContextual("cursos", "mem-docente-tukuy");
+    const claveDocenteOrg = claveContextual("cursos", "mem-organizacion-cip");
     const crudo = localStorage.getItem(claveDocenteOrg);
     if (!crudo) return null;
     try {

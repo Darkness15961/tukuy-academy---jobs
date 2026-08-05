@@ -22,7 +22,7 @@ const selectorLogo = ref<HTMLInputElement | null>(null);
 const { contextoActivo, funcionesEntidadActiva, actualizarIdentidadOrganizacion } =
   useContextoSesion();
 const puedePersonalizarEntidad = computed(() =>
-  ["ORGANIZATION_OWNER", "ORGANIZATION_ADMIN"].includes(
+  ["OWNER", "ADMIN", "ORGANIZATION_OWNER", "ORGANIZATION_ADMIN"].includes(
     contextoActivo.value?.rol ?? "",
   ),
 );

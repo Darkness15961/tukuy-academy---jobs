@@ -13,6 +13,7 @@ import {
   ShieldCheck,
   UsersRound,
 } from "lucide-vue-next";
+import type { Directive } from "vue";
 import { useRouter } from "vue-router";
 import SiteFooter from "@/components/shared/SiteFooter.vue";
 import TarjetaCursoTendencia from "@/components/shared/TarjetaCursoTendencia.vue";
@@ -24,6 +25,36 @@ import { bloquesAdn } from "../data/portada.mock";
 
 const router = useRouter();
 const { courses } = useCursos();
+
+const observadoresTitulos = new WeakMap<HTMLElement, IntersectionObserver>();
+
+/** Revela el texto del título al entrar en el área visible. */
+const vLineaScroll: Directive<HTMLElement> = {
+  mounted(elemento) {
+    elemento.classList.add("titulo-linea-scroll");
+    if (!("IntersectionObserver" in window)) {
+      elemento.classList.add("titulo-linea-scroll--visible");
+      return;
+    }
+
+    const observador = new IntersectionObserver(
+      ([entrada]) => {
+        if (!entrada) return;
+        elemento.classList.toggle(
+          "titulo-linea-scroll--visible",
+          entrada.isIntersecting,
+        );
+      },
+      { threshold: 0.3, rootMargin: "0px 0px -12% 0px" },
+    );
+    observadoresTitulos.set(elemento, observador);
+    observador.observe(elemento);
+  },
+  beforeUnmount(elemento) {
+    observadoresTitulos.get(elemento)?.disconnect();
+    observadoresTitulos.delete(elemento);
+  },
+};
 
 /**
  * Opción B: recorrido = módulos reales del producto.
@@ -132,7 +163,9 @@ const audiencias = [
             >
               Lo que nos define
             </p>
-            <h2 class="mt-3 text-4xl font-black sm:text-6xl">NUESTRO ADN</h2>
+            <h2 v-linea-scroll class="mt-3 text-4xl font-black sm:text-6xl">
+              <span class="titulo-linea-scroll__texto">NUESTRO ADN</span>
+            </h2>
           </div>
           <p class="max-w-xl text-base leading-7 text-[#52657A]">
             Formación que conecta tecnología, experiencia real y crecimiento
@@ -191,8 +224,10 @@ const audiencias = [
         <p class="text-sm font-black uppercase tracking-[.25em] text-[#0B3A78]">
           Una plataforma, diferentes caminos
         </p>
-        <h2 class="mt-3 max-w-4xl text-4xl font-black sm:text-5xl">
-          CRECIMIENTO PARA PERSONAS Y ORGANIZACIONES
+        <h2 v-linea-scroll class="mt-3 max-w-4xl text-4xl font-black sm:text-5xl">
+          <span class="titulo-linea-scroll__texto">
+            CRECIMIENTO PARA PERSONAS Y ORGANIZACIONES
+          </span>
         </h2>
         <div class="mt-10 grid lg:grid-cols-3">
           <article
@@ -233,8 +268,10 @@ const audiencias = [
             >
               Formación especializada
             </p>
-            <h2 class="mt-3 max-w-4xl text-4xl font-black sm:text-5xl">
-              CURSOS PARA LOS RETOS REALES DE OBRA
+            <h2 v-linea-scroll class="mt-3 max-w-4xl text-4xl font-black sm:text-5xl">
+              <span class="titulo-linea-scroll__texto">
+                CURSOS PARA LOS RETOS REALES DE OBRA
+              </span>
             </h2>
           </div>
           <Button
@@ -263,8 +300,8 @@ const audiencias = [
         <p class="text-sm font-black uppercase tracking-[.25em] text-[#F5B400]">
           Ecosistema Tukuy
         </p>
-        <h2 class="mt-3 max-w-4xl text-3xl font-black leading-tight sm:text-5xl lg:text-6xl">
-          APRENDER ES SOLO EL COMIENZO
+        <h2 v-linea-scroll class="mt-3 max-w-4xl text-3xl font-black leading-tight sm:text-5xl lg:text-6xl">
+          <span class="titulo-linea-scroll__texto">APRENDER ES SOLO EL COMIENZO</span>
         </h2>
         <p class="mt-4 max-w-2xl text-sm leading-7 text-white/65 sm:text-base">
           Cada etapa del recorrido es un módulo real de la plataforma: Academy,
@@ -350,9 +387,11 @@ const audiencias = [
           >
             Bolsa Tukuy
           </p>
-          <h2 class="mt-4 text-4xl font-black sm:text-6xl">
-            <span class="bg-[#F5B400] px-2 text-[#07152B]">CONECTA</span
-            ><br />tu talento con oportunidades reales
+          <h2 v-linea-scroll class="mt-4 text-4xl font-black sm:text-6xl">
+            <span class="titulo-linea-scroll__texto">
+              <span class="bg-[#F5B400] px-2 text-[#07152B]">CONECTA</span
+              ><br />tu talento con oportunidades reales
+            </span>
           </h2>
           <p class="mt-6 max-w-xl text-lg leading-8 text-blue-100">
             Tu aprendizaje, certificados, experiencia y habilidades alimentan un
@@ -396,9 +435,11 @@ const audiencias = [
           >
             Comunidad Tukuy
           </p>
-          <h2 class="mt-4 text-4xl font-black sm:text-6xl">
-            <span class="bg-[#0B3A78] px-2 text-white">COMPARTE</span
-            ><br />experiencia que transforma el sector
+          <h2 v-linea-scroll class="mt-4 text-4xl font-black sm:text-6xl">
+            <span class="titulo-linea-scroll__texto">
+              <span class="bg-[#0B3A78] px-2 text-white">COMPARTE</span
+              ><br />experiencia que transforma el sector
+            </span>
           </h2>
           <p class="mt-6 text-lg leading-8 text-[#52657A]">
             Estudiantes, docentes, especialistas y organizaciones conectados
@@ -469,8 +510,8 @@ const audiencias = [
           >
             Para organizaciones
           </p>
-          <h2 class="mt-4 text-4xl font-black sm:text-6xl">
-            CAPACITA CON DATOS
+          <h2 v-linea-scroll class="mt-4 text-4xl font-black sm:text-6xl">
+            <span class="titulo-linea-scroll__texto">CAPACITA CON DATOS</span>
           </h2>
           <p class="mt-6 max-w-xl text-lg leading-8 text-[#52657A]">
             Gestiona usuarios, equipos, cursos, rutas, progreso, certificados,
@@ -529,3 +570,39 @@ const audiencias = [
     <SiteFooter variant="dark" links-to-login />
   </div>
 </template>
+
+<style scoped>
+.titulo-linea-scroll {
+  width: fit-content;
+}
+
+.titulo-linea-scroll__texto {
+  display: inline-block;
+  opacity: 0;
+  filter: blur(6px);
+  clip-path: inset(0 100% 0 0);
+  transform: translateY(12px);
+  transition:
+    clip-path 650ms cubic-bezier(0.4, 0, 1, 1),
+    opacity 450ms ease,
+    filter 650ms ease,
+    transform 650ms cubic-bezier(0.4, 0, 1, 1);
+  will-change: clip-path, opacity, filter, transform;
+}
+
+.titulo-linea-scroll--visible .titulo-linea-scroll__texto {
+  opacity: 1;
+  filter: blur(0);
+  clip-path: inset(0 0 0 0);
+  transform: translateY(0);
+  transition-duration: 1.25s, 700ms, 900ms, 900ms;
+  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .titulo-linea-scroll__texto {
+    transition: none;
+    will-change: auto;
+  }
+}
+</style>

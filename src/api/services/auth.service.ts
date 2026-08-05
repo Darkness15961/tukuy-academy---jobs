@@ -3,19 +3,55 @@ import { apiConfig } from "@/api/config";
 import { API } from "@/api/endpoints";
 import { resolveMock } from "@/api/mock";
 import { user as userMock } from "@/data/academia.mock";
-import { membresiasMock } from "@/data/contextos-sesion.mock";
+import {
+  buscarCuentaDemo,
+  CUENTAS_DEMO,
+} from "@/data/cuentas-demo.mock";
 import { USUARIO_SESION_KEY, USUARIOS_REGISTRADOS_KEY } from "@/lib/constants";
 import type {
   LoginRequestDto,
   LoginResponseDto,
   RegistroRequestDto,
+  SesionApiDto,
   UserProfileDto,
+  UsuarioApiDto,
   UsuarioRegistradoDto,
 } from "@/types/api";
 import type { MembresiaOrganizacion } from "@/types/membresia.types";
 
-const MOCK_USER = "admin";
-const MOCK_PASS = "123456";
+type RespuestaAuthApi = {
+  token: string;
+  user?: UsuarioApiDto;
+  usuario?: UsuarioApiDto;
+  memberships?: LoginResponseDto["memberships"];
+  membresias?: LoginResponseDto["memberships"];
+};
+
+function perfilDesdeApi(usuario: UsuarioApiDto): UserProfileDto {
+  return {
+    name: `${usuario.nombres} ${usuario.apellidos}`.trim(),
+    initials: inicialesDe(usuario.nombres, usuario.apellidos),
+    trade: "Usuario Tukuy",
+    specialty: "Perfil en construcción",
+    location: "Perú",
+    profileProgress: 28,
+    employabilityScore: 40,
+    certificates: 0,
+    applications: 0,
+  };
+}
+
+function normalizarRespuestaAuth(respuesta: RespuestaAuthApi): LoginResponseDto {
+  const usuario = respuesta.user ?? respuesta.usuario;
+  if (!respuesta.token || !usuario) {
+    throw new Error("La respuesta de autenticación no contiene token y usuario");
+  }
+  return {
+    token: respuesta.token,
+    user: perfilDesdeApi(usuario),
+    memberships: respuesta.memberships ?? respuesta.membresias,
+  };
+}
 
 const PERMISOS_ESTUDIANTE_PERSONAL = [
   "cursos.ver",
@@ -132,11 +168,12 @@ export const authService = {
         throw new Error("Ingresa tu correo y clave");
       }
 
-      if (username === MOCK_USER && password === MOCK_PASS) {
+      const cuentaDemo = buscarCuentaDemo(username, password);
+      if (cuentaDemo) {
         return resolveMock({
-          token: "mock-token",
-          user: userMock,
-          memberships: membresiasMock,
+          token: `mock-token-${cuentaDemo.alias}`,
+          user: cuentaDemo.perfil,
+          memberships: cuentaDemo.membresias,
         });
       }
 
@@ -153,11 +190,11 @@ export const authService = {
       return resolveMock(respuestaSesion(cuenta));
     }
 
-    const { data } = await api.post<LoginResponseDto>(
-      API.auth.login,
-      credentials,
-    );
-    return data;
+    const { data } = await api.post<RespuestaAuthApi>(API.auth.login, {
+      correo: credentials.dni.trim().toLowerCase(),
+      password: credentials.password,
+    });
+    return normalizarRespuestaAuth(data);
   },
 
   async registrar(datos: RegistroRequestDto): Promise<LoginResponseDto> {
@@ -173,8 +210,12 @@ export const authService = {
         throw new Error("Ya existe una cuenta con ese correo");
       }
 
-      if (validados.correo === "admin@tukuy.pe") {
-        throw new Error("Ese correo está reservado para la demo");
+      if (
+        CUENTAS_DEMO.some(
+          (cuenta) => normalizarCorreo(cuenta.correo) === validados.correo,
+        )
+      ) {
+        throw new Error("Ese correo está reservado para una cuenta demo");
       }
 
       const cuenta: UsuarioRegistradoDto = {
@@ -192,8 +233,14 @@ export const authService = {
       return resolveMock(respuestaSesion(cuenta));
     }
 
-    const { data } = await api.post<LoginResponseDto>(API.auth.registro, datos);
-    return data;
+    const { data } = await api.post<RespuestaAuthApi>(API.auth.registro, {
+      correo: datos.correo.trim().toLowerCase(),
+      nombres: datos.nombre.trim(),
+      apellidos: datos.apellidos.trim(),
+      password: datos.password,
+      password_confirmation: datos.password,
+    });
+    return normalizarRespuestaAuth(data);
   },
 
   async loginConGoogle(): Promise<LoginResponseDto> {
@@ -243,7 +290,31 @@ export const authService = {
       }
       return resolveMock(userMock);
     }
-    const { data } = await api.get<UserProfileDto>(API.auth.me);
-    return data;
+    const { data } = await api.get<UsuarioApiDto | { user: UsuarioApiDto }>(
+      API.auth.me,
+    );
+    return perfilDesdeApi("user" in data ? data.user : data);
+  },
+
+  async cambiarPassword(
+    passwordActual: string,
+    passwordNuevo: string,
+  ): Promise<void> {
+    await api.put(API.auth.password, {
+      password_actual: passwordActual,
+      password: passwordNuevo,
+      password_confirmation: passwordNuevo,
+    });
+  },
+
+  async listarSesiones(): Promise<SesionApiDto[]> {
+    const { data } = await api.get<SesionApiDto[] | { data: SesionApiDto[] }>(
+      API.auth.sessions,
+    );
+    return Array.isArray(data) ? data : data.data;
+  },
+
+  async revocarSesion(id: string): Promise<void> {
+    await api.delete(API.auth.sessionById(id));
   },
 };

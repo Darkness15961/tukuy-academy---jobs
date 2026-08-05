@@ -4,7 +4,7 @@ import type {
   UserProfile,
   WorkExperience,
 } from "@/types/academia";
-import type { MembresiaOrganizacion } from "@/types/membresia.types";
+import type { MembresiaEntrada } from "@/types/membresia.types";
 
 export type CourseDto = Course;
 export type JobDto = Job;
@@ -12,14 +12,32 @@ export type UserProfileDto = UserProfile;
 export type WorkExperienceDto = WorkExperience;
 
 export type LoginRequestDto = {
+  /** Campo histórico de la vista; contiene el correo. */
   dni: string;
   password: string;
+};
+
+export type UsuarioApiDto = {
+  id: string;
+  correo: string;
+  nombres: string;
+  apellidos: string;
+  telefono?: string | null;
+};
+
+export type SesionApiDto = {
+  id: string;
+  creada_en?: string;
+  expira_en?: string;
+  ip?: string | null;
+  user_agent?: string | null;
+  actual?: boolean;
 };
 
 export type LoginResponseDto = {
   token: string;
   user: UserProfileDto;
-  memberships?: MembresiaOrganizacion[];
+  memberships?: MembresiaEntrada[];
 };
 
 export type RegistroRequestDto = {

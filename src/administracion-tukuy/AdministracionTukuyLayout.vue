@@ -33,10 +33,12 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/composables/useAuth";
 import { administracionService } from "@/api/services/administracion.service";
+import { useContextoSesion } from "@/composables/useContextoSesion";
 
 const route = useRoute();
 const router = useRouter();
 const { logout, currentUser, restaurarUsuario } = useAuth();
+const { tienePermiso } = useContextoSesion();
 const menuAbierto = ref(false);
 const cursosPendientes = ref(0);
 const nombreUsuario = computed(() => {
@@ -72,30 +74,35 @@ const navegacion = computed(() => [
     etiqueta: "Organizaciones",
     ruta: "/admin/organizaciones",
     icono: Building2,
+    permiso: "organizaciones.ver",
   },
-  { etiqueta: "Usuarios", ruta: "/admin/usuarios", icono: UsersRound },
+  { etiqueta: "Usuarios", ruta: "/admin/usuarios", icono: UsersRound, permiso: "usuarios.ver" },
   {
     etiqueta: "Cursos y revisión",
     ruta: "/admin/cursos",
     icono: BookOpenCheck,
     contador: cursosPendientes.value,
+    permiso: "cursos.revisar",
   },
   {
     etiqueta: "Planes y licencias",
     ruta: "/admin/planes-licencias",
     icono: CreditCard,
+    permiso: "licencias.administrar",
   },
   {
     etiqueta: "Facturación",
     ruta: "/admin/facturacion",
     icono: CircleDollarSign,
+    permiso: "facturacion.ver",
   },
   {
     etiqueta: "Auditoría",
     ruta: "/admin/auditoria",
     icono: ClipboardList,
+    permiso: "auditoria.ver",
   },
-]);
+].filter((item) => !item.permiso || tienePermiso(item.permiso)));
 
 const tituloPagina = computed(() =>
   String(route.meta.titulo ?? "Administración Tukuy"),

@@ -1,10 +1,18 @@
 export const API = {
   auth: {
     login: "/auth/login",
-    registro: "/auth/registro",
+    registro: "/auth/register",
     google: "/auth/google",
     logout: "/auth/logout",
     me: "/auth/me",
+    password: "/auth/password",
+    sessions: "/auth/sessions",
+    sessionById: (id: string) => `/auth/sessions/${id}` as const,
+  },
+  recursos: "/recursos",
+  membresias: {
+    roles: (id: string) => `/membresias/${id}/roles` as const,
+    unidades: (id: string) => `/membresias/${id}/unidades` as const,
   },
   courses: {
     list: "/courses",

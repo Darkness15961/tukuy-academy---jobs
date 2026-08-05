@@ -9,6 +9,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { useAuth } from "@/composables/useAuth";
+import {
+  CLAVE_DEMO_COMUN,
+  RESUMEN_CUENTAS_DEMO,
+} from "@/data/cuentas-demo.mock";
+import { env } from "@/lib/env";
 
 const router = useRouter();
 const route = useRoute();
@@ -17,10 +22,16 @@ const { login, loginConGoogle, loading, error } = useAuth();
 const dni = ref("");
 const password = ref("");
 const remember = ref(false);
+const mostrarCuentasDemo = ref(false);
 
 const destinoContinuar = computed(() =>
   typeof route.query.continuar === "string" ? route.query.continuar : undefined,
 );
+
+function usarCuentaDemo(alias: string) {
+  dni.value = alias;
+  password.value = CLAVE_DEMO_COMUN;
+}
 
 async function handleSubmit() {
   try {
@@ -76,7 +87,7 @@ async function handleGoogle() {
                 id="dni"
                 v-model="dni"
                 class="border-white/15 bg-black/30 text-white placeholder:text-slate-500 focus-visible:ring-blue-500"
-                placeholder="tu@correo.com (o admin)"
+                placeholder="correo o alias (ej. alumno)"
                 autocomplete="username"
               />
             </div>
@@ -178,8 +189,45 @@ async function handleGoogle() {
             </button>
           </p>
 
+          <div
+            v-if="env.useMock"
+            class="grid gap-2 rounded-lg border border-white/10 bg-black/20 p-3 text-left text-xs text-slate-400"
+          >
+            <div class="flex items-center justify-between gap-2">
+              <p class="font-medium text-slate-300">
+                Cuentas demo · clave {{ CLAVE_DEMO_COMUN }}
+              </p>
+              <button
+                class="shrink-0 text-blue-400 hover:text-blue-300"
+                type="button"
+                @click="mostrarCuentasDemo = !mostrarCuentasDemo"
+              >
+                {{ mostrarCuentasDemo ? "Ocultar" : "Ver lista" }}
+              </button>
+            </div>
+            <ul
+              v-if="mostrarCuentasDemo"
+              class="grid max-h-48 gap-1.5 overflow-y-auto pr-1"
+            >
+              <li v-for="cuenta in RESUMEN_CUENTAS_DEMO" :key="cuenta.alias">
+                <button
+                  class="w-full rounded-md px-2 py-1.5 text-left transition hover:bg-white/8"
+                  type="button"
+                  @click="usarCuentaDemo(cuenta.alias)"
+                >
+                  <span class="font-mono text-blue-300">{{ cuenta.alias }}</span>
+                  <span class="mt-0.5 block text-[11px] leading-snug text-slate-500">
+                    {{ cuenta.etiqueta }}
+                  </span>
+                </button>
+              </li>
+            </ul>
+            <p v-else class="text-[11px] leading-snug text-slate-500">
+              Ej.: admin, tukuy, direccion, docente, alumno, alumnocip…
+            </p>
+          </div>
+
           <div class="grid gap-1 text-center text-xs text-slate-500">
-            <span>Demo: admin / 123456</span>
             <span>© Tukuy Academy · Ver. 07.06</span>
             <span>Soporte: 910104133 · 930132386 · 974977988 · 930804475</span>
           </div>

@@ -13,7 +13,10 @@ export const api = axios.create({
   baseURL: apiConfig.baseURL,
   timeout: 15_000,
   withCredentials: true,
-  headers: { "Content-Type": "application/json" },
+  headers: {
+    Accept: "application/json",
+    "Content-Type": "application/json",
+  },
 });
 
 api.interceptors.request.use((config) => {
@@ -27,6 +30,7 @@ api.interceptors.request.use((config) => {
     try {
       const contexto = JSON.parse(contextoGuardado) as ContextoSesion;
       config.headers["X-Tukuy-Membresia-Id"] = contexto.membresiaId;
+      config.headers["X-Tukuy-Rol-Id"] = contexto.rolId;
       if (contexto.organizacionId) {
         config.headers["X-Tukuy-Organizacion-Id"] = contexto.organizacionId;
       }

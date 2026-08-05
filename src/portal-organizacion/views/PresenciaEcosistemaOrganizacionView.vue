@@ -55,7 +55,7 @@ const cursos = ref<Array<CursoPerfilEntidad & { visibleEnPerfil: boolean }>>(
 );
 
 const puedeEditar = computed(() =>
-  ["ORGANIZATION_OWNER", "ORGANIZATION_ADMIN"].includes(
+  ["OWNER", "ADMIN", "ORGANIZATION_OWNER", "ORGANIZATION_ADMIN"].includes(
     contextoActivo.value?.rol ?? "",
   ),
 );

@@ -15,8 +15,6 @@ import {
   rutaInicioPortal,
   useContextoSesion,
 } from "@/composables/useContextoSesion";
-import { membresiasMock } from "@/data/contextos-sesion.mock";
-import { env } from "@/lib/env";
 import { ULTIMAS_FUNCIONES_ENTIDAD_KEY } from "@/lib/constants";
 import type {
   MembresiaOrganizacion,
@@ -26,20 +24,11 @@ import type {
 const router = useRouter();
 const { logout } = useAuth();
 const {
-  membresias,
   membresiasActivas,
   contextoActivo,
-  configurarMembresias,
   seleccionarContexto,
 } = useContextoSesion();
 
-// En demostración siempre sincronizamos todos los perfiles mock. Esto también
-// migra sesiones antiguas que solo conservaban el contexto personal.
-if (env.useMock) {
-  configurarMembresias(membresiasMock);
-} else if (membresias.value.length === 0) {
-  configurarMembresias();
-}
 
 const presentacionPortal: Record<
   TipoPortal,
@@ -102,11 +91,14 @@ const presentacionPortal: Record<
 };
 
 const prioridadRol: Record<string, number> = {
+  OWNER: 60,
+  ADMIN: 50,
   ORGANIZATION_OWNER: 60,
   ORGANIZATION_ADMIN: 50,
   TRAINING_MANAGER: 40,
   SUPERVISOR: 30,
   INSTRUCTOR: 20,
+  LEARNER: 10,
   STUDENT: 10,
 };
 
@@ -150,7 +142,7 @@ const contextosDisponibles = computed(() => {
     const organizacionId = funciones[0]?.organizacion?.id ?? "";
     const membresiaPreferida = ultimasFuncionesGuardadas()[organizacionId];
     const activa = funciones.find(
-      (item) => item.id === contextoActivo.value?.membresiaId,
+      (item) => item.id === contextoActivo.value?.funcionId,
     );
     const guardada = funciones.find(
       (item) => item.id === membresiaPreferida,
@@ -289,13 +281,22 @@ function funcionesContexto(membresia: MembresiaOrganizacion) {
 
       <div
         v-if="contextosDisponibles.length"
-        class="grid gap-2 md:grid-cols-2 xl:min-h-[calc(100svh-190px)] xl:grid-cols-4"
+        class="flex flex-wrap justify-center gap-2 xl:min-h-[calc(100svh-190px)] xl:items-stretch"
       >
         <Card
           v-for="membresia in contextosDisponibles"
           :key="membresia.id"
-          class="group relative min-h-[640px] overflow-hidden border-white/20 bg-[#07152B] text-white shadow-[0_24px_60px_-36px_rgba(0,0,0,0.95)] transition duration-500 hover:z-10 hover:-translate-y-1 hover:shadow-[0_34px_80px_-34px_rgba(0,0,0,0.95)] xl:min-h-full"
-          :class="presentacionPortal[membresia.portal].colorBorde"
+          class="group relative min-h-[640px] w-full overflow-hidden border-white/20 bg-[#07152B] text-white shadow-[0_24px_60px_-36px_rgba(0,0,0,0.95)] transition duration-500 hover:z-10 hover:-translate-y-1 hover:shadow-[0_34px_80px_-34px_rgba(0,0,0,0.95)] sm:max-w-md md:max-w-[calc(50%-0.25rem)] xl:min-h-full xl:flex-1"
+          :class="[
+            presentacionPortal[membresia.portal].colorBorde,
+            contextosDisponibles.length === 1
+              ? 'xl:max-w-md xl:flex-none'
+              : contextosDisponibles.length === 2
+                ? 'xl:max-w-lg'
+                : contextosDisponibles.length === 3
+                  ? 'xl:max-w-md'
+                  : 'xl:max-w-sm',
+          ]"
         >
           <div
             v-if="esAccesoInstitucional(membresia)"

@@ -28,7 +28,7 @@ import type {
   CertificadoPendienteDocente,
 } from "@/portal-docente/types/docente.types";
 
-const { contextoActivo, funcionesEntidadActiva } = useContextoSesion();
+const { contextoActivo, funcionesEntidadActiva, tienePermiso } = useContextoSesion();
 
 const logoEntidad = computed(
   () =>
@@ -180,6 +180,10 @@ function iniciales(nombre: string) {
 }
 
 async function emitir(pendienteId: string) {
+  if (!tienePermiso("certificados.emitir")) {
+    error.value = "Tu perfil puede consultar o firmar certificados, pero no emitirlos.";
+    return;
+  }
   const pendiente = pendientes.value.find((item) => item.id === pendienteId);
   if (!pendiente || pendiente.nota < 14) return;
   error.value = "";
@@ -561,6 +565,7 @@ async function descargarCertificado(certificado: CertificadoEmitidoDocente) {
         <Column header="Acción" style="min-width: 9rem">
           <template #body="{ data }">
             <Button
+              v-if="tienePermiso('certificados.emitir')"
               size="sm"
               :disabled="data.nota < 14 || emitiendoId === data.id"
               @click="emitir(data.id)"

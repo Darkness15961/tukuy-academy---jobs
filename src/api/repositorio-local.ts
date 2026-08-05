@@ -21,6 +21,18 @@ type ConfiguracionRepositorio<T extends RegistroIdentificable> = {
   version?: number;
 };
 
+type RespuestaListado<T> =
+  | T[]
+  | { data: T[] }
+  | { datos: T[] };
+
+function extraerListado<T>(respuesta: RespuestaListado<T>): T[] {
+  if (Array.isArray(respuesta)) return respuesta;
+  if ("data" in respuesta && Array.isArray(respuesta.data)) return respuesta.data;
+  if ("datos" in respuesta && Array.isArray(respuesta.datos)) return respuesta.datos;
+  throw new Error("La API devolvió un listado con un formato no reconocido");
+}
+
 function clonar<T>(valor: T): T {
   return structuredClone(valor);
 }
@@ -66,8 +78,8 @@ export function crearRepositorioLocal<T extends RegistroIdentificable>({
       if (apiConfig.useMock) {
         return resolveMock(leerSobre(clave, version, [...semilla]));
       }
-      const { data } = await api.get<T[]>(ruta);
-      return data;
+      const { data } = await api.get<RespuestaListado<T>>(ruta);
+      return extraerListado(data);
     },
 
     async obtener(id: Identificador): Promise<T | null> {

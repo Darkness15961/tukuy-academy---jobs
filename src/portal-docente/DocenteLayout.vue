@@ -142,7 +142,7 @@ const otrasFunciones = computed(() =>
   esDocenciaIndependiente.value
     ? []
     : funcionesEntidadActiva.value.filter(
-        (item) => item.id !== contextoActivo.value?.membresiaId,
+        (item) => item.id !== contextoActivo.value?.funcionId,
       ),
 );
 

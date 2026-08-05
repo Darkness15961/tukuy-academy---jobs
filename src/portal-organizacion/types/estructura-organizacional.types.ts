@@ -1,6 +1,7 @@
 export type PlantillaPerfilEntidad =
   | "DIRECCION"
   | "ADMINISTRACION"
+  | "FIRMAS"
   | "GESTION"
   | "SUPERVISION"
   | "DOCENCIA"

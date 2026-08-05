@@ -293,7 +293,7 @@ const itemsEcosistema = computed(() =>
 );
 const otrasFunciones = computed(() =>
   funcionesEntidadActiva.value.filter(
-    (item) => item.id !== contextoActivo.value?.membresiaId,
+    (item) => item.id !== contextoActivo.value?.funcionId,
   ),
 );
 const titulo = computed(() =>

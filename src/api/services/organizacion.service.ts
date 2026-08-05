@@ -386,6 +386,8 @@ export function calcularPrecioFinal(
 
 const contextoPredeterminado: ContextoSesion = {
   membresiaId: "mem-org-admin",
+  funcionId: "mem-org-admin",
+  rolId: "ORGANIZATION_ADMIN",
   usuarioId: "usuario-actual",
   organizacionId: "org-empresa-abc",
   organizacionNombre: "COLEGIO DE INGENIEROS CUSCO",
@@ -548,6 +550,17 @@ const asignacionesPerfil =
  *  Solo toca nodos del mock original; los creados por el usuario pasan intactos. */
 async function normalizarJerarquiaOrganizacional() {
   if (!apiConfig.useMock) return;
+  const perfilesActuales = await perfiles.listar();
+  const perfilesProtegidos = perfilesEntidad.filter((perfil) => perfil.esSistema);
+  const perfilesNormalizados = [...perfilesActuales];
+  perfilesProtegidos.forEach((perfil) => {
+    if (!perfilesNormalizados.some((item) => item.id === perfil.id)) {
+      perfilesNormalizados.push(perfil);
+    }
+  });
+  if (JSON.stringify(perfilesActuales) !== JSON.stringify(perfilesNormalizados)) {
+    await perfiles.reemplazar(perfilesNormalizados);
+  }
   const actuales = await unidades.listar();
 
   // IDs de la semilla original: solo estos se normalizan
@@ -593,6 +606,47 @@ async function normalizarJerarquiaOrganizacional() {
   });
   if (JSON.stringify(actuales) !== JSON.stringify(normalizadas)) {
     await unidades.reemplazar(normalizadas);
+  }
+
+  // Toda persona activa del equipo protegido de certificación recibe la
+  // recomendación de firmante sin perder sus demás perfiles.
+  const [vinculacionesActuales, asignacionesActuales] = await Promise.all([
+    vinculaciones.listar(),
+    asignacionesPerfil.listar(),
+  ]);
+  const unidadFirmas = normalizadas.find(
+    (unidad) => unidad.codigoSistema === "CERTIFICACION",
+  );
+  if (unidadFirmas) {
+    const nuevasAsignaciones = [...asignacionesActuales];
+    vinculacionesActuales
+      .filter(
+        (vinculacion) =>
+          vinculacion.unidadId === unidadFirmas.id && vinculacion.estado === "ACTIVA",
+      )
+      .forEach((vinculacion) => {
+        const yaAsignado = nuevasAsignaciones.some(
+          (asignacion) =>
+            asignacion.usuarioId === vinculacion.usuarioId &&
+            asignacion.perfilId === "perfil-firmante-certificados" &&
+            asignacion.estado === "ACTIVA",
+        );
+        if (!yaAsignado) {
+          nuevasAsignaciones.push({
+            id: `apu-firma-${vinculacion.usuarioId}`,
+            usuarioId: vinculacion.usuarioId,
+            perfilId: "perfil-firmante-certificados",
+            unidadIds: [unidadFirmas.id],
+            sedeIds: vinculacion.sedeId ? [vinculacion.sedeId] : [],
+            incluirDescendientes: false,
+            esPrincipal: false,
+            estado: "ACTIVA",
+          });
+        }
+      });
+    if (JSON.stringify(asignacionesActuales) !== JSON.stringify(nuevasAsignaciones)) {
+      await asignacionesPerfil.reemplazar(nuevasAsignaciones);
+    }
   }
 }
 

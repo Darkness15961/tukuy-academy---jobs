@@ -49,6 +49,11 @@ import type {
   VinculacionUnidad,
 } from "@/portal-organizacion/types/estructura-organizacional.types";
 import type { Course } from "@/types/academia";
+import {
+  MODULOS_ACCESO,
+  PERMISOS_POR_PLANTILLA,
+  modulosDePermisos,
+} from "@/lib/control-acceso";
 
 type Seccion =
   | "estructura"
@@ -90,6 +95,9 @@ const modalEstructura = ref(false);
 const modalNivel = ref(false);
 const creandoTipoDesdeUnidad = ref(false);
 const modalPerfil = ref(false);
+const modalAccesosPerfil = ref(false);
+const perfilEditando = ref<PerfilEntidad | null>(null);
+const permisosEditando = ref<string[]>([]);
 const modalReglaCurso = ref(false);
 const unidades = ref<UnidadOrganizacional[]>([]);
 const estructuras = ref<EstructuraOrganizacional[]>([]);
@@ -189,21 +197,10 @@ const opcionesPlantilla = [
   { label: "Aprendizaje", value: "APRENDIZAJE" },
   { label: "Personalizado", value: "PERSONALIZADO" },
 ];
-const permisosPorPlantilla: Record<string, string[]> = {
-  GESTION: [
-    "cursos.ver",
-    "cursos.aprobar",
-    "categorias.ver",
-    "categorias.gestionar",
-    "asignaciones.crear",
-    "certificados.emitir",
-    "reportes.ver",
-  ],
-  SUPERVISION: ["alumnos.ver", "asignaciones.ver", "reportes.ver"],
-  DOCENCIA: ["cursos.ver", "cursos.crear", "alumnos.ver", "evaluaciones.calificar"],
-  APRENDIZAJE: ["cursos.ver", "aprendizaje.consumir", "certificados.ver"],
-  PERSONALIZADO: ["cursos.ver"],
-};
+const modulosOrganizacion = MODULOS_ACCESO.filter((modulo) => modulo.portal === "organizacion");
+const esSuperAdministracion = computed(() =>
+  membresias.value.some((membresia) => membresia.rol === "SUPER_ADMIN" && membresia.estado === "ACTIVA"),
+);
 
 onMounted(cargar);
 
@@ -422,11 +419,13 @@ const usuariosVinculados = computed(
 
 const esPerfilDireccion = computed(
   () =>
+    contextoActivo.value?.rol === "OWNER" ||
     contextoActivo.value?.rol === "ORGANIZATION_OWNER" ||
     tienePermiso("entidad.gobernar"),
 );
 const esPerfilAdministracion = computed(
   () =>
+    contextoActivo.value?.rol === "ADMIN" ||
     contextoActivo.value?.rol === "ORGANIZATION_ADMIN" ||
     tienePermiso("estructura.administrar") ||
     tienePermiso("equipos.administrar"),
@@ -954,7 +953,7 @@ async function crearTipoUnidad() {
 
 async function crearPerfil() {
   if (!formularioPerfil.nombre.trim()) return;
-  const permisos = permisosPorPlantilla[formularioPerfil.plantilla] ?? [];
+  const permisos = [...PERMISOS_POR_PLANTILLA[formularioPerfil.plantilla]];
   const creado = await organizacionService.estructura.perfiles.crear({
     id: `perfil-${Date.now()}`,
     nombre: formularioPerfil.nombre.trim(),
@@ -982,6 +981,53 @@ async function crearPerfil() {
   modalPerfil.value = false;
   Object.assign(formularioPerfil, { nombre: "", descripcion: "", plantilla: "SUPERVISION" });
   mensaje.value = "El perfil personalizado fue creado debajo de Administración.";
+}
+
+function abrirAccesosPerfil(perfil: PerfilEntidad) {
+  perfilEditando.value = perfil;
+  permisosEditando.value = [...perfil.permisos];
+  modalAccesosPerfil.value = true;
+}
+
+function moduloSeleccionado(moduloId: string) {
+  const modulo = modulosOrganizacion.find((item) => item.id === moduloId);
+  return Boolean(modulo?.permisos.some((permiso) => permisosEditando.value.includes(permiso)));
+}
+
+function alternarModulo(moduloId: string) {
+  if (!esSuperAdministracion.value) return;
+  const modulo = modulosOrganizacion.find((item) => item.id === moduloId);
+  if (!modulo) return;
+  const permisosModulo = new Set(modulo.permisos);
+  if (moduloSeleccionado(moduloId)) {
+    permisosEditando.value = permisosEditando.value.filter((permiso) => !permisosModulo.has(permiso));
+  } else {
+    permisosEditando.value = [...new Set([...permisosEditando.value, ...modulo.permisos])];
+  }
+}
+
+function alternarPermiso(permiso: string) {
+  if (!esSuperAdministracion.value) return;
+  permisosEditando.value = permisosEditando.value.includes(permiso)
+    ? permisosEditando.value.filter((item) => item !== permiso)
+    : [...permisosEditando.value, permiso];
+}
+
+async function guardarAccesosPerfil() {
+  if (!perfilEditando.value || !esSuperAdministracion.value) return;
+  guardando.value = true;
+  try {
+    const actualizado = await organizacionService.estructura.perfiles.actualizar(
+      perfilEditando.value.id,
+      { permisos: [...new Set(permisosEditando.value)] },
+    );
+    const indice = perfiles.value.findIndex((item) => item.id === actualizado.id);
+    if (indice >= 0) perfiles.value[indice] = actualizado;
+    modalAccesosPerfil.value = false;
+    mensaje.value = `Accesos de ${actualizado.nombre} actualizados por Superadministración.`;
+  } finally {
+    guardando.value = false;
+  }
 }
 
 function abrirReglaCurso() {
@@ -1217,9 +1263,15 @@ function etiquetaEstado(estado: VinculacionUnidad["estado"]) {
         </div>
         <Button size="sm" @click="modalPerfil = true"><Plus class="h-4 w-4" />Crear perfil</Button>
       </div>
+      <div class="border-l-4 border-l-primary bg-primary/5 p-4 text-sm">
+        <b>Los módulos se recomiendan según la plantilla del perfil.</b>
+        <p class="mt-1 text-xs text-muted-foreground">
+          Solo Superadministración puede ampliar o retirar permisos. Dirección y Administración conservan perfiles protegidos, y el equipo de firmas dispone de un perfil específico.
+        </p>
+      </div>
       <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         <Card v-for="perfil in perfiles" :key="perfil.id" class="border-border bg-card" :class="perfil.esSistema ? 'border-t-4 border-t-accent' : ''">
-          <CardContent class="p-5"><div class="flex items-start justify-between gap-3"><span class="grid h-11 w-11 place-items-center bg-primary/10 text-primary"><ShieldCheck class="h-5 w-5" /></span><Tag :value="perfil.esSistema ? 'Protegido' : perfil.plantilla" :severity="perfil.esSistema ? 'warn' : 'info'" /></div><h3 class="mt-5 text-lg font-black">{{ perfil.nombre }}</h3><p class="mt-2 min-h-10 text-xs leading-5 text-muted-foreground">{{ perfil.descripcion }}</p><div class="mt-4 border-t border-border pt-4"><p class="text-[10px] font-black uppercase tracking-wide text-muted-foreground">{{ perfil.permisos.length }} permisos · alcance {{ perfil.alcanceDefecto }}</p><p class="mt-2 text-xs text-muted-foreground">Nivel de autoridad {{ perfil.nivelAutoridad }}</p></div></CardContent>
+          <CardContent class="p-5"><div class="flex items-start justify-between gap-3"><span class="grid h-11 w-11 place-items-center bg-primary/10 text-primary"><ShieldCheck class="h-5 w-5" /></span><Tag :value="perfil.esSistema ? 'Protegido' : perfil.plantilla" :severity="perfil.esSistema ? 'warn' : 'info'" /></div><h3 class="mt-5 text-lg font-black">{{ perfil.nombre }}</h3><p class="mt-2 min-h-10 text-xs leading-5 text-muted-foreground">{{ perfil.descripcion }}</p><div class="mt-4 border-t border-border pt-4"><p class="text-[10px] font-black uppercase tracking-wide text-muted-foreground">{{ perfil.permisos.length }} permisos · {{ modulosDePermisos(perfil.permisos).length }} módulos</p><p class="mt-2 text-xs text-muted-foreground">Nivel de autoridad {{ perfil.nivelAutoridad }} · alcance {{ perfil.alcanceDefecto }}</p><Button class="mt-4 w-full" size="sm" variant="outline" @click="abrirAccesosPerfil(perfil)">{{ esSuperAdministracion ? 'Administrar accesos' : 'Ver accesos' }}</Button></div></CardContent>
         </Card>
       </div>
     </section>
@@ -1539,6 +1591,33 @@ function etiquetaEstado(estado: VinculacionUnidad["estado"]) {
     </Dialog>
 
     <Dialog v-model:visible="modalPerfil" modal header="Crear perfil debajo de Administración" :style="{ width: 'min(38rem, calc(100vw - 2rem))' }"><div class="grid gap-4"><div class="border-l-4 border-l-accent bg-accent/10 p-4 text-sm"><b>Dirección y Administración permanecen protegidos.</b><p class="mt-1 text-xs text-muted-foreground">Este perfil tendrá un nivel inferior y solo recibirá los permisos de la plantilla seleccionada.</p></div><label><span class="filtro-label">Nombre definido por la entidad</span><InputText v-model="formularioPerfil.nombre" class="filtro-control w-full" placeholder="Ej. Presidente de capítulo" /></label><label><span class="filtro-label">Descripción</span><InputText v-model="formularioPerfil.descripcion" class="filtro-control w-full" /></label><label><span class="filtro-label">Plantilla funcional</span><Select v-model="formularioPerfil.plantilla" :options="opcionesPlantilla" option-label="label" option-value="value" class="filtro-control w-full" /></label></div><template #footer><Button variant="outline" @click="modalPerfil = false">Cancelar</Button><Button @click="crearPerfil">Crear perfil</Button></template></Dialog>
+
+    <Dialog v-model:visible="modalAccesosPerfil" modal :header="`Módulos y permisos · ${perfilEditando?.nombre ?? ''}`" :style="{ width: 'min(58rem, calc(100vw - 2rem))' }">
+      <div class="grid gap-4">
+        <div v-if="!esSuperAdministracion" class="border-l-4 border-l-amber-500 bg-amber-50 p-4 text-sm text-amber-950 dark:bg-amber-950/20 dark:text-amber-100">
+          Vista de consulta. Solo Superadministración puede cambiar los permisos de un perfil.
+        </div>
+        <article v-for="modulo in modulosOrganizacion" :key="modulo.id" class="border border-border p-4">
+          <div class="flex items-start gap-3">
+            <input :checked="moduloSeleccionado(modulo.id)" :disabled="!esSuperAdministracion" type="checkbox" class="mt-1 h-4 w-4" @change="alternarModulo(modulo.id)" />
+            <div class="min-w-0 flex-1">
+              <p class="font-bold">{{ modulo.nombre }}</p>
+              <p class="text-xs text-muted-foreground">{{ modulo.descripcion }}</p>
+              <div class="mt-3 grid gap-2 sm:grid-cols-2">
+                <label v-for="permiso in modulo.permisos" :key="permiso" class="flex items-center gap-2 text-xs">
+                  <input :checked="permisosEditando.includes(permiso)" :disabled="!esSuperAdministracion" type="checkbox" class="h-4 w-4" @change="alternarPermiso(permiso)" />
+                  <span>{{ permiso }}</span>
+                </label>
+              </div>
+            </div>
+          </div>
+        </article>
+      </div>
+      <template #footer>
+        <Button variant="outline" @click="modalAccesosPerfil = false">Cerrar</Button>
+        <Button v-if="esSuperAdministracion" :disabled="guardando" @click="guardarAccesosPerfil">Guardar accesos</Button>
+      </template>
+    </Dialog>
 
     <Dialog
       v-model:visible="modalReglaCurso"

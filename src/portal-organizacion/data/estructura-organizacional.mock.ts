@@ -9,6 +9,7 @@ import type {
   UnidadOrganizacional,
   VinculacionUnidad,
 } from "@/portal-organizacion/types/estructura-organizacional.types";
+import { PERMISOS_POR_PLANTILLA } from "@/lib/control-acceso";
 
 export const estructurasOrganizacionales: EstructuraOrganizacional[] = [
   { id: "estructura-gobierno", nombre: "Gobierno y administración", descripcion: "Funciones protegidas necesarias para operar la entidad en Tukuy.", tipo: "GOBIERNO", modoJerarquia: "FLEXIBLE", esSistema: true, estado: "ACTIVA" },
@@ -47,8 +48,9 @@ export const unidadesOrganizacionales: UnidadOrganizacional[] = [
 ];
 
 export const perfilesEntidad: PerfilEntidad[] = [
-  { id: "perfil-direccion", nombre: "Dirección", descripcion: "Máxima autoridad y gobierno de la entidad.", tipo: "DIRECCION", plantilla: "DIRECCION", nivelAutoridad: 1000, permisos: ["entidad.gobernar", "administradores.designar", "auditoria.ver", "facturacion.ver", "reportes.ver"], alcanceDefecto: "ENTIDAD", rutaInicial: "/organizacion/inicio", esSistema: true, estado: "ACTIVO" },
-  { id: "perfil-administracion", nombre: "Administración", descripcion: "Gestiona la operación, estructura, accesos y capacitación.", tipo: "ADMINISTRADOR", plantilla: "ADMINISTRACION", nivelAutoridad: 900, permisos: ["usuarios.administrar", "estructura.administrar", "perfiles.administrar", "cursos.ver", "cursos.crear", "cursos.editar", "cursos.aprobar", "categorias.ver", "categorias.gestionar", "asignaciones.crear", "certificados.emitir", "reportes.ver"], alcanceDefecto: "ENTIDAD", rutaInicial: "/organizacion/inicio", esSistema: true, estado: "ACTIVO" },
+  { id: "perfil-direccion", nombre: "Dirección", descripcion: "Máxima autoridad y gobierno de la entidad.", tipo: "DIRECCION", plantilla: "DIRECCION", nivelAutoridad: 1000, permisos: [...PERMISOS_POR_PLANTILLA.DIRECCION], alcanceDefecto: "ENTIDAD", rutaInicial: "/organizacion/inicio", esSistema: true, estado: "ACTIVO" },
+  { id: "perfil-administracion", nombre: "Administración", descripcion: "Gestiona la operación, estructura, accesos y capacitación.", tipo: "ADMINISTRADOR", plantilla: "ADMINISTRACION", nivelAutoridad: 900, permisos: [...PERMISOS_POR_PLANTILLA.ADMINISTRACION], alcanceDefecto: "ENTIDAD", rutaInicial: "/organizacion/inicio", esSistema: true, estado: "ACTIVO" },
+  { id: "perfil-firmante-certificados", nombre: "Firmante de certificados", descripcion: "Revisa y firma certificados institucionales dentro del equipo autorizado.", tipo: "PERSONALIZADO", plantilla: "FIRMAS", nivelAutoridad: 750, permisos: [...PERMISOS_POR_PLANTILLA.FIRMAS], alcanceDefecto: "ENTIDAD", rutaInicial: "/organizacion/certificados", esSistema: true, estado: "ACTIVO" },
   { id: "perfil-director-academico", nombre: "Coordinación académica", descripcion: "Gestiona la oferta académica, categorías, aprobación de cursos y certificación.", tipo: "PERSONALIZADO", plantilla: "GESTION", nivelAutoridad: 700, permisos: ["cursos.ver", "cursos.aprobar", "categorias.ver", "categorias.gestionar", "asignaciones.crear", "certificados.emitir", "reportes.ver"], alcanceDefecto: "UNIDAD", rutaInicial: "/organizacion/inicio", esSistema: false, estado: "ACTIVO" },
   { id: "perfil-presidente-capitulo", nombre: "Presidente de capítulo", descripcion: "Supervisa miembros y resultados de su capítulo.", tipo: "PERSONALIZADO", plantilla: "SUPERVISION", nivelAutoridad: 600, permisos: ["alumnos.ver", "asignaciones.ver", "reportes.ver"], alcanceDefecto: "UNIDAD", rutaInicial: "/organizacion/inicio", esSistema: false, estado: "ACTIVO" },
   { id: "perfil-docente-especialista", nombre: "Docente especialista", descripcion: "Imparte cursos y evalúa a sus estudiantes.", tipo: "PERSONALIZADO", plantilla: "DOCENCIA", nivelAutoridad: 400, permisos: ["cursos.ver", "cursos.crear", "alumnos.ver", "evaluaciones.calificar"], alcanceDefecto: "CURSOS_PROPIOS", rutaInicial: "/docente/inicio", esSistema: false, estado: "ACTIVO" },
@@ -76,6 +78,7 @@ export const vinculacionesUnidad: VinculacionUnidad[] = [
 ];
 
 export const asignacionesPerfilUsuario: AsignacionPerfilUsuario[] = [
+  { id: "apu-firma-001", usuarioId: "5", perfilId: "perfil-firmante-certificados", unidadIds: ["unidad-comision-certificacion"], sedeIds: [], incluirDescendientes: false, esPrincipal: false, estado: "ACTIVA" },
   { id: "apu-001", usuarioId: "5", perfilId: "perfil-director-academico", unidadIds: ["unidad-comision-certificacion"], sedeIds: [], incluirDescendientes: true, esPrincipal: true, estado: "ACTIVA" },
   { id: "apu-002", usuarioId: "8", perfilId: "perfil-presidente-capitulo", unidadIds: ["unidad-capitulo-civil"], sedeIds: [], incluirDescendientes: true, esPrincipal: true, estado: "ACTIVA" },
   { id: "apu-003", usuarioId: "5", perfilId: "perfil-docente-especialista", unidadIds: ["unidad-comision-certificacion"], sedeIds: [], incluirDescendientes: false, esPrincipal: false, estado: "ACTIVA" },

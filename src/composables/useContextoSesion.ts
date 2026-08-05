@@ -7,6 +7,9 @@ import {
 } from "@/lib/constants";
 import type {
   ContextoSesion,
+  FuncionMembresia,
+  MembresiaEntrada,
+  MembresiaMultiRol,
   MembresiaOrganizacion,
   Rol,
   TipoPortal,
@@ -17,11 +20,14 @@ const etiquetasRol: Record<Rol, string> = {
   PLATFORM_ADMIN: "Administración Tukuy",
   PLATFORM_SUPPORT: "Soporte Tukuy",
   COURSE_REVIEWER: "Revisión de cursos",
+  OWNER: "Dirección",
+  ADMIN: "Administración",
   ORGANIZATION_OWNER: "Dirección",
   ORGANIZATION_ADMIN: "Administración",
   TRAINING_MANAGER: "Gestión de capacitación",
   INSTRUCTOR: "Docencia",
   SUPERVISOR: "Supervisión",
+  LEARNER: "Aprendizaje",
   STUDENT: "Aprendizaje",
 };
 
@@ -70,40 +76,71 @@ const contextoActivo = ref<ContextoSesion | null>(
   leerJson<ContextoSesion>(CONTEXTO_SESION_KEY),
 );
 
-// Permisos adicionales que todo portal de organización debe tener garantizados.
-const permisosAcademicosOrganizacion = [
-  "estudiantes.ver",
-  "certificados.ver",
-  "certificados.emitir",
-];
+// Migra contextos guardados por versiones anteriores (una membresía = un rol).
+if (contextoActivo.value && !contextoActivo.value.funcionId) {
+  contextoActivo.value = {
+    ...contextoActivo.value,
+    funcionId: contextoActivo.value.membresiaId,
+    rolId: contextoActivo.value.rol,
+  };
+  localStorage.setItem(
+    CONTEXTO_SESION_KEY,
+    JSON.stringify(contextoActivo.value),
+  );
+}
+
+function esMembresiaMultiRol(
+  membresia: MembresiaEntrada,
+): membresia is MembresiaMultiRol {
+  return Array.isArray((membresia as MembresiaMultiRol).roles);
+}
 
 /**
- * Normaliza los permisos de una membresía de organización:
- * añade los permisos académicos base y, para owners/admins, los permisos
- * de edición de configuración y cursos.
+ * Proyecta el contrato multirol a funciones seleccionables. Así los portales
+ * actuales siguen trabajando con un objeto plano, pero el contexto conserva
+ * membresiaId y rolId canónicos para el backend.
  */
+function expandirMembresia(
+  membresia: MembresiaEntrada,
+): MembresiaOrganizacion[] {
+  if (!esMembresiaMultiRol(membresia)) {
+    return [
+      {
+        ...membresia,
+        membresiaOrigenId: membresia.membresiaOrigenId ?? membresia.id,
+        rolId: membresia.rolId ?? membresia.rol,
+      },
+    ];
+  }
+
+  return membresia.roles.map((funcion: FuncionMembresia) => ({
+    id: `${membresia.id}::${funcion.id}`,
+    membresiaOrigenId: membresia.id,
+    rolId: funcion.id,
+    usuarioId: membresia.usuarioId,
+    personaEntidadId: membresia.personaEntidadId,
+    organizacion: membresia.organizacion,
+    rol: funcion.codigo,
+    permisos: funcion.permisos,
+    alcance: funcion.alcance,
+    estado: membresia.estado,
+    portal: funcion.portal,
+    ambitoDocencia: funcion.ambitoDocencia,
+  }));
+}
+
+function expandirMembresias(
+  entradas: MembresiaEntrada[],
+): MembresiaOrganizacion[] {
+  return entradas.flatMap(expandirMembresia);
+}
+
 function normalizarPermisosOrganizacion(
   membresia: MembresiaOrganizacion,
 ): MembresiaOrganizacion {
-  if (membresia.portal !== "organizacion") return membresia;
   return {
     ...membresia,
-    permisos: [
-      ...new Set([
-        ...membresia.permisos,
-        ...permisosAcademicosOrganizacion,
-        ...(["ORGANIZATION_OWNER", "ORGANIZATION_ADMIN"].includes(membresia.rol)
-          ? [
-              "configuracion.editar",
-              "cursos.crear",
-              "cursos.editar",
-              "cursos.aprobar",
-              "categorias.ver",
-              "categorias.gestionar",
-            ]
-          : []),
-      ]),
-    ],
+    permisos: [...new Set(membresia.permisos)],
   };
 }
 
@@ -115,27 +152,12 @@ if (membresias.value.length) {
   localStorage.setItem(MEMBRESIAS_KEY, JSON.stringify(membresias.value));
 }
 
-// Normalizar contexto activo al arrancar (solo permisos).
+// Deduplicar el contexto activo sin conceder permisos en el cliente.
 if (contextoActivo.value?.portal === "organizacion") {
   const ctx = contextoActivo.value;
   contextoActivo.value = {
     ...ctx,
-    permisos: [
-      ...new Set([
-        ...ctx.permisos,
-        ...permisosAcademicosOrganizacion,
-        ...(["ORGANIZATION_OWNER", "ORGANIZATION_ADMIN"].includes(ctx.rol)
-          ? [
-              "configuracion.editar",
-              "cursos.crear",
-              "cursos.editar",
-              "cursos.aprobar",
-              "categorias.ver",
-              "categorias.gestionar",
-            ]
-          : []),
-      ]),
-    ],
+    permisos: [...new Set(ctx.permisos)],
   };
   localStorage.setItem(
     CONTEXTO_SESION_KEY,
@@ -196,11 +218,11 @@ export function useContextoSesion() {
     );
   });
 
-  function configurarMembresias(nuevasMembresias?: MembresiaOrganizacion[]) {
+  function configurarMembresias(nuevasMembresias?: MembresiaEntrada[]) {
     const base = nuevasMembresias?.length
       ? nuevasMembresias
       : [crearMembresiaPersonal()];
-    const normalizadas = base
+    const normalizadas = expandirMembresias(base)
       .map(aplicarIdentidadGuardada)
       .map(normalizarPermisosOrganizacion);
     membresias.value = normalizadas;
@@ -209,7 +231,10 @@ export function useContextoSesion() {
     if (
       contextoActivo.value &&
       !normalizadas.some(
-        (membresia) => membresia.id === contextoActivo.value?.membresiaId,
+        (membresia) =>
+          (membresia.membresiaOrigenId ?? membresia.id) ===
+            contextoActivo.value?.membresiaId &&
+          (membresia.rolId ?? membresia.rol) === contextoActivo.value?.rolId,
       )
     ) {
       limpiarContexto();
@@ -218,7 +243,9 @@ export function useContextoSesion() {
 
   function seleccionarContexto(membresia: MembresiaOrganizacion) {
     const contexto: ContextoSesion = {
-      membresiaId: membresia.id,
+      membresiaId: membresia.membresiaOrigenId ?? membresia.id,
+      funcionId: membresia.id,
+      rolId: membresia.rolId ?? membresia.rol,
       usuarioId: membresia.usuarioId,
       personaEntidadId: membresia.personaEntidadId,
       organizacionId: membresia.organizacion?.id ?? null,
