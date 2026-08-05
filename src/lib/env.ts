@@ -1,5 +1,9 @@
 type EnvConfig = {
   apiUrl: string;
+  appUrl: string;
+  authProvider: "api" | "supabase";
+  supabasePrimaryUrl: string;
+  supabasePrimaryAnonKey: string;
   useMock: boolean;
   isProduction: boolean;
 };
@@ -7,7 +11,22 @@ type EnvConfig = {
 function readEnv(): EnvConfig {
   const isProduction = import.meta.env.PROD;
   const apiUrl = import.meta.env.VITE_API_URL?.trim() || "/api";
+  const appUrl = import.meta.env.VITE_APP_URL?.trim() || window.location.origin;
+  const authProvider =
+    import.meta.env.VITE_AUTH_PROVIDER === "supabase" ? "supabase" : "api";
+  const supabasePrimaryUrl =
+    import.meta.env.VITE_SUPABASE_PRIMARY_URL?.trim() || "";
+  const supabasePrimaryAnonKey =
+    import.meta.env.VITE_SUPABASE_PRIMARY_ANON_KEY?.trim() || "";
   const useMock = import.meta.env.VITE_USE_MOCK !== "false";
+
+  if (authProvider === "supabase") {
+    if (!supabasePrimaryUrl || !supabasePrimaryAnonKey) {
+      throw new Error(
+        "[Tukuy Academy] Supabase Auth requiere VITE_SUPABASE_PRIMARY_URL y VITE_SUPABASE_PRIMARY_ANON_KEY.",
+      );
+    }
+  }
 
   if (isProduction) {
     if (useMock) {
@@ -29,7 +48,15 @@ function readEnv(): EnvConfig {
     }
   }
 
-  return { apiUrl, useMock, isProduction };
+  return {
+    apiUrl,
+    appUrl,
+    authProvider,
+    supabasePrimaryUrl,
+    supabasePrimaryAnonKey,
+    useMock,
+    isProduction,
+  };
 }
 
 export const env = readEnv();

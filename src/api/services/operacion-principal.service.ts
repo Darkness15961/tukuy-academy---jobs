@@ -1,0 +1,10 @@
+import { supabasePrincipal } from "@/lib/supabase";
+import type { SupabaseClient } from "@supabase/supabase-js";
+const cliente=()=>supabasePrincipal() as SupabaseClient<any>;
+export type PanelPrincipal={organizaciones:{total:number;habilitadas:number;pendientes:number};identidades:{total:number;activas:number};cursos:{total:number;publicados:number;revision:number};finanzas:{facturadoMesCentavos:number;cobradoMesCentavos:number;ordenesPendientes:number};suscripciones:{activas:number;porVencer:number};alertas:Array<{prioridad:number;titulo:string;detalle:string;referencia:string}>};
+export type FacturacionPrincipal={id:string;numero:string;organizacion:string;concepto:string;moneda:string;total:number;estado:string;creadaEn:string;expiraEn:string|null;pagadaEn:string|null;proveedor:string|null;estadoPago:string|null;operacionExternaRef:string|null};
+export const operacionPrincipalService={
+ async panel(){const{data,error}=await cliente().rpc("admin_obtener_panel_real");if(error)throw new Error(error.message);return data as PanelPrincipal;},
+ async crearOrganizacion(datos:Record<string,unknown>){const{data,error}=await cliente().rpc("admin_crear_organizacion",{p_datos:datos});if(error)throw new Error(error.message);return data;},
+ async facturacion(e:{pagina:number;porPagina:number;buscar?:string;estado?:string}){const{data,error}=await cliente().rpc("admin_listar_facturacion",{p_pagina:e.pagina,p_por_pagina:e.porPagina,p_buscar:e.buscar?.trim()||null,p_estado:e.estado&&e.estado!=="TODOS"?e.estado:null});if(error)throw new Error(error.message);const r=(data??{})as any;return{datos:(r.datos??[]).map((x:any):FacturacionPrincipal=>({id:x.id,numero:x.numero,organizacion:x.organizacion,concepto:x.concepto,moneda:x.moneda,total:Number(x.total_centavos??0)/100,estado:x.estado,creadaEn:x.creada_en,expiraEn:x.expira_en,pagadaEn:x.pagada_en,proveedor:x.proveedor,estadoPago:x.estado_pago,operacionExternaRef:x.operacion_externa_ref})),total:Number(r.total??0),resumen:{facturado:Number(r.resumen?.facturadoCentavos??0)/100,cobrado:Number(r.resumen?.cobradoCentavos??0)/100,pendiente:Number(r.resumen?.pendienteCentavos??0)/100}};}
+};

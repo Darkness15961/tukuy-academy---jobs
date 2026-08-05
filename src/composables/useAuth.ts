@@ -3,6 +3,7 @@ import { useRouter } from "vue-router";
 
 import { authService } from "@/api/services/auth.service";
 import { AUTH_TOKEN_KEY, USUARIO_SESION_KEY } from "@/lib/constants";
+import { env } from "@/lib/env";
 import {
   rutaInicioPortal,
   useContextoSesion,
@@ -39,12 +40,17 @@ export function useAuth() {
   async function completarSesion(
     response: LoginResponseDto,
     destinoDespues?: string,
+    redirigirAutomaticamente = true,
   ) {
     localStorage.setItem(AUTH_TOKEN_KEY, response.token);
     localStorage.setItem(USUARIO_SESION_KEY, JSON.stringify(response.user));
     currentUser.value = response.user;
     isAuthenticated.value = true;
-    configurarMembresias(response.memberships);
+    if (env.authProvider === "supabase" && !response.memberships?.length) {
+      limpiarSesionMultiempresa();
+    } else {
+      configurarMembresias(response.memberships);
+    }
 
     const destinoSeguro =
       destinoDespues?.startsWith("/") && !destinoDespues.startsWith("//")
@@ -55,6 +61,10 @@ export function useAuth() {
       await router.push(destinoSeguro);
       return;
     }
+
+    // Al abrir manualmente "Cambiar perfil" solo actualizamos los contextos;
+    // la selección automática de un único perfil pertenece al flujo de login.
+    if (!redirigirAutomaticamente) return;
 
     if (membresiasActivas.value.length === 1) {
       const membresia = membresiasActivas.value[0];
@@ -109,8 +119,9 @@ export function useAuth() {
     loading.value = true;
     error.value = null;
     try {
-      const response = await authService.loginConGoogle();
-      await completarSesion(response, destinoDespues);
+      const response = await authService.loginConGoogle(destinoDespues);
+      // Supabase redirige a Google; la sesión se completa en /auth/callback.
+      if (response) await completarSesion(response, destinoDespues);
     } catch (err) {
       error.value =
         err instanceof Error
@@ -120,6 +131,34 @@ export function useAuth() {
     } finally {
       loading.value = false;
     }
+  }
+
+  async function completarOAuth(destinoDespues?: string) {
+    loading.value = true;
+    error.value = null;
+    try {
+      const response = await authService.sesionActual();
+      await completarSesion(response, destinoDespues);
+    } catch (err) {
+      error.value =
+        err instanceof Error ? err.message : "No se pudo completar el acceso";
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  async function sincronizarSesion(
+    destinoDespues?: string,
+    redirigirAutomaticamente = true,
+  ) {
+    if (env.authProvider !== "supabase") return;
+    const response = await authService.sesionActual();
+    await completarSesion(
+      response,
+      destinoDespues,
+      redirigirAutomaticamente,
+    );
   }
 
   async function logout() {
@@ -136,7 +175,9 @@ export function useAuth() {
   }
 
   async function restaurarUsuario() {
-    if (!isAuthenticated.value || currentUser.value) return currentUser.value;
+    if (!isAuthenticated.value || currentUser.value?.avatarUrl) {
+      return currentUser.value;
+    }
     try {
       const usuario = await authService.me();
       currentUser.value = usuario;
@@ -159,6 +200,8 @@ export function useAuth() {
     login,
     registrar,
     loginConGoogle,
+    completarOAuth,
+    sincronizarSesion,
     logout,
     restaurarUsuario,
   };

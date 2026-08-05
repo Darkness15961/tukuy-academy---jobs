@@ -1,6 +1,7 @@
 import axios from "axios";
 
 import { apiConfig } from "@/api/config";
+import { env } from "@/lib/env";
 import {
   AUTH_TOKEN_KEY,
   CONTEXTO_SESION_KEY,
@@ -45,6 +46,12 @@ api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
+      // Durante la migración, los módulos antiguos aún consultan /api. Un 401
+      // de ese backend no invalida una sesión administrada por Supabase Auth.
+      // Supabase es la única fuente autorizada para cerrar esa sesión.
+      if (env.authProvider === "supabase") {
+        return Promise.reject(error);
+      }
       localStorage.removeItem(AUTH_TOKEN_KEY);
       localStorage.removeItem(USUARIO_SESION_KEY);
       localStorage.removeItem(MEMBRESIAS_KEY);

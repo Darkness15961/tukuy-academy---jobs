@@ -8,6 +8,9 @@ import {
   CUENTAS_DEMO,
 } from "@/data/cuentas-demo.mock";
 import { USUARIO_SESION_KEY, USUARIOS_REGISTRADOS_KEY } from "@/lib/constants";
+import { env } from "@/lib/env";
+import { supabasePrincipal } from "@/lib/supabase";
+import type { Session, User } from "@supabase/supabase-js";
 import type {
   LoginRequestDto,
   LoginResponseDto,
@@ -17,7 +20,14 @@ import type {
   UsuarioApiDto,
   UsuarioRegistradoDto,
 } from "@/types/api";
-import type { MembresiaOrganizacion } from "@/types/membresia.types";
+import type {
+  AlcanceMembresia,
+  AmbitoDocencia,
+  MembresiaEntrada,
+  MembresiaOrganizacion,
+  Rol,
+  TipoPortal,
+} from "@/types/membresia.types";
 
 type RespuestaAuthApi = {
   token: string;
@@ -26,6 +36,110 @@ type RespuestaAuthApi = {
   memberships?: LoginResponseDto["memberships"];
   membresias?: LoginResponseDto["memberships"];
 };
+
+/** El mock de datos puede convivir con Supabase Auth durante la migración. */
+function usarAuthMock() {
+  return apiConfig.useMock && env.authProvider !== "supabase";
+}
+
+function textoMetadata(
+  metadata: Record<string, unknown>,
+  ...claves: string[]
+): string {
+  for (const clave of claves) {
+    const valor = metadata[clave];
+    if (typeof valor === "string" && valor.trim()) return valor.trim();
+  }
+  return "";
+}
+
+function perfilDesdeSupabase(usuario: User): UserProfileDto {
+  const metadata = usuario.user_metadata ?? {};
+  const nombreCompleto = textoMetadata(metadata, "full_name", "name");
+  const nombres = textoMetadata(metadata, "nombres", "first_name");
+  const apellidos = textoMetadata(metadata, "apellidos", "last_name");
+  const nombre =
+    `${nombres} ${apellidos}`.trim() ||
+    nombreCompleto ||
+    usuario.email?.split("@")[0] ||
+    "Usuario Tukuy";
+  const partes = nombre.split(/\s+/).filter(Boolean);
+
+  return {
+    name: nombre,
+    initials: `${partes[0]?.[0] ?? "T"}${partes[1]?.[0] ?? "U"}`.toUpperCase(),
+    avatarUrl:
+      textoMetadata(metadata, "avatar_url", "picture") || undefined,
+    trade: "Usuario Tukuy",
+    specialty: "Perfil en construcción",
+    location: "Perú",
+    profileProgress: 28,
+    employabilityScore: 40,
+    certificates: 0,
+    applications: 0,
+  };
+}
+
+type ContextoSupabase = {
+  membresia_id: string;
+  funcion_id: string;
+  rol_id: string;
+  usuario_id: string;
+  instalacion_organizacion_ref: string | null;
+  organizacion_nombre: string;
+  rol_codigo: string;
+  portal: string;
+  permisos: string[] | null;
+  alcance: AlcanceMembresia | null;
+  ambito_docencia: string | null;
+};
+
+async function membresiasDesdeSupabase(): Promise<MembresiaEntrada[]> {
+  const { data, error } = await supabasePrincipal().rpc(
+    "obtener_mis_contextos",
+  );
+  if (error) throw new Error(error.message);
+
+  return ((data ?? []) as ContextoSupabase[]).map((contexto) => ({
+    id: contexto.funcion_id,
+    membresiaOrigenId: contexto.membresia_id,
+    rolId: contexto.rol_id,
+    usuarioId: contexto.usuario_id,
+    organizacion: contexto.instalacion_organizacion_ref
+      ? {
+          id: contexto.instalacion_organizacion_ref,
+          nombre: contexto.organizacion_nombre,
+          tipo: "EMPRESA" as const,
+          estado: "ACTIVA" as const,
+        }
+      : null,
+    rol: contexto.rol_codigo as Rol,
+    permisos: contexto.permisos ?? [],
+    alcance: contexto.alcance ?? undefined,
+    estado: "ACTIVA" as const,
+    portal: contexto.portal as TipoPortal,
+    ambitoDocencia:
+      (contexto.ambito_docencia as AmbitoDocencia | null) ?? undefined,
+  }));
+}
+
+async function respuestaDesdeSesionSupabase(
+  sesion: Session,
+): Promise<LoginResponseDto> {
+  const memberships = await membresiasDesdeSupabase();
+  if (memberships.some((membresia) => membresia.organizacion?.id === "30000000-0000-4000-8000-000000000001")) {
+    void supabasePrincipal().functions.invoke("secondary-gateway", {
+      body: { action: "sync-access" },
+    }).then(({ error }) => {
+      if (error) console.warn("No se pudo sincronizar el acceso secundario:", error.message);
+    });
+  }
+  return {
+    token: sesion.access_token,
+    user: perfilDesdeSupabase(sesion.user),
+    memberships,
+  };
+}
 
 function perfilDesdeApi(usuario: UsuarioApiDto): UserProfileDto {
   return {
@@ -160,7 +274,7 @@ export const authService = {
   listarUsuariosRegistrados: leerUsuariosRegistrados,
 
   async login(credentials: LoginRequestDto): Promise<LoginResponseDto> {
-    if (apiConfig.useMock) {
+    if (usarAuthMock()) {
       const username = credentials.dni.trim();
       const password = credentials.password.trim();
 
@@ -190,6 +304,16 @@ export const authService = {
       return resolveMock(respuestaSesion(cuenta));
     }
 
+    if (env.authProvider === "supabase") {
+      const { data, error } = await supabasePrincipal().auth.signInWithPassword({
+        email: credentials.dni.trim().toLowerCase(),
+        password: credentials.password,
+      });
+      if (error) throw new Error(error.message);
+      if (!data.session) throw new Error("Supabase no devolvió una sesión activa");
+      return respuestaDesdeSesionSupabase(data.session);
+    }
+
     const { data } = await api.post<RespuestaAuthApi>(API.auth.login, {
       correo: credentials.dni.trim().toLowerCase(),
       password: credentials.password,
@@ -198,7 +322,7 @@ export const authService = {
   },
 
   async registrar(datos: RegistroRequestDto): Promise<LoginResponseDto> {
-    if (apiConfig.useMock) {
+    if (usarAuthMock()) {
       const validados = validarRegistro(datos);
       const existentes = leerUsuariosRegistrados();
 
@@ -233,6 +357,30 @@ export const authService = {
       return resolveMock(respuestaSesion(cuenta));
     }
 
+    if (env.authProvider === "supabase") {
+      const validados = validarRegistro(datos);
+      const { data, error } = await supabasePrincipal().auth.signUp({
+        email: validados.correo,
+        password: validados.password,
+        options: {
+          data: {
+            nombres: validados.nombre,
+            apellidos: validados.apellidos,
+            telefono: datos.telefono?.trim() || null,
+            full_name: `${validados.nombre} ${validados.apellidos}`.trim(),
+          },
+          emailRedirectTo: `${env.appUrl.replace(/\/$/, "")}/auth/callback`,
+        },
+      });
+      if (error) throw new Error(error.message);
+      if (!data.session) {
+        throw new Error(
+          "Cuenta creada. Revisa tu correo para confirmar el registro antes de iniciar sesión.",
+        );
+      }
+      return respuestaDesdeSesionSupabase(data.session);
+    }
+
     const { data } = await api.post<RespuestaAuthApi>(API.auth.registro, {
       correo: datos.correo.trim().toLowerCase(),
       nombres: datos.nombre.trim(),
@@ -243,8 +391,8 @@ export const authService = {
     return normalizarRespuestaAuth(data);
   },
 
-  async loginConGoogle(): Promise<LoginResponseDto> {
-    if (apiConfig.useMock) {
+  async loginConGoogle(destinoDespues?: string): Promise<LoginResponseDto | null> {
+    if (usarAuthMock()) {
       await new Promise((r) => setTimeout(r, 700));
 
       const correoGoogle = "nuevo.usuario@gmail.com";
@@ -269,17 +417,48 @@ export const authService = {
       return resolveMock(respuestaSesion(cuenta));
     }
 
+    if (env.authProvider === "supabase") {
+      const callback = new URL("/auth/callback", env.appUrl);
+      if (
+        destinoDespues?.startsWith("/") &&
+        !destinoDespues.startsWith("//")
+      ) {
+        callback.searchParams.set("continuar", destinoDespues);
+      }
+      const { error } = await supabasePrincipal().auth.signInWithOAuth({
+        provider: "google",
+        options: { redirectTo: callback.toString() },
+      });
+      if (error) throw new Error(error.message);
+      return null;
+    }
+
     const { data } = await api.post<LoginResponseDto>(API.auth.google);
     return data;
   },
 
   async logout(): Promise<void> {
-    if (apiConfig.useMock) return;
+    if (usarAuthMock()) return;
+    if (env.authProvider === "supabase") {
+      const { error } = await supabasePrincipal().auth.signOut();
+      if (error) throw new Error(error.message);
+      return;
+    }
     await api.post(API.auth.logout);
   },
 
+  async sesionActual(): Promise<LoginResponseDto> {
+    if (env.authProvider !== "supabase") {
+      throw new Error("La recuperación OAuth solo está disponible con Supabase Auth");
+    }
+    const { data, error } = await supabasePrincipal().auth.getSession();
+    if (error) throw new Error(error.message);
+    if (!data.session) throw new Error("No se encontró una sesión de Supabase");
+    return respuestaDesdeSesionSupabase(data.session);
+  },
+
   async me(): Promise<UserProfileDto> {
-    if (apiConfig.useMock) {
+    if (usarAuthMock()) {
       const guardado = localStorage.getItem(USUARIO_SESION_KEY);
       if (guardado) {
         try {
@@ -289,6 +468,11 @@ export const authService = {
         }
       }
       return resolveMock(userMock);
+    }
+    if (env.authProvider === "supabase") {
+      const { data, error } = await supabasePrincipal().auth.getUser();
+      if (error) throw new Error(error.message);
+      return perfilDesdeSupabase(data.user);
     }
     const { data } = await api.get<UsuarioApiDto | { user: UsuarioApiDto }>(
       API.auth.me,

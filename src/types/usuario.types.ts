@@ -13,6 +13,7 @@ export type WorkExperience = {
 export type UserProfile = {
   name: string;
   initials: string;
+  avatarUrl?: string;
   trade: string;
   specialty: string;
   location: string;

@@ -115,7 +115,9 @@ function alCambiarMenuUsuario(abierto: boolean) {
 }
 
 const isPortal = computed(() => props.mode === "portal");
-const profilePhotoSrc = "/img/vistasimg/perfilfoto.png";
+const profilePhotoSrc = computed(
+  () => props.user?.avatarUrl || "/img/vistasimg/perfilfoto.png",
+);
 const profilePhotoFailed = ref(false);
 const otrasFunciones = computed(() =>
   contextoActivo.value?.organizacionId &&

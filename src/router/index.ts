@@ -3,6 +3,8 @@ import { createRouter, createWebHistory } from "vue-router";
 import { AUTH_TOKEN_KEY, CONTEXTO_SESION_KEY } from "@/lib/constants";
 import { rutaInicioPortal } from "@/composables/useContextoSesion";
 import { portalPathByView } from "@/lib/portal-routes";
+import { env } from "@/lib/env";
+import { supabasePrincipal } from "@/lib/supabase";
 
 const portalLayout = () => import("@/views/portal/PortalLayout.vue");
 const docenteLayout = () => import("@/portal-docente/DocenteLayout.vue");
@@ -139,6 +141,11 @@ const router = createRouter({
       path: "/login",
       name: "login",
       component: () => import("@/views/LoginView.vue"),
+    },
+    {
+      path: "/auth/callback",
+      name: "auth-callback",
+      component: () => import("@/views/AuthCallbackView.vue"),
     },
     {
       path: "/registro",
@@ -527,6 +534,18 @@ const router = createRouter({
           meta: { titulo: "Panel global" },
         },
         {
+          path: "accesos",
+          name: "accesos-admin",
+          component: () =>
+            import(
+              "@/administracion-tukuy/views/AccesosPermisosAdministracionView.vue"
+            ),
+          meta: {
+            titulo: "Accesos y permisos",
+            requiredPermission: "perfiles.administrar",
+          },
+        },
+        {
           path: "ecosistema",
           name: "ecosistema-admin",
           component: () =>
@@ -758,8 +777,13 @@ const router = createRouter({
   },
 });
 
-router.beforeEach((to) => {
-  const token = localStorage.getItem(AUTH_TOKEN_KEY);
+router.beforeEach(async (to) => {
+  let token = localStorage.getItem(AUTH_TOKEN_KEY);
+  if (env.authProvider === "supabase" && !env.useMock) {
+    const { data } = await supabasePrincipal().auth.getSession();
+    token = data.session?.access_token ?? null;
+    if (token) localStorage.setItem(AUTH_TOKEN_KEY, token);
+  }
   const contextoGuardado = localStorage.getItem(CONTEXTO_SESION_KEY);
   if (to.meta.requiresAuth && !token) {
     return { name: "login", query: { continuar: to.fullPath } };

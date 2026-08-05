@@ -5,42 +5,44 @@ import DataTable from "primevue/datatable";
 import InputText from "primevue/inputtext";
 import Select from "primevue/select";
 import Tag from "primevue/tag";
-import { computed, onMounted, ref } from "vue";
+import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 import { Button } from "@/components/ui/button";
 import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  administracionService,
-  type EventoAuditoria,
-} from "@/api/services/administracion.service";
+import { configuracionAuditoriaPrincipalService, type AuditoriaPrincipal } from "@/api/services/configuracion-auditoria-principal.service";
 
 const cargando = ref(true);
 const busqueda = ref("");
 const nivel = ref("TODOS");
 const mensaje = ref("");
-const eventos = ref<EventoAuditoria[]>([]);
+const eventos = ref<AuditoriaPrincipal[]>([]);
+const pagina = ref(1);
+const porPagina = ref(10);
+const total = ref(0);
+const error = ref("");
+let temporizador: ReturnType<typeof setTimeout> | undefined;
 
-onMounted(async () => {
+async function cargar() {
+  cargando.value = true;
+  error.value = "";
   try {
-    eventos.value = await administracionService.auditoria.listar();
+    const respuesta = await configuracionAuditoriaPrincipalService.listarAuditoria({ pagina: pagina.value, porPagina: porPagina.value, buscar: busqueda.value, nivel: nivel.value });
+    eventos.value = respuesta.datos;
+    total.value = respuesta.total;
+  } catch (causa) {
+    error.value = causa instanceof Error ? causa.message : "No se pudo cargar la auditoría.";
   } finally {
     cargando.value = false;
   }
-});
+}
 
-const filtrados = computed(() => {
-  const termino = busqueda.value.trim().toLowerCase();
-  return eventos.value.filter(
-    (evento) =>
-      (!termino ||
-        [evento.usuario, evento.accion, evento.modulo, evento.origen].some(
-          (valor) => valor.toLowerCase().includes(termino),
-        )) &&
-      (nivel.value === "TODOS" || evento.nivel === nivel.value),
-  );
-});
+function cambiarPagina(evento: { first: number; rows: number }) { porPagina.value = evento.rows; pagina.value = Math.floor(evento.first / evento.rows) + 1; void cargar(); }
+
+watch([busqueda, nivel], () => { if (temporizador) clearTimeout(temporizador); temporizador = setTimeout(() => { pagina.value = 1; void cargar(); }, 350); });
+onMounted(() => void cargar());
+onBeforeUnmount(() => { if (temporizador) clearTimeout(temporizador); });
 
 function severidad(valor: string) {
   if (valor === "ALERTA") return "danger";
@@ -83,6 +85,10 @@ function severidad(valor: string) {
       </div>
     </div>
     <div
+      v-if="error"
+      class="border-l-4 border-l-red-500 bg-red-500/10 px-4 py-3 text-sm font-semibold"
+    >{{ error }}</div>
+    <div
       v-if="mensaje"
       class="border-l-4 border-l-teal-600 bg-teal-50 px-4 py-3 text-sm font-semibold text-teal-900"
     >
@@ -120,20 +126,23 @@ function severidad(valor: string) {
         <DataTable
           v-else
           class="tabla-administracion"
-          :value="filtrados"
+          :value="eventos"
           data-key="id"
+          lazy
           size="small"
           scrollable
           resizable-columns
           column-resize-mode="fit"
           removable-sort
-          :paginator="filtrados.length > 5"
-          :rows="5"
-          :rows-per-page-options="[5, 10, 20]"
+          paginator
+          :first="(pagina - 1) * porPagina"
+          :rows="porPagina"
+          :total-records="total"
+          :rows-per-page-options="[10, 20, 50]"
           paginator-template="RowsPerPageDropdown FirstPageLink PrevPageLink CurrentPageReport NextPageLink LastPageLink"
           current-page-report-template="{first}–{last} de {totalRecords} eventos"
-          :always-show-paginator="false"
           table-style="min-width: 78rem"
+          @page="cambiarPagina"
         >
           <Column
             field="fecha"
@@ -141,7 +150,7 @@ function severidad(valor: string) {
             sortable
             style="min-width: 12rem"
             ><template #body="{ data }"
-              ><span class="font-mono text-xs">{{ data.fecha }}</span></template
+              ><span class="font-mono text-xs">{{ new Date(data.fecha).toLocaleString('es-PE') }}</span></template
             ></Column
           >
           <Column

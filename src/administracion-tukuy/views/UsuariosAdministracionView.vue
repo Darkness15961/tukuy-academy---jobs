@@ -6,6 +6,7 @@ import InputText from "primevue/inputtext";
 import Select from "primevue/select";
 import Tag from "primevue/tag";
 import { computed, onMounted, ref } from "vue";
+import { useRouter } from "vue-router";
 
 import { Button } from "@/components/ui/button";
 import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
@@ -21,6 +22,7 @@ const usuarios = ref<UsuarioAdministrado[]>([]);
 const busqueda = ref("");
 const estado = ref("TODOS");
 const mensaje = ref("");
+const router = useRouter();
 
 onMounted(async () => {
   try {
@@ -230,7 +232,7 @@ function severidad(valor: string) {
                 <Button
                   size="sm"
                   variant="outline"
-                  @click="mensaje = `Consultando membresías de ${data.nombre}.`"
+                  @click="router.push({ path: '/admin/accesos', query: { buscar: data.correo } })"
                   ><UserRoundCheck class="h-4 w-4" /> Perfiles</Button
                 ><Button
                   size="sm"

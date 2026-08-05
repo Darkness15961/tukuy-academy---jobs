@@ -33,7 +33,7 @@ import {
 
 const route = useRoute();
 const router = useRouter();
-const { logout } = useAuth();
+const { logout, currentUser } = useAuth();
 const { contextoActivo, funcionesEntidadActiva, tienePermiso } =
   useContextoSesion();
 const menuAbierto = ref(false);
@@ -191,7 +191,15 @@ function enlaceActivo(ruta: string) {
                 aria-label="Abrir menú de usuario"
               >
                 <Avatar class="h-9 w-9">
+                  <img
+                    v-if="currentUser?.avatarUrl"
+                    :src="currentUser.avatarUrl"
+                    :alt="`Foto de ${currentUser.name}`"
+                    referrerpolicy="no-referrer"
+                    class="h-full w-full object-cover"
+                  />
                   <AvatarFallback
+                    v-else
                     class="bg-primary text-xs text-primary-foreground"
                   >
                     {{ iniciales }}

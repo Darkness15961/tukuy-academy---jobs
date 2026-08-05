@@ -5,10 +5,12 @@ import Aura from "@primeuix/themes/aura";
 import App from "@/App.vue";
 import { inicializarTema } from "@/composables/useTema";
 import { env } from "@/lib/env";
+import { inicializarSesionSupabase } from "@/lib/supabase";
 import router from "@/router";
 import "@/style.css";
 
 inicializarTema();
+await inicializarSesionSupabase();
 
 if (import.meta.env.DEV) {
   console.info(`[Tukuy Academy] API: ${env.apiUrl} · mock: ${env.useMock}`);

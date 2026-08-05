@@ -3,9 +3,8 @@ import {
   ArrowRight,
   Check,
   LogOut,
-  UsersRound,
 } from "lucide-vue-next";
-import { computed } from "vue";
+import { computed, onMounted } from "vue";
 import { useRouter } from "vue-router";
 
 import { Button } from "@/components/ui/button";
@@ -22,12 +21,17 @@ import type {
 } from "@/types/membresia.types";
 
 const router = useRouter();
-const { logout } = useAuth();
+const { logout, currentUser, restaurarUsuario, sincronizarSesion } = useAuth();
 const {
   membresiasActivas,
   contextoActivo,
   seleccionarContexto,
 } = useContextoSesion();
+
+onMounted(() => {
+  void restaurarUsuario();
+  void sincronizarSesion(undefined, false);
+});
 
 
 const presentacionPortal: Record<
@@ -178,6 +182,22 @@ function nombreContexto(membresia: MembresiaOrganizacion) {
   return membresia.organizacion?.nombre ?? "Tukuy Academy";
 }
 
+function claseTarjetaContexto(membresia: MembresiaOrganizacion) {
+  const ancho =
+    contextosDisponibles.value.length === 1
+      ? "xl:max-w-md xl:flex-none"
+      : contextosDisponibles.value.length === 2
+        ? "xl:max-w-lg"
+        : contextosDisponibles.value.length === 3
+          ? "xl:max-w-md"
+          : "xl:max-w-sm";
+  return [
+    "group relative min-h-[640px] w-full overflow-hidden border-white/20 bg-[#07152B] text-white shadow-[0_24px_60px_-36px_rgba(0,0,0,0.95)] transition duration-500 hover:z-10 hover:-translate-y-1 hover:shadow-[0_34px_80px_-34px_rgba(0,0,0,0.95)] sm:max-w-md md:max-w-[calc(50%-0.25rem)] xl:min-h-full xl:flex-1",
+    presentacionPortal[membresia.portal].colorBorde,
+    ancho,
+  ].join(" ");
+}
+
 function tituloContexto(membresia: MembresiaOrganizacion) {
   if (esDocenciaIndependiente(membresia)) return "Portal docente";
   if (esAccesoInstitucional(membresia)) {
@@ -249,6 +269,22 @@ function funcionesContexto(membresia: MembresiaOrganizacion) {
     <div
       class="pointer-events-none absolute inset-x-0 top-0 h-72 bg-linear-to-b from-blue-400/10 to-transparent"
     />
+    <div
+      v-if="!contextosDisponibles.length"
+      class="pointer-events-none absolute inset-0"
+    >
+      <img
+        src="/img/portal-organizacion.png"
+        alt=""
+        class="absolute inset-0 h-full w-full object-cover object-center opacity-65"
+      />
+      <div
+        class="absolute inset-0 bg-linear-to-r from-[#020817] via-[#06152b]/95 to-[#06152b]/15"
+      />
+      <div
+        class="absolute inset-0 bg-linear-to-t from-[#020817] via-transparent to-black/40"
+      />
+    </div>
 
     <Button
       variant="ghost"
@@ -263,6 +299,7 @@ function funcionesContexto(membresia: MembresiaOrganizacion) {
       class="relative mx-auto grid min-h-screen max-w-420 gap-6 px-5 py-7 sm:px-8 sm:py-9 xl:grid-rows-[auto_minmax(0,1fr)]"
     >
       <div
+        v-if="contextosDisponibles.length"
         class="flex min-h-24 items-end border-b border-white/15 pb-5 pr-36"
       >
         <div>
@@ -286,17 +323,7 @@ function funcionesContexto(membresia: MembresiaOrganizacion) {
         <Card
           v-for="membresia in contextosDisponibles"
           :key="membresia.id"
-          class="group relative min-h-[640px] w-full overflow-hidden border-white/20 bg-[#07152B] text-white shadow-[0_24px_60px_-36px_rgba(0,0,0,0.95)] transition duration-500 hover:z-10 hover:-translate-y-1 hover:shadow-[0_34px_80px_-34px_rgba(0,0,0,0.95)] sm:max-w-md md:max-w-[calc(50%-0.25rem)] xl:min-h-full xl:flex-1"
-          :class="[
-            presentacionPortal[membresia.portal].colorBorde,
-            contextosDisponibles.length === 1
-              ? 'xl:max-w-md xl:flex-none'
-              : contextosDisponibles.length === 2
-                ? 'xl:max-w-lg'
-                : contextosDisponibles.length === 3
-                  ? 'xl:max-w-md'
-                  : 'xl:max-w-sm',
-          ]"
+          :class="claseTarjetaContexto(membresia)"
         >
           <div
             v-if="esAccesoInstitucional(membresia)"
@@ -369,15 +396,84 @@ function funcionesContexto(membresia: MembresiaOrganizacion) {
         </Card>
       </div>
 
-      <Card v-else class="mx-auto max-w-lg border-[#DDE7F4] bg-white shadow-sm">
-        <CardContent class="grid justify-items-center gap-3 p-8 text-center">
-          <UsersRound class="h-10 w-10 text-[#94A3B8]" />
-          <h2 class="font-bold">No tienes perfiles activos</h2>
-          <p class="text-sm text-[#64748B]">
-            Comunícate con el administrador de tu organización.
-          </p>
-        </CardContent>
-      </Card>
+      <section
+        v-else
+        class="relative flex min-h-[calc(100svh-4rem)] items-center py-20 sm:py-24"
+      >
+        <div class="w-full max-w-3xl">
+          <div class="flex items-center gap-4">
+            <div
+              class="relative h-14 w-14 shrink-0 overflow-hidden rounded-full border-2 border-[#F5B400] bg-[#123768] p-0.5 shadow-xl"
+            >
+              <img
+                v-if="currentUser?.avatarUrl"
+                :src="currentUser.avatarUrl"
+                :alt="`Foto de ${currentUser.name}`"
+                referrerpolicy="no-referrer"
+                class="h-full w-full rounded-full object-cover"
+              />
+              <div
+                v-else
+                class="grid h-full w-full place-items-center rounded-full text-sm font-black text-white"
+              >
+                {{ currentUser?.initials ?? "TU" }}
+              </div>
+            </div>
+            <div>
+              <p
+                class="text-xs font-black uppercase tracking-[0.24em] text-emerald-300"
+              >
+                Identidad verificada
+              </p>
+              <p class="mt-1 text-sm font-semibold text-white/70">
+                {{ currentUser?.name ?? "Usuario Tukuy" }}
+              </p>
+            </div>
+          </div>
+
+          <div class="mt-9">
+            <span
+              class="inline-block bg-[#174B88] px-4 py-2 text-sm font-black uppercase tracking-[0.16em] text-white sm:text-base"
+            >
+              Acceso pendiente
+            </span>
+            <h1
+              class="mt-4 max-w-2xl text-4xl font-black leading-[0.98] tracking-tight text-white sm:text-6xl lg:text-7xl"
+            >
+              Aún no tienes un perfil asignado
+            </h1>
+          </div>
+
+          <div class="mt-8 flex max-w-xl items-start gap-4 border-l-4 border-[#F5B400] bg-black/30 px-5 py-4 backdrop-blur-sm">
+            <div>
+              <p class="font-black text-white">
+                Comunícate con el administrador de tu organización.
+              </p>
+              <p class="mt-1 text-sm leading-6 text-white/60">
+                Cuando recibas tu asignación, tus espacios aparecerán
+                automáticamente en esta pantalla.
+              </p>
+            </div>
+          </div>
+
+          <div class="mt-8 flex flex-wrap gap-3">
+            <Button
+              class="h-12 rounded-none bg-[#F5B400] px-7 font-black text-[#07152B] hover:bg-amber-300"
+              @click="router.push('/')"
+            >
+              Volver al inicio
+              <ArrowRight class="h-4 w-4" />
+            </Button>
+            <Button
+              variant="outline"
+              class="h-12 rounded-none border-white/50 bg-black/20 px-7 font-bold text-white backdrop-blur-sm hover:bg-white hover:text-[#07152B]"
+              @click="logout"
+            >
+              Cerrar sesión
+            </Button>
+          </div>
+        </div>
+      </section>
     </section>
   </main>
 </template>

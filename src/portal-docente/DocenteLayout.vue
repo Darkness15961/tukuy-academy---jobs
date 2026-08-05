@@ -377,11 +377,18 @@ async function abrirAviso(aviso: NotificacionDocente) {
               type="button"
               aria-label="Abrir menú de usuario"
             >
-              <Avatar class="h-9 w-9 bg-primary text-white"
-                ><AvatarFallback class="bg-primary text-xs text-white">{{
-                  inicialesUsuario
-                }}</AvatarFallback></Avatar
-              >
+              <Avatar class="h-9 w-9 bg-primary text-white">
+                <img
+                  v-if="currentUser?.avatarUrl"
+                  :src="currentUser.avatarUrl"
+                  :alt="`Foto de ${nombreUsuario}`"
+                  referrerpolicy="no-referrer"
+                  class="h-full w-full object-cover"
+                />
+                <AvatarFallback v-else class="bg-primary text-xs text-white">
+                  {{ inicialesUsuario }}
+                </AvatarFallback>
+              </Avatar>
               <span class="hidden sm:block"
                 ><strong class="block max-w-36 truncate text-xs">{{
                   nombreUsuario

@@ -14,6 +14,7 @@ import {
   Network,
   Settings,
   ShieldCheck,
+  ShieldEllipsis,
   UsersRound,
   X,
 } from "lucide-vue-next";
@@ -77,6 +78,12 @@ const navegacion = computed(() => [
     permiso: "organizaciones.ver",
   },
   { etiqueta: "Usuarios", ruta: "/admin/usuarios", icono: UsersRound, permiso: "usuarios.ver" },
+  {
+    etiqueta: "Accesos y permisos",
+    ruta: "/admin/accesos",
+    icono: ShieldEllipsis,
+    permiso: "perfiles.administrar",
+  },
   {
     etiqueta: "Cursos y revisión",
     ruta: "/admin/cursos",
@@ -260,7 +267,17 @@ async function navegar(ruta: string) {
               aria-label="Abrir menú de usuario"
             >
               <Avatar class="h-9 w-9">
-                <AvatarFallback class="bg-primary text-xs text-primary-foreground">
+                <img
+                  v-if="currentUser?.avatarUrl"
+                  :src="currentUser.avatarUrl"
+                  :alt="`Foto de ${nombreUsuario}`"
+                  referrerpolicy="no-referrer"
+                  class="h-full w-full object-cover"
+                />
+                <AvatarFallback
+                  v-else
+                  class="bg-primary text-xs text-primary-foreground"
+                >
                   {{ inicialesUsuario }}
                 </AvatarFallback>
               </Avatar>

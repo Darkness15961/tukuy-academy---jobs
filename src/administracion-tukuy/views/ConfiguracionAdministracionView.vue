@@ -15,7 +15,7 @@ import { Button } from "@/components/ui/button";
 import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { administracionService } from "@/api/services/administracion.service";
+import { configuracionAuditoriaPrincipalService } from "@/api/services/configuracion-auditoria-principal.service";
 
 const cargando = ref(true);
 const guardado = ref(false);
@@ -35,7 +35,7 @@ onMounted(async () => {
   try {
     Object.assign(
       configuracion,
-      await administracionService.obtenerConfiguracion(),
+      await configuracionAuditoriaPrincipalService.obtenerConfiguracion(),
     );
   } finally {
     cargando.value = false;
@@ -43,7 +43,7 @@ onMounted(async () => {
 });
 
 async function guardar() {
-  await administracionService.guardarConfiguracion({ ...configuracion });
+  await configuracionAuditoriaPrincipalService.guardarConfiguracion({ ...configuracion });
   guardado.value = true;
   window.setTimeout(() => (guardado.value = false), 3000);
 }
