@@ -37,7 +37,7 @@ function cors(req: Request) {
   };
 }
 
-type Kind = "portada" | "material" | "entrega";
+type Kind = "portada" | "material" | "entrega" | "certificado";
 
 function s3Client() {
   const region = Deno.env.get("AWS_REGION") ?? "us-east-2";
@@ -68,10 +68,11 @@ function publicBaseUrl() {
   return `https://${bucketName()}.s3.${region}.amazonaws.com`;
 }
 
-/** Prefijos alineados a la bucket policy (portadas/*, materiales/*, entregas/*). */
+/** Prefijos alineados a la bucket policy (portadas/*, materiales/*, entregas/*, certificados/*). */
 function prefijoKind(kind: Kind) {
   if (kind === "portada") return "portadas";
   if (kind === "material") return "materiales";
+  if (kind === "certificado") return "certificados";
   return "entregas";
 }
 
@@ -119,12 +120,12 @@ Deno.serve(async (req) => {
 
     if (action === "presign-upload") {
       const kindRaw = String(entrada.kind ?? "").toLowerCase();
-      const kind = (["portada", "material", "entrega"].includes(kindRaw)
+      const kind = (["portada", "material", "entrega", "certificado"].includes(kindRaw)
         ? kindRaw
         : "") as Kind | "";
       if (!kind) {
         return json(
-          { ok: false, error: "kind debe ser portada | material | entrega" },
+          { ok: false, error: "kind debe ser portada | material | entrega | certificado" },
           400,
           corsHeaders,
         );
@@ -160,7 +161,9 @@ Deno.serve(async (req) => {
       );
 
       const publicUrl =
-        kind === "entrega" ? null : `${publicBaseUrl()}/${objectKey}`;
+        kind === "entrega" || kind === "certificado"
+          ? null
+          : `${publicBaseUrl()}/${objectKey}`;
 
       return json(
         {
@@ -184,10 +187,11 @@ Deno.serve(async (req) => {
       }
       if (
         !objectKey.startsWith("entregas/") &&
-        !objectKey.startsWith("entrega/")
+        !objectKey.startsWith("entrega/") &&
+        !objectKey.startsWith("certificados/")
       ) {
         return json(
-          { ok: false, error: "Solo se firman descargas de entregas/" },
+          { ok: false, error: "Solo se firman descargas de entregas/ o certificados/" },
           403,
           corsHeaders,
         );

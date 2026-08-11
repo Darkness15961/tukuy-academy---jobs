@@ -114,11 +114,13 @@ function crearRepositorioDocente<T extends RegistroIdentificable>(
 ) {
   function actual() {
     const contexto = obtenerContextoActual();
+    const sinDemo =
+      apiConfig.sinDatosDemo || apiConfig.secundariaCursos;
     return crearRepositorioLocal<T>({
       clave: claveContextual(recurso, contexto.membresiaId),
       ruta,
-      semilla: crearSemilla(contexto),
-      version: 6,
+      semilla: sinDemo ? [] : crearSemilla(contexto),
+      version: sinDemo ? 10 : 6,
     });
   }
 
@@ -354,13 +356,37 @@ const cursos = {
     if (apiConfig.secundariaCursos) {
       const contexto = obtenerContextoActual();
       const listado = await secundariaGatewayService.listarCursos();
-      return listado.cursos.map((curso) =>
+      const base = listado.cursos.map((curso) =>
         mapearCursoSecundariaADocente(curso, contexto),
       );
+      const observados = base.filter((curso) => curso.estado === "OBSERVADO");
+      if (!observados.length) return base;
+
+      const enriquecidos = await Promise.all(
+        observados.map(async (curso) => {
+          try {
+            const detalle =
+              await secundariaGatewayService.obtenerBorrador(curso.id);
+            const obs = (detalle.borrador as { observacion?: string } | null)
+              ?.observacion;
+            return obs
+              ? mapearCursoSecundariaADocente(
+                  listado.cursos.find((c) => c.id === curso.id)!,
+                  contexto,
+                  { observacion: obs },
+                )
+              : curso;
+          } catch {
+            return curso;
+          }
+        }),
+      );
+      const porId = new Map(enriquecidos.map((c) => [c.id, c]));
+      return base.map((curso) => porId.get(curso.id) ?? curso);
     }
 
     const registros = await cursosRepositorio.listar();
-    if (!apiConfig.useMock) return registros;
+    if (!apiConfig.useMock || apiConfig.sinDatosDemo) return registros;
     const actualizados = registros.map((curso) => ({
       ...curso,
       ...(curso.ambito === "ORGANIZACION" &&
@@ -485,9 +511,7 @@ const sesiones = {
         titulo: sesion.titulo,
         iniciaEn: inicio.toISOString(),
         terminaEn: fin.toISOString(),
-        urlAcceso:
-          sesion.enlace ??
-          `https://meet.google.com/tuk-${Math.random().toString(36).slice(2, 6)}`,
+        urlAcceso: null,
       });
       return mapearSesionSecundariaADocente(creada.sesion);
     }
@@ -611,8 +635,15 @@ function mapearCertificadoEmitidoSecundaria(
   item: import("@/lib/contrato-secundaria").CertificadoEmitidoSecundaria,
 ): CertificadoEmitidoDocente {
   const fecha = item.emitidoEn || item.fecha;
+  const codigo = item.codigoVerificacion || undefined;
+  const estado =
+    item.revocadoEn || String(item.estado ?? "").toUpperCase() === "REVOCADO"
+      ? "REVOCADO"
+      : "EMITIDO";
   return {
-    id: item.codigoVerificacion || item.id,
+    id: item.id,
+    certificadoId: item.id,
+    codigoVerificacion: codigo,
     nombre: item.nombre,
     curso: item.curso,
     fecha: fecha
@@ -622,7 +653,7 @@ function mapearCertificadoEmitidoSecundaria(
           year: "numeric",
         }).format(new Date(fecha))
       : "—",
-    estado: "EMITIDO",
+    estado,
     cursoId: item.cursoId,
     estudianteId: item.estudianteId,
     notaFinal: item.notaFinal ?? undefined,
@@ -630,6 +661,9 @@ function mapearCertificadoEmitidoSecundaria(
     modulosCompletados: item.modulosCompletados,
     versionPrograma: item.versionPrograma,
     organizacionEmisora: item.organizacionEmisora,
+    documentoId: item.documentoId ?? undefined,
+    claveAlmacenamiento: item.claveAlmacenamiento ?? undefined,
+    revocadoEn: item.revocadoEn ?? undefined,
   };
 }
 
@@ -648,6 +682,55 @@ function mapearCertificadoPendienteSecundaria(
     modulosCompletados: item.modulosCompletados,
     modulosTotales: item.modulosTotales,
   };
+}
+
+async function persistirPdfCertificadoEmitido(
+  certificado: CertificadoEmitidoDocente,
+): Promise<CertificadoEmitidoDocente> {
+  const certificadoId = certificado.certificadoId || certificado.id;
+  const codigo =
+    certificado.codigoVerificacion?.trim() || certificado.id;
+  if (!certificadoId || !/^[0-9a-f-]{36}$/i.test(certificadoId)) {
+    return certificado;
+  }
+  try {
+    const { blobCertificatePdf } = await import("@/lib/certificado-pdf");
+    const { storageAcademia } = await import("@/lib/storage-academia");
+    const blob = await blobCertificatePdf({
+      holderName: certificado.nombre,
+      courseTitle: certificado.curso,
+      category: "Formación especializada",
+      duration: certificado.horasCertificadas
+        ? `${certificado.horasCertificadas} horas certificadas`
+        : "Duración certificada",
+      level: "Aprobado",
+      mode: "Virtual",
+      issuedAt: certificado.fecha,
+      certificateCode: codigo,
+      issuerName: certificado.organizacionEmisora ?? "Tukuy Academy",
+    });
+    const archivo = new File(
+      [blob],
+      `certificado-${codigo}.pdf`,
+      { type: "application/pdf" },
+    );
+    const subida = await storageAcademia.subirCertificado(archivo);
+    await secundariaGatewayService.actualizarDocumentoCertificado({
+      certificadoId,
+      claveAlmacenamiento: subida.objectKey,
+      tamanoBytes: archivo.size,
+    });
+    return {
+      ...certificado,
+      claveAlmacenamiento: subida.objectKey,
+    };
+  } catch (error) {
+    console.warn(
+      "[certificados] No se pudo subir el PDF a S3; se usará generación local.",
+      error,
+    );
+    return certificado;
+  }
 }
 
 const certificados = {
@@ -1449,18 +1532,23 @@ export const docenteService = {
           (item) => item.matriculaId === matriculaId,
         );
         if (!encontrado) throw new Error("No se pudo emitir el certificado");
-        return mapearCertificadoEmitidoSecundaria(encontrado);
+        const mapeado = mapearCertificadoEmitidoSecundaria(encontrado);
+        return persistirPdfCertificadoEmitido({
+          ...mapeado,
+          requiereFirmaInstitucional:
+            resultado.requiereFirmaInstitucional === true,
+        });
       }
       await registrarActividad(
         "Certificado emitido",
         `${emitido.nombre} · ${emitido.curso}`,
       );
-      return {
+      return persistirPdfCertificadoEmitido({
         ...mapearCertificadoEmitidoSecundaria(emitido),
+        certificadoId: resultado.certificadoId || emitido.id,
+        documentoId: resultado.documentoId || undefined,
         requiereFirmaInstitucional: resultado.requiereFirmaInstitucional === true,
-      } as CertificadoEmitidoDocente & {
-        requiereFirmaInstitucional?: boolean;
-      };
+      });
     }
 
     if (!apiConfig.useMock) {
@@ -1542,6 +1630,20 @@ export const docenteService = {
       firmaId,
     });
     await registrarActividad("Certificado firmado", certificadoId);
+    return resultado;
+  },
+
+  async revocarCertificado(certificadoId: string, motivo?: string) {
+    if (!apiConfig.secundariaCursos) {
+      throw new Error("La revocación requiere la secundaria activa.");
+    }
+    const id = certificadoId.trim();
+    if (!id) throw new Error("certificadoId requerido");
+    const resultado = await secundariaGatewayService.revocarCertificado({
+      certificadoId: id,
+      motivo,
+    });
+    await registrarActividad("Certificado revocado", id);
     return resultado;
   },
 

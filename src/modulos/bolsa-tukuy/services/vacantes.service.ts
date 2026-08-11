@@ -22,12 +22,16 @@ function leerPostulacionesMock(): Postulacion[] {
 
 export const vacantesService = {
   async obtenerTodas(): Promise<Vacante[]> {
+    if (apiConfig.sinDatosDemo) return resolveMock([]);
     if (apiConfig.useMock) return resolveMock([...vacantesMock]);
     const { data } = await api.get<Vacante[]>(API.bolsa.vacantes);
     return data;
   },
 
   async obtenerPorId(vacanteId: string): Promise<Vacante> {
+    if (apiConfig.sinDatosDemo) {
+      throw new Error("No encontramos la vacante solicitada.");
+    }
     if (apiConfig.useMock) {
       const vacante = vacantesMock.find((item) => item.id === vacanteId);
       if (!vacante) throw new Error("No encontramos la vacante solicitada.");

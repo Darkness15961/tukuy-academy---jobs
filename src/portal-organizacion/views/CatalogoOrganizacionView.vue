@@ -256,20 +256,16 @@ watch(
 
 onMounted(async () => {
   try {
-    await Promise.all([
+    const [, , , snap, usuarios] = await Promise.all([
       recargarPropuestas(),
       recargarAsignaciones(),
       docenteService.cursos.listar().then((lista) => {
         contenidos.value = lista;
       }),
-    ]);
-    const [estructuras, niveles, nodos, vinculaciones, usuarios] = await Promise.all([
-      organizacionService.estructura.estructuras.listar(),
-      organizacionService.estructura.niveles.listar(),
-      organizacionService.estructura.unidades.listar(),
-      organizacionService.estructura.vinculaciones.listar(),
+      organizacionService.estructura.obtenerSnapshot(),
       organizacionService.usuarios.listar(),
     ]);
+    const { estructuras, niveles, unidades: nodos, vinculaciones } = snap;
     totalColaboradores.value = usuarios.length;
     nodosInternos.value = nodos
       .filter((nodo) => nodo.estado === "ACTIVA")
@@ -482,7 +478,11 @@ async function confirmarConfiguracion() {
     }
 
     const activas = asignaciones.value.filter(
-      (item) => item.curso === curso.titulo && item.estado !== "CANCELADA",
+      (item) =>
+        item.estado !== "CANCELADA" &&
+        (item.cursoId
+          ? item.cursoId === curso.cursoDocenteId || item.cursoId === curso.id
+          : item.curso === curso.titulo),
     );
     await Promise.all(
       activas.map((item) =>
@@ -494,6 +494,7 @@ async function confirmarConfiguracion() {
 
     await organizacionService.asignaciones.crear({
       id: `asig-${Date.now()}`,
+      cursoId: curso.cursoDocenteId || curso.id,
       curso: curso.titulo,
       destino: destinoLabel,
       asignados,

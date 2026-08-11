@@ -177,6 +177,17 @@ export function useAuth() {
     );
   }
 
+  /** Tras cambiar perfiles/asignaciones en Equipos: refresca permisos del contexto. */
+  async function refrescarMembresias() {
+    if (env.authProvider !== "supabase") return;
+    try {
+      const memberships = await authService.refrescarMembresias();
+      configurarMembresias(memberships);
+    } catch (err) {
+      console.warn("[auth] No se pudieron refrescar membresías:", err);
+    }
+  }
+
   async function logout() {
     try {
       await authService.logout();
@@ -219,6 +230,7 @@ export function useAuth() {
     solicitarRecuperacionClave,
     completarOAuth,
     sincronizarSesion,
+    refrescarMembresias,
     logout,
     restaurarUsuario,
   };

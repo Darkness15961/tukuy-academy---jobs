@@ -143,8 +143,20 @@ function porcentajeConsumo(utilizado: number, limite: number) {
   return Math.min(100, Math.round((utilizado / limite) * 100));
 }
 
+function abrirGestionLicencia() {
+  if (licencia.value?.soloLectura) {
+    void solicitarAmpliacion();
+    return;
+  }
+  modal.value = true;
+}
+
 async function guardar() {
   if (!licencia.value) return;
+  if (licencia.value.soloLectura) {
+    await solicitarAmpliacion();
+    return;
+  }
   const actualizada: LicenciaOrganizacion = JSON.parse(
     JSON.stringify(licencia.value),
   );
@@ -172,12 +184,12 @@ async function guardar() {
       :etiqueta="nombreOrganizacion"
       titulo="Licencia y consumo"
       descripcion="Revisa vigencia, cupos y uso del plan. Renueva o amplía antes de que el consumo limite nuevas altas."
-      texto-accion="Renovar o ampliar"
+      texto-accion="Solicitar ampliación"
       texto-accion-secundaria="Facturación"
       :icono-accion="RefreshCw"
       :icono-accion-secundaria="CircleDollarSign"
       etiqueta-accesible="Portada de licencia corporativa"
-      @accion="modal = true"
+      @accion="abrirGestionLicencia"
       @accion-secundaria="router.push('/organizacion/facturacion')"
     />
 
@@ -288,13 +300,17 @@ async function guardar() {
             actualizar el plan en facturación.
           </p>
           <div class="mt-3 flex flex-wrap gap-2">
-            <Button size="sm" @click="modal = true">Ampliar ahora</Button>
+            <Button size="sm" @click="abrirGestionLicencia">
+              {{
+                licencia?.soloLectura ? "Solicitar ampliación" : "Ampliar ahora"
+              }}
+            </Button>
             <Button
               size="sm"
               variant="outline"
               @click="router.push('/organizacion/facturacion')"
             >
-              Actualizar plan
+              Ver facturación
             </Button>
           </div>
         </div>
@@ -308,9 +324,11 @@ async function guardar() {
               Límites del plan frente al uso real de la organización
             </p>
           </div>
-          <Button variant="outline" size="sm" @click="modal = true">
+          <Button variant="outline" size="sm" @click="abrirGestionLicencia">
             <RefreshCw class="h-4 w-4" />
-            Renovar o ampliar
+            {{
+              licencia?.soloLectura ? "Solicitar ampliación" : "Renovar o ampliar"
+            }}
           </Button>
         </div>
         <div class="grid gap-4 sm:grid-cols-2">

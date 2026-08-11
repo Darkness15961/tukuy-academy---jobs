@@ -12,19 +12,18 @@ import {
 } from "lucide-vue-next";
 import Column from "primevue/column";
 import DataTable from "primevue/datatable";
+import type { DataTablePageEvent } from "primevue/datatable";
 import InputText from "primevue/inputtext";
 import Select from "primevue/select";
 import Tag from "primevue/tag";
 import Skeleton from "primevue/skeleton";
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 
-import {
-  organizacionService,
-  type MatriculaAlumnoOrganizacion,
-} from "@/api/services/organizacion.service";
+import { organizacionService } from "@/api/services/organizacion.service";
 import { Button } from "@/components/ui/button";
 import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import { Card, CardContent } from "@/components/ui/card";
+import type { AlumnoResumenSecundaria } from "@/lib/contrato-secundaria";
 import type {
   UnidadOrganizacional,
   VinculacionUnidad,
@@ -43,22 +42,28 @@ type FilaAlumno = {
   cursos: number;
   cursosResumen: string;
   progreso: number;
-  estado: MatriculaAlumnoOrganizacion["estado"];
+  estado: string;
   ultimoAcceso: string;
   ultimoAccesoFecha: string;
   fechaInscripcion: string;
   pendientes: number;
-  matriculas: MatriculaAlumnoOrganizacion[];
+  matriculasPendientes: AlumnoResumenSecundaria["matriculasPendientes"];
 };
 
 const cargando = ref(true);
-const matriculas = ref<MatriculaAlumnoOrganizacion[]>([]);
+const cargandoTabla = ref(false);
+const alumnos = ref<FilaAlumno[]>([]);
+const totalServidor = ref(0);
+const cursosCatalogo = ref<Array<{ id: string; titulo: string }>>([]);
 const vinculaciones = ref<VinculacionUnidad[]>([]);
 const unidades = ref<UnidadOrganizacional[]>([]);
 const busqueda = ref("");
 const tipoFiltro = ref<TipoAlumno>("TODOS");
 const cursoFiltro = ref("todos");
 const nodoFiltro = ref("todos");
+const limite = ref(24);
+const offset = ref(0);
+const first = ref(0);
 
 const opcionesTipo = [
   { etiqueta: "Todos", valor: "TODOS" as const },
@@ -66,13 +71,12 @@ const opcionesTipo = [
   { etiqueta: "Externo", valor: "EXTERNO" as const },
 ];
 
-const cursos = computed(() =>
-  [...new Set(matriculas.value.map((item) => item.curso))].sort(),
-);
-
 const opcionesCursos = computed(() => [
   { etiqueta: "Todos los cursos", valor: "todos" },
-  ...cursos.value.map((curso) => ({ etiqueta: curso, valor: curso })),
+  ...cursosCatalogo.value.map((curso) => ({
+    etiqueta: curso.titulo,
+    valor: curso.id,
+  })),
 ]);
 
 const unidadesPorId = computed(
@@ -98,114 +102,69 @@ const opcionesNodos = computed(() => [
     .map((unidad) => ({ etiqueta: unidad.nombre, valor: unidad.id })),
 ]);
 
-function usuarioIdDesdeAlumno(alumnoId: string) {
-  const coincidencia = /^alu-(\d+)$/.exec(alumnoId);
-  return coincidencia?.[1] ? String(Number(coincidencia[1])) : null;
+function enriquecerConEstructura(item: AlumnoResumenSecundaria): FilaAlumno {
+  const relaciones =
+    vinculacionesActivasPorUsuario.value.get(String(item.alumnoId)) ?? [];
+  const nodos = [
+    ...new Set(
+      relaciones
+        .map((relacion) => unidadesPorId.value.get(relacion.unidadId)?.nombre)
+        .filter((nombre): nombre is string => Boolean(nombre)),
+    ),
+  ];
+  const tipo: "INTERNO" | "EXTERNO" = nodos.length ? "INTERNO" : "EXTERNO";
+  return {
+    alumnoId: String(item.alumnoId),
+    nombre: item.nombre,
+    iniciales: item.iniciales,
+    tipo,
+    nodos,
+    nodosResumen: nodos.join(" · ") || "Sin nodo — acceso por curso",
+    cursos: item.cursos,
+    cursosResumen: item.cursosResumen,
+    progreso: Number(item.progreso ?? 0),
+    estado: item.estado,
+    ultimoAcceso: item.ultimoAcceso,
+    ultimoAccesoFecha: item.ultimoAccesoFecha,
+    fechaInscripcion: item.fechaInscripcion,
+    pendientes: Number(item.pendientes ?? 0),
+    matriculasPendientes: item.matriculasPendientes ?? [],
+  };
 }
 
-const alumnos = computed((): FilaAlumno[] => {
-  const porPersona = new Map<string, MatriculaAlumnoOrganizacion[]>();
-  for (const matricula of matriculas.value) {
-    const lista = porPersona.get(matricula.alumnoId) ?? [];
-    lista.push(matricula);
-    porPersona.set(matricula.alumnoId, lista);
-  }
-
-  return [...porPersona.entries()].map(([alumnoId, lista]) => {
-    const ordenadas = [...lista].sort((a, b) =>
-      b.ultimoAccesoFecha.localeCompare(a.ultimoAccesoFecha),
-    );
-    const base = ordenadas[0]!;
-    const progreso = Math.round(
-      lista.reduce((suma, item) => suma + item.progreso, 0) / lista.length,
-    );
-    const estado =
-      lista.find((item) => item.estado === "EN_RIESGO")?.estado ??
-      lista.find((item) => item.estado === "PENDIENTE")?.estado ??
-      lista.find((item) => item.estado === "ACTIVO")?.estado ??
-      lista[0]?.estado ?? "ACTIVO";
-    const usuarioId = usuarioIdDesdeAlumno(alumnoId);
-    const relaciones = usuarioId
-      ? vinculacionesActivasPorUsuario.value.get(usuarioId) ?? []
-      : [];
-    const nodos = [
-      ...new Set(
-        relaciones
-          .map((relacion) => unidadesPorId.value.get(relacion.unidadId)?.nombre)
-          .filter((nombre): nombre is string => Boolean(nombre)),
-      ),
-    ];
-    // La pertenencia se deriva exclusivamente de la estructura vigente.
-    // Estar matriculado o tener una solicitud de nodo pendiente no hace interno.
-    const tipo: "INTERNO" | "EXTERNO" = nodos.length ? "INTERNO" : "EXTERNO";
-
-    return {
-      alumnoId,
-      nombre: base.nombre,
-      iniciales: base.iniciales,
-      tipo,
-      nodos,
-      nodosResumen: nodos.join(" · ") || "Sin nodo — acceso por curso",
-      cursos: lista.length,
-      cursosResumen: [...new Set(lista.map((item) => item.curso))].join(" · "),
-      progreso,
-      estado,
-      ultimoAcceso: base.ultimoAcceso,
-      ultimoAccesoFecha: base.ultimoAccesoFecha,
-      fechaInscripcion: [...lista]
-        .map((item) => item.fechaInscripcion)
-        .sort()[0] ?? "",
-      pendientes: lista.filter((item) => item.estado === "PENDIENTE").length,
-      matriculas: lista,
-    };
-  });
-});
-
 const filtrados = computed(() => {
-  const termino = busqueda.value.trim().toLowerCase();
   return alumnos.value.filter((alumno) => {
     const coincideTipo =
       tipoFiltro.value === "TODOS" || alumno.tipo === tipoFiltro.value;
-    const coincideCurso =
-      cursoFiltro.value === "todos" ||
-      alumno.matriculas.some((item) => item.curso === cursoFiltro.value);
     const coincideNodo =
       nodoFiltro.value === "todos" ||
       alumno.nodos.includes(
         unidadesPorId.value.get(nodoFiltro.value)?.nombre ?? "",
       );
-    const coincideBusqueda =
-      !termino ||
-      [alumno.nombre, alumno.cursosResumen, alumno.nodosResumen].some((valor) =>
-        valor.toLowerCase().includes(termino),
-      );
-    return coincideTipo && coincideCurso && coincideNodo && coincideBusqueda;
+    return coincideTipo && coincideNodo;
   });
 });
 
 const cantidadInternos = computed(
-  () => alumnos.value.filter((item) => item.tipo === "INTERNO").length,
+  () => filtrados.value.filter((item) => item.tipo === "INTERNO").length,
 );
 const cantidadExternos = computed(
-  () => alumnos.value.filter((item) => item.tipo === "EXTERNO").length,
+  () => filtrados.value.filter((item) => item.tipo === "EXTERNO").length,
 );
 const nodosConAlumnos = computed(
-  () => new Set(alumnos.value.flatMap((item) => item.nodos)).size,
+  () => new Set(filtrados.value.flatMap((item) => item.nodos)).size,
 );
 
 const resumen = computed(() => [
-  { etiqueta: "Alumnos", valor: alumnos.value.length },
-  { etiqueta: "Internos", valor: cantidadInternos.value },
-  { etiqueta: "Externos", valor: cantidadExternos.value },
-  {
-    etiqueta: "Nodos con alumnos",
-    valor: nodosConAlumnos.value,
-  },
+  { etiqueta: "Alumnos", valor: totalServidor.value },
+  { etiqueta: "En esta página · internos", valor: cantidadInternos.value },
+  { etiqueta: "En esta página · externos", valor: cantidadExternos.value },
+  { etiqueta: "Nodos (página)", valor: nodosConAlumnos.value },
 ]);
 
 const cantidadFiltrosActivos = computed(
   () =>
-    Number(Boolean(busqueda.value)) +
+    Number(Boolean(busqueda.value.trim())) +
     Number(tipoFiltro.value !== "TODOS") +
     Number(cursoFiltro.value !== "todos") +
     Number(nodoFiltro.value !== "todos"),
@@ -213,29 +172,85 @@ const cantidadFiltrosActivos = computed(
 
 const hayFiltros = computed(() => cantidadFiltrosActivos.value > 0);
 
-onMounted(async () => {
+let debounceBusqueda: ReturnType<typeof setTimeout> | null = null;
+
+async function cargarPagina(mostrarSkeleton = false) {
+  if (mostrarSkeleton) cargando.value = true;
+  else cargandoTabla.value = true;
   try {
-    // Matrículas (gateway) primero; catálogos locales después.
-    matriculas.value = await organizacionService.matriculas.listar();
-    cargando.value = false;
-    const [vinculacionesLista, unidadesLista] = await Promise.all([
-      organizacionService.estructura.vinculaciones.listar(),
-      organizacionService.estructura.unidades.listar(),
-    ]);
-    vinculaciones.value = vinculacionesLista;
-    unidades.value = unidadesLista;
+    const resultado = await organizacionService.matriculas.listarResumen({
+      busqueda: busqueda.value.trim() || undefined,
+      cursoId: cursoFiltro.value === "todos" ? null : cursoFiltro.value,
+      limite: limite.value,
+      offset: offset.value,
+    });
+    totalServidor.value = resultado.total;
+    cursosCatalogo.value = resultado.cursos ?? [];
+    alumnos.value = (resultado.alumnos ?? []).map(enriquecerConEstructura);
   } catch {
-    // La tabla puede quedar vacía; el empty state lo cubre.
+    alumnos.value = [];
+    totalServidor.value = 0;
   } finally {
     cargando.value = false;
+    cargandoTabla.value = false;
+  }
+}
+
+function onPage(event: DataTablePageEvent) {
+  first.value = event.first;
+  offset.value = event.first;
+  limite.value = event.rows;
+  void cargarPagina();
+}
+
+function reiniciarYCargar() {
+  first.value = 0;
+  offset.value = 0;
+  void cargarPagina();
+}
+
+onMounted(async () => {
+  await cargarPagina(true);
+  try {
+    const snap = await organizacionService.estructura.obtenerSnapshot();
+    vinculaciones.value = snap.vinculaciones;
+    unidades.value = snap.unidades;
+    // Re-enriquecer con nodos cuando llega la estructura.
+    alumnos.value = alumnos.value.map((fila) => {
+      const relaciones =
+        vinculacionesActivasPorUsuario.value.get(fila.alumnoId) ?? [];
+      const nodos = [
+        ...new Set(
+          relaciones
+            .map((r) => unidadesPorId.value.get(r.unidadId)?.nombre)
+            .filter((n): n is string => Boolean(n)),
+        ),
+      ];
+      return {
+        ...fila,
+        nodos,
+        nodosResumen: nodos.join(" · ") || "Sin nodo — acceso por curso",
+        tipo: nodos.length ? "INTERNO" : "EXTERNO",
+      };
+    });
+  } catch {
+    // estructura local opcional
   }
 });
+
+watch(busqueda, () => {
+  if (debounceBusqueda) clearTimeout(debounceBusqueda);
+  debounceBusqueda = setTimeout(() => reiniciarYCargar(), 300);
+});
+
+watch(cursoFiltro, () => reiniciarYCargar());
 
 function limpiarFiltros() {
   busqueda.value = "";
   tipoFiltro.value = "TODOS";
   cursoFiltro.value = "todos";
   nodoFiltro.value = "todos";
+  reiniciarYCargar();
 }
 
 function severidadEstado(estado: string): SeveridadEstado {
@@ -268,14 +283,10 @@ function formatoFecha(fecha: string | null | undefined) {
 }
 
 async function aprobarPendientes(alumno: FilaAlumno) {
-  const pendientes = alumno.matriculas.filter((item) => item.estado === "PENDIENTE");
-  for (const matricula of pendientes) {
-    const actualizada = await organizacionService.aprobarSolicitudMatricula(
-      matricula.id,
-    );
-    const indice = matriculas.value.findIndex((item) => item.id === actualizada.id);
-    if (indice >= 0) matriculas.value[indice] = actualizada;
+  for (const matricula of alumno.matriculasPendientes) {
+    await organizacionService.aprobarSolicitudMatricula(matricula.id);
   }
+  await cargarPagina();
 }
 
 function exportarResultados() {
@@ -297,12 +308,13 @@ function exportarResultados() {
     item.fechaInscripcion,
     item.estado,
   ]);
-  const contenido = [encabezados, ...filas]
-    .map((fila) => fila.map((celda) => `"${celda}"`).join(","))
+  const csv = [encabezados, ...filas]
+    .map((fila) =>
+      fila.map((celda) => `"${String(celda).replaceAll('"', '""')}"`).join(","),
+    )
     .join("\n");
-  const url = URL.createObjectURL(
-    new Blob([contenido], { type: "text/csv;charset=utf-8" }),
-  );
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
   const enlace = document.createElement("a");
   enlace.href = url;
   enlace.download = "alumnos-organizacion.csv";
@@ -473,7 +485,8 @@ function exportarResultados() {
         <div>
           <h2 id="titulo-resultados" class="text-sm font-black">Resultados</h2>
           <p class="mt-0.5 text-xs text-muted-foreground">
-            Mostrando {{ filtrados.length }} de {{ alumnos.length }} alumnos
+            Mostrando {{ filtrados.length }} de {{ totalServidor }} alumnos
+            <span v-if="cargandoTabla"> · actualizando…</span>
           </p>
         </div>
       </div>
@@ -491,18 +504,21 @@ function exportarResultados() {
       <DataTable
         v-else
         class="tabla-estudiantes"
+        lazy
         :value="filtrados"
+        :total-records="totalServidor"
         data-key="alumnoId"
         size="small"
         scrollable
         removable-sort
-        :paginator="filtrados.length > 8"
-        :rows="8"
-        :rows-per-page-options="[8, 16, 24]"
+        paginator
+        :rows="limite"
+        :first="first"
+        :rows-per-page-options="[12, 24, 48]"
         paginator-template="RowsPerPageDropdown FirstPageLink PrevPageLink CurrentPageReport NextPageLink LastPageLink"
         current-page-report-template="{first}–{last} de {totalRecords} alumnos"
-        :always-show-paginator="false"
         table-style="min-width: 84rem"
+        @page="onPage"
       >
         <template #empty>
           <div class="px-4 py-12 text-center">

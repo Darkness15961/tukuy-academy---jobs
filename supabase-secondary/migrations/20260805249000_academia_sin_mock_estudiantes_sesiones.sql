@@ -74,11 +74,15 @@ begin
     raise exception 'Estado de sesion invalido';
   end if;
 
+  -- Solo acorta termina_en si ya empezó (evita chk_sesion_horario).
   update public.sesion_en_vivo
   set
     estado = v_estado,
     termina_en = case
-      when v_estado = 'CANCELADA' and termina_en > now() then now()
+      when v_estado = 'CANCELADA'
+        and termina_en > now()
+        and now() > inicia_en
+      then now()
       else termina_en
     end
   where id = p_sesion_id

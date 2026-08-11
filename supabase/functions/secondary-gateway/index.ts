@@ -1,4 +1,9 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
+import {
+  cancelarEventoCalendar,
+  crearEventoCalendarMeet,
+  googleCalendarConfigurado,
+} from "./google-calendar.ts";
 
 const INSTALACION_TUKUY = "30000000-0000-4000-8000-000000000001";
 
@@ -378,6 +383,43 @@ Deno.serve(async (req) => {
           membresiasOrganizacion,
           advertenciaSync: syncError,
           verificadaPor: usuario.user.id,
+        },
+        200,
+        corsHeaders,
+      );
+    }
+
+    if (entrada.action === "probe-google-calendar") {
+      const configurado = googleCalendarConfigurado();
+      if (!configurado) {
+        return json(
+          {
+            ok: false,
+            configurado: false,
+            error:
+              "Faltan secretos GOOGLE_CALENDAR_CLIENT_ID / CLIENT_SECRET / REFRESH_TOKEN",
+          },
+          200,
+          corsHeaders,
+        );
+      }
+      const prueba = await crearEventoCalendarMeet({
+        titulo: "Tukuy · prueba Meet (borrar)",
+        descripcion: "Evento de verificación. Puedes eliminarlo.",
+        iniciaEn: new Date(Date.now() + 60 * 60_000).toISOString(),
+        terminaEn: new Date(Date.now() + 90 * 60_000).toISOString(),
+      });
+      if (!prueba.simulado) {
+        await cancelarEventoCalendar(prueba.calendarEventId);
+      }
+      return json(
+        {
+          ok: !prueba.simulado,
+          configurado: true,
+          simulado: prueba.simulado,
+          meetUrl: prueba.meetUrl,
+          calendarEventId: prueba.calendarEventId,
+          motivo: "motivo" in prueba ? prueba.motivo : undefined,
         },
         200,
         corsHeaders,
@@ -847,6 +889,51 @@ Deno.serve(async (req) => {
         if (!cursoId) {
           return json({ error: "cursoId requerido" }, 400, corsHeaders);
         }
+
+        // Cursos de pago: solo matrícula directa si ya hay compra PAGADA
+        // (o el curso es gratuito). Evita saltarse el checkout.
+        if (UUID_RE.test(cursoId)) {
+          const detalle = await secundaria.rpc("servicio_obtener_curso_tipado", {
+            p_curso_id: cursoId,
+          });
+          const curso = detalle.data?.curso as Record<string, unknown> | undefined;
+          const precio = Number(curso?.precio ?? 0);
+          const gratuito = curso?.gratuito === true || !(precio > 0);
+          if (!gratuito) {
+            const compra = await secundaria.rpc(
+              "servicio_estudiante_tiene_compra_pagada",
+              {
+                p_estudiante_identidad_ref: estudianteId,
+                p_curso_id: cursoId,
+              },
+            );
+            if (compra.error) {
+              return json(
+                {
+                  ok: false,
+                  error:
+                    "Falta ejecutar en la secundaria 20260811161000_checkout_idempotencia_acceso.sql",
+                  details: compra.error.message,
+                },
+                200,
+                corsHeaders,
+              );
+            }
+            if (compra.data !== true) {
+              return json(
+                {
+                  ok: false,
+                  error:
+                    "Este curso requiere pago. Completa la compra en el carrito antes de matricularte.",
+                  code: "REQUIERE_PAGO",
+                },
+                402,
+                corsHeaders,
+              );
+            }
+          }
+        }
+
         const mat = await secundaria.rpc("servicio_matricular_estudiante", {
           p_curso_id: cursoId,
           p_estudiante_identidad_ref: estudianteId,
@@ -989,6 +1076,7 @@ Deno.serve(async (req) => {
       entrada.action === "eliminar-sesion" ||
       entrada.action === "actualizar-estado-sesion" ||
       entrada.action === "list-estudiantes" ||
+      entrada.action === "list-alumnos-resumen" ||
       entrada.action === "actualizar-estado-curso"
     ) {
       const resolucion = await resolverContextosSincronizables();
@@ -1070,6 +1158,17 @@ Deno.serve(async (req) => {
         if (!sesionId) {
           return json({ error: "sesionId requerido" }, 400, corsHeaders);
         }
+        const { data: fila } = await secundaria
+          .from("sesion_en_vivo")
+          .select("calendar_event_id")
+          .eq("id", sesionId)
+          .maybeSingle();
+        const eventId =
+          typeof fila?.calendar_event_id === "string"
+            ? fila.calendar_event_id
+            : "";
+        if (eventId) await cancelarEventoCalendar(eventId);
+
         const eliminada = await secundaria.rpc(
           "servicio_eliminar_sesion_en_vivo",
           { p_sesion_id: sesionId },
@@ -1101,17 +1200,35 @@ Deno.serve(async (req) => {
             corsHeaders,
           );
         }
+
+        if (estado.toUpperCase() === "CANCELADA") {
+          const { data: fila } = await secundaria
+            .from("sesion_en_vivo")
+            .select("calendar_event_id")
+            .eq("id", sesionId)
+            .maybeSingle();
+          const eventId =
+            typeof fila?.calendar_event_id === "string"
+              ? fila.calendar_event_id
+              : "";
+          if (eventId) await cancelarEventoCalendar(eventId);
+        }
+
         const actualizada = await secundaria.rpc(
           "servicio_actualizar_estado_sesion",
           { p_sesion_id: sesionId, p_estado: estado },
         );
         if (actualizada.error) {
+          const msg = actualizada.error.message ?? "";
+          const faltaFn =
+            /function|does not exist|schema cache/i.test(msg);
           return json(
             {
               ok: false,
-              error:
-                "Falta ejecutar en la secundaria 20260805249000_academia_sin_mock_estudiantes_sesiones.sql",
-              details: actualizada.error.message,
+              error: faltaFn
+                ? "Falta ejecutar en la secundaria 20260805249000_academia_sin_mock_estudiantes_sesiones.sql (o 20260811122000_fix_asistencia_matricula_ref_cancelar.sql)"
+                : msg,
+              details: msg,
             },
             200,
             corsHeaders,
@@ -1135,6 +1252,41 @@ Deno.serve(async (req) => {
               ok: false,
               error:
                 "Falta ejecutar en la secundaria 20260805249000_academia_sin_mock_estudiantes_sesiones.sql",
+              details: listado.error.message,
+            },
+            200,
+            corsHeaders,
+          );
+        }
+        return json({ ok: true, ...listado.data }, 200, corsHeaders);
+      }
+
+      if (entrada.action === "list-alumnos-resumen") {
+        const cursoId =
+          typeof entrada.cursoId === "string" && entrada.cursoId.trim()
+            ? entrada.cursoId.trim()
+            : null;
+        const busqueda =
+          typeof entrada.busqueda === "string" ? entrada.busqueda : null;
+        const limite =
+          typeof entrada.limite === "number" ? entrada.limite : 50;
+        const offset =
+          typeof entrada.offset === "number" ? entrada.offset : 0;
+        const listado = await secundaria.rpc(
+          "servicio_listar_alumnos_resumen",
+          {
+            p_busqueda: busqueda,
+            p_curso_id: cursoId,
+            p_limite: limite,
+            p_offset: offset,
+          },
+        );
+        if (listado.error) {
+          return json(
+            {
+              ok: false,
+              error:
+                "Falta ejecutar en la secundaria 20260810200000_listar_alumnos_resumen_paginado.sql",
               details: listado.error.message,
             },
             200,
@@ -1211,7 +1363,55 @@ Deno.serve(async (req) => {
           corsHeaders,
         );
       }
-      return json({ ok: true, ...creada.data }, 200, corsHeaders);
+
+      const sesionCreada = creada.data?.sesion ?? null;
+      const sesionId =
+        typeof sesionCreada?.id === "string" ? sesionCreada.id : "";
+
+      const attendees = Array.isArray(entrada.attendees)
+        ? entrada.attendees.filter((e: unknown) => typeof e === "string")
+        : [];
+
+      const meet = await crearEventoCalendarMeet({
+        titulo,
+        descripcion: `Curso: ${sesionCreada?.cursoTitulo ?? cursoId}`,
+        iniciaEn,
+        terminaEn,
+        attendees,
+      });
+
+      if (sesionId && meet.meetUrl) {
+        const patch: Record<string, unknown> = {
+          url_acceso: meet.meetUrl,
+        };
+        if (!meet.simulado) {
+          patch.calendar_event_id = meet.calendarEventId;
+        }
+        const { error: patchError } = await secundaria
+          .from("sesion_en_vivo")
+          .update(patch)
+          .eq("id", sesionId);
+        if (!patchError && sesionCreada) {
+          sesionCreada.urlAcceso = meet.meetUrl;
+          sesionCreada.calendarEventId = meet.calendarEventId;
+        }
+      }
+
+      return json(
+        {
+          ok: true,
+          ...creada.data,
+          sesion: sesionCreada ?? creada.data?.sesion,
+          googleMeet: {
+            simulado: meet.simulado,
+            meetUrl: meet.meetUrl,
+            calendarEventId: meet.calendarEventId,
+            motivo: "motivo" in meet ? meet.motivo : undefined,
+          },
+        },
+        200,
+        corsHeaders,
+      );
     }
 
     if (
@@ -1239,12 +1439,16 @@ Deno.serve(async (req) => {
           p_sesion_id: sesionId,
         });
         if (listado.error) {
+          const msg = listado.error.message ?? "";
+          const faltaFn =
+            /function|does not exist|schema cache/i.test(msg);
           return json(
             {
               ok: false,
-              error:
-                "Falta ejecutar en la secundaria 20260810194000_asistencia_sesion.sql",
-              details: listado.error.message,
+              error: faltaFn
+                ? "Falta ejecutar en la secundaria 20260810194000_asistencia_sesion.sql (o 20260811122000_fix_asistencia_matricula_ref_cancelar.sql)"
+                : msg,
+              details: msg,
             },
             200,
             corsHeaders,
@@ -1273,12 +1477,16 @@ Deno.serve(async (req) => {
         p_items: items,
       });
       if (marcado.error) {
+        const msg = marcado.error.message ?? "";
+        const faltaFn =
+          /function|does not exist|schema cache/i.test(msg);
         return json(
           {
             ok: false,
-            error:
-              "Falta ejecutar en la secundaria 20260810194000_asistencia_sesion.sql",
-            details: marcado.error.message,
+            error: faltaFn
+              ? "Falta ejecutar en la secundaria 20260810194000_asistencia_sesion.sql (o 20260811122000_fix_asistencia_matricula_ref_cancelar.sql)"
+              : msg,
+            details: msg,
           },
           200,
           corsHeaders,
@@ -1303,7 +1511,9 @@ Deno.serve(async (req) => {
       entrada.action === "list-mis-certificados" ||
       entrada.action === "list-certificados-pendientes-firma" ||
       entrada.action === "firmar-certificado" ||
-      entrada.action === "emitir-certificado"
+      entrada.action === "emitir-certificado" ||
+      entrada.action === "revocar-certificado" ||
+      entrada.action === "actualizar-documento-certificado"
     ) {
       const resolucion = await resolverContextosSincronizables();
       const { data: esAdmin } = await principal.rpc("es_super_admin_actual");
@@ -1396,6 +1606,122 @@ Deno.serve(async (req) => {
           );
         }
         return json({ ok: true, ...listado.data }, 200, corsHeaders);
+      }
+
+      if (entrada.action === "actualizar-documento-certificado") {
+        const certificadoId =
+          typeof entrada.certificadoId === "string"
+            ? entrada.certificadoId.trim()
+            : "";
+        const clave =
+          typeof entrada.claveAlmacenamiento === "string"
+            ? entrada.claveAlmacenamiento.trim()
+            : "";
+        if (!certificadoId || !UUID_RE.test(certificadoId)) {
+          return json(
+            { error: "certificadoId (uuid) requerido" },
+            400,
+            corsHeaders,
+          );
+        }
+        if (!clave || clave.includes("..") || !clave.startsWith("certificados/")) {
+          return json(
+            { error: "claveAlmacenamiento debe estar bajo certificados/" },
+            400,
+            corsHeaders,
+          );
+        }
+        const tamano =
+          typeof entrada.tamanoBytes === "number" &&
+            Number.isFinite(entrada.tamanoBytes)
+            ? Math.max(0, Math.floor(entrada.tamanoBytes))
+            : null;
+        const huella =
+          typeof entrada.huellaDocumento === "string"
+            ? entrada.huellaDocumento.trim()
+            : null;
+        const actualizado = await secundaria.rpc(
+          "servicio_actualizar_documento_certificado",
+          {
+            p_certificado_id: certificadoId,
+            p_clave_almacenamiento: clave,
+            p_tamano_bytes: tamano,
+            p_huella_documento: huella,
+          },
+        );
+        if (actualizado.error) {
+          return json(
+            {
+              ok: false,
+              error:
+                "Falta ejecutar en la secundaria 20260811160000_certificado_pdf_revocar.sql",
+              details: actualizado.error.message,
+            },
+            200,
+            corsHeaders,
+          );
+        }
+        return json({ ok: true, ...actualizado.data }, 200, corsHeaders);
+      }
+
+      if (entrada.action === "revocar-certificado") {
+        const certificadoId =
+          typeof entrada.certificadoId === "string"
+            ? entrada.certificadoId.trim()
+            : "";
+        if (!certificadoId || !UUID_RE.test(certificadoId)) {
+          return json(
+            { error: "certificadoId (uuid) requerido" },
+            400,
+            corsHeaders,
+          );
+        }
+        const motivo =
+          typeof entrada.motivo === "string" ? entrada.motivo.trim() : null;
+        const revocado = await secundaria.rpc("servicio_revocar_certificado", {
+          p_certificado_id: certificadoId,
+          p_actor_identidad_ref: usuario.user.id,
+          p_motivo: motivo,
+        });
+        if (revocado.error) {
+          return json(
+            {
+              ok: false,
+              error:
+                "Falta ejecutar en la secundaria 20260811160000_certificado_pdf_revocar.sql",
+              details: revocado.error.message,
+            },
+            200,
+            corsHeaders,
+          );
+        }
+
+        let indicePublico: unknown = null;
+        let advertenciaIndice: string | null = null;
+        const indice = await principal.rpc(
+          "admin_revocar_indice_certificado_publico",
+          {
+            p_certificado_secundario_ref: certificadoId,
+            p_motivo: motivo,
+          },
+        );
+        if (indice.error) {
+          advertenciaIndice =
+            `Revocado en secundaria, pero falta 20260811160000_admin_revocar_indice_certificado.sql en la principal: ${indice.error.message}`;
+        } else {
+          indicePublico = indice.data;
+        }
+
+        return json(
+          {
+            ok: true,
+            ...revocado.data,
+            indicePublico,
+            advertenciaIndice,
+          },
+          200,
+          corsHeaders,
+        );
       }
 
       if (entrada.action === "firmar-certificado") {
@@ -2200,11 +2526,29 @@ Deno.serve(async (req) => {
           {
             ok: false,
             error:
-              "Falta ejecutar en la secundaria 20260810192000_estado_curso_workflow_org.sql (o 20260805249000)",
+              "Falta ejecutar en la secundaria 20260811140000_estado_curso_workflow_labels.sql (o 20260810192000)",
             details: estadoSec.error.message,
           },
           200,
           corsHeaders,
+        );
+      }
+
+      // Persistir observación en borrador (docente la ve en su listado).
+      const observacionTexto =
+        typeof historicos.observacion === "string"
+          ? historicos.observacion
+          : null;
+      const obsRpc = await secundaria.rpc("servicio_guardar_observacion_curso", {
+        p_curso_id: cursoId,
+        p_observacion:
+          estadoWorkflow === "OBSERVADO" ? observacionTexto : null,
+      });
+      if (obsRpc.error) {
+        // No bloquea el flujo; el catálogo principal ya guarda la observación.
+        console.warn(
+          "servicio_guardar_observacion_curso:",
+          obsRpc.error.message,
         );
       }
 
@@ -2223,6 +2567,50 @@ Deno.serve(async (req) => {
             },
             200,
             corsHeaders,
+          );
+        }
+      }
+
+      // Persistir precio comercial al aprobar/publicar (no al observar).
+      if (
+        estadoWorkflow === "APROBADO" ||
+        estadoWorkflow === "PUBLICADO"
+      ) {
+        const cfg =
+          historicos.configuracionPublicacion &&
+          typeof historicos.configuracionPublicacion === "object"
+            ? (historicos.configuracionPublicacion as Record<string, unknown>)
+            : {};
+        const precioCfg =
+          cfg.precio && typeof cfg.precio === "object"
+            ? (cfg.precio as Record<string, unknown>)
+            : cfg;
+        const modalidadPrecio = String(
+          precioCfg.modalidad ?? "",
+        ).toUpperCase();
+        const precioNum = Number(
+          precioCfg.precioCompleto ?? precioCfg.precio ?? 0,
+        );
+        const gratuito =
+          modalidadPrecio === "GRATUITO" ||
+          historicos.gratuito === true ||
+          !(precioNum > 0);
+        const moneda = String(
+          precioCfg.moneda ?? historicos.moneda ?? "PEN",
+        );
+        const comRpc = await secundaria.rpc(
+          "servicio_guardar_comercializacion_curso",
+          {
+            p_curso_id: cursoId,
+            p_precio: gratuito ? 0 : Math.max(0, precioNum),
+            p_gratuito: gratuito,
+            p_moneda: moneda,
+          },
+        );
+        if (comRpc.error) {
+          console.warn(
+            "servicio_guardar_comercializacion_curso:",
+            comRpc.error.message,
           );
         }
       }
@@ -2308,42 +2696,60 @@ Deno.serve(async (req) => {
         }
 
         const items: Array<Record<string, unknown>> = [];
-        if (itemsEntrada.length) {
-          for (const raw of itemsEntrada) {
-            if (!raw || typeof raw !== "object") continue;
-            const fila = raw as Record<string, unknown>;
-            const cursoId = String(fila.cursoId ?? "").trim();
-            if (!UUID_RE.test(cursoId)) continue;
-            let totalCentavos = 0;
-            if (fila.totalCentavos != null && Number.isFinite(Number(fila.totalCentavos))) {
-              totalCentavos = Math.max(0, Math.round(Number(fila.totalCentavos)));
-            } else if (fila.importe != null && Number.isFinite(Number(fila.importe))) {
-              totalCentavos = Math.max(0, Math.round(Number(fila.importe) * 100));
-            }
-            items.push({
-              cursoId,
-              titulo: typeof fila.titulo === "string" ? fila.titulo : null,
-              totalCentavos,
-            });
+        const idsParaPrecio = itemsEntrada.length
+          ? itemsEntrada
+            .map((raw) => {
+              if (!raw || typeof raw !== "object") return "";
+              return String((raw as Record<string, unknown>).cursoId ?? "").trim();
+            })
+            .filter((id) => UUID_RE.test(id))
+          : cursoIds.filter((id) => UUID_RE.test(String(id))).map(String);
+
+        // Precio siempre desde secundaria (ignora importe del cliente).
+        for (const cursoId of idsParaPrecio) {
+          const detalle = await secundaria.rpc("servicio_obtener_curso_tipado", {
+            p_curso_id: cursoId,
+          });
+          if (detalle.error || !detalle.data?.curso) {
+            return json(
+              {
+                ok: false,
+                error: `No se pudo resolver el precio del curso ${cursoId}`,
+                details: detalle.error?.message,
+              },
+              200,
+              corsHeaders,
+            );
           }
-        } else {
-          for (const cursoId of cursoIds) {
-            if (!UUID_RE.test(cursoId)) continue;
-            const detalle = await secundaria.rpc("servicio_obtener_curso_tipado", {
-              p_curso_id: cursoId,
-            });
-            const curso = detalle.data?.curso as Record<string, unknown> | undefined;
-            items.push({
-              cursoId,
-              titulo: curso?.titulo ?? "Curso",
-              totalCentavos: 0,
-            });
+          const curso = detalle.data.curso as Record<string, unknown>;
+          const precio = Number(curso.precio ?? 0);
+          const gratuito = curso.gratuito === true || !(precio > 0);
+          if (gratuito) {
+            // Los gratuitos no van por checkout de pago.
+            continue;
           }
+          const tituloCliente =
+            itemsEntrada.find((raw) =>
+              raw &&
+              typeof raw === "object" &&
+              String((raw as Record<string, unknown>).cursoId ?? "") === cursoId,
+            ) as Record<string, unknown> | undefined;
+          items.push({
+            cursoId,
+            titulo:
+              (typeof tituloCliente?.titulo === "string" && tituloCliente.titulo) ||
+              curso.titulo ||
+              "Curso",
+            totalCentavos: Math.max(0, Math.round(precio * 100)),
+          });
         }
 
         if (!items.length) {
           return json(
-            { error: "No hay cursos válidos para la orden" },
+            {
+              error:
+                "No hay cursos de pago válidos para la orden. Los gratuitos se matriculan sin checkout.",
+            },
             400,
             corsHeaders,
           );
@@ -2366,7 +2772,16 @@ Deno.serve(async (req) => {
             corsHeaders,
           );
         }
-        return json({ ok: true, ...creada.data }, 200, corsHeaders);
+        return json(
+          {
+            ok: true,
+            ...creada.data,
+            precioAutorizadoServidor: true,
+            pagoModo: (Deno.env.get("PAYMENT_MODE") ?? "simulacion").toLowerCase(),
+          },
+          200,
+          corsHeaders,
+        );
       }
 
       const ordenId =
@@ -2405,6 +2820,38 @@ Deno.serve(async (req) => {
         return json({ ok: true, ...orden.data }, 200, corsHeaders);
       }
 
+      // confirmar-pago-orden
+      const pagoModo = (
+        Deno.env.get("PAYMENT_MODE") ??
+        Deno.env.get("IZIPAY_MODO") ??
+        "simulacion"
+      ).toLowerCase();
+      const simulado =
+        pagoModo === "simulacion" ||
+        pagoModo === "simulation" ||
+        pagoModo === "demo";
+      const desdeWebhook = entrada.fromWebhook === true;
+      const webhookSecret = Deno.env.get("IZIPAY_WEBHOOK_SECRET") ?? "";
+      const headerSecret =
+        req.headers.get("x-tukuy-webhook-secret") ??
+        req.headers.get("x-izipay-webhook-secret") ??
+        "";
+
+      if (!simulado) {
+        if (!desdeWebhook || !webhookSecret || headerSecret !== webhookSecret) {
+          return json(
+            {
+              ok: false,
+              error:
+                "PAYMENT_MODE no es simulacion: confirma solo vía izipay-webhook (o pon PAYMENT_MODE=simulacion).",
+              code: "CONFIRMACION_REQUIERE_WEBHOOK",
+            },
+            403,
+            corsHeaders,
+          );
+        }
+      }
+
       const confirmada = await secundaria.rpc("servicio_confirmar_pago_orden", {
         p_orden_id: ordenId,
         p_comprador_identidad_ref: compradorId,
@@ -2438,7 +2885,16 @@ Deno.serve(async (req) => {
           corsHeaders,
         );
       }
-      return json({ ok: true, ...confirmada.data }, 200, corsHeaders);
+      return json(
+        {
+          ok: true,
+          ...confirmada.data,
+          pagoModo,
+          confirmacionSimulada: simulado && !desdeWebhook,
+        },
+        200,
+        corsHeaders,
+      );
     }
 
     if (entrada.action === "matricular-estudiante") {
@@ -2536,6 +2992,184 @@ Deno.serve(async (req) => {
           estudianteIdentidadRef: authRef,
           advertenciaSync,
           matriculadoPor: usuario.user.id,
+        },
+        200,
+        corsHeaders,
+      );
+    }
+
+    if (entrada.action === "solicitar-matricula") {
+      const cursoId =
+        typeof entrada.cursoId === "string" ? entrada.cursoId.trim() : "";
+      const estudianteId =
+        typeof entrada.estudianteId === "string"
+          ? entrada.estudianteId.trim()
+          : usuario.user.id;
+      if (!cursoId || !UUID_RE.test(estudianteId)) {
+        return json(
+          { error: "cursoId y estudianteId (uuid) requeridos" },
+          400,
+          corsHeaders,
+        );
+      }
+
+      const resuelto = await principal.rpc(
+        "org_resolver_estudiante_secundaria",
+        {
+          p_instalacion_id: instalacionId,
+          p_identidad_id: estudianteId,
+        },
+      );
+      if (resuelto.error) {
+        const noAutorizado = /No autorizado/i.test(
+          resuelto.error.message ?? "",
+        );
+        return json(
+          {
+            ok: false,
+            error: noAutorizado
+              ? "No autorizado para solicitar matrícula en esta organizacion"
+              : "Falta ejecutar en la principal 20260810190000_org_matricula_secundaria.sql",
+            details: resuelto.error.message,
+          },
+          noAutorizado ? 403 : 200,
+          corsHeaders,
+        );
+      }
+      if (!resuelto.data?.ok) {
+        return json(
+          {
+            ok: false,
+            error: resuelto.data?.error ??
+              "La persona no es miembro activo de la organizacion",
+          },
+          403,
+          corsHeaders,
+        );
+      }
+
+      const alumno = resuelto.data as Record<string, unknown>;
+      const authRef = String(alumno.authRef);
+
+      const sync = await secundaria.rpc("servicio_sincronizar_acceso", {
+        p_identidad_principal_ref: authRef,
+        p_membresia_principal_ref: String(alumno.membresiaId),
+        p_correo: alumno.correo ?? null,
+        p_nombre_mostrar: alumno.nombre ?? alumno.correo ?? null,
+        p_perfiles: Array.isArray(alumno.perfiles) ? alumno.perfiles : [],
+        p_permisos: Array.isArray(alumno.permisos) ? alumno.permisos : [],
+        p_version_autorizacion: Number(alumno.versionAutorizacion ?? 1),
+        p_estado: "ACTIVO",
+      });
+      if (sync.error) {
+        // Continuar: la matrícula pendiente igual se crea.
+      }
+
+      const mat = await secundaria.rpc("servicio_matricular_con_estado", {
+        p_curso_id: cursoId,
+        p_estudiante_identidad_ref: authRef,
+        p_origen: "SOLICITUD",
+        p_estados_preferidos: ["PENDIENTE", "SOLICITADA", "EN_REVISION"],
+      });
+      if (mat.error) {
+        return json(
+          {
+            ok: false,
+            error: mat.error.message,
+            details:
+              "Ejecutar en secundaria 20260811162000_activar_matricula.sql",
+          },
+          200,
+          corsHeaders,
+        );
+      }
+      return json(
+        {
+          ok: true,
+          ...mat.data,
+          estudianteIdentidadRef: authRef,
+        },
+        200,
+        corsHeaders,
+      );
+    }
+
+    if (entrada.action === "activar-matricula") {
+      const matriculaId =
+        typeof entrada.matriculaId === "string" ? entrada.matriculaId.trim() : "";
+      const estudianteIdEntrada =
+        typeof entrada.estudianteId === "string"
+          ? entrada.estudianteId.trim()
+          : "";
+      if (!matriculaId || !UUID_RE.test(matriculaId)) {
+        return json(
+          { error: "matriculaId (uuid) requerido" },
+          400,
+          corsHeaders,
+        );
+      }
+
+      // Si el cliente ya conoce al alumno, validar membresía antes de activar.
+      if (estudianteIdEntrada && UUID_RE.test(estudianteIdEntrada)) {
+        const resuelto = await principal.rpc(
+          "org_resolver_estudiante_secundaria",
+          {
+            p_instalacion_id: instalacionId,
+            p_identidad_id: estudianteIdEntrada,
+          },
+        );
+        if (resuelto.error) {
+          const noAutorizado = /No autorizado/i.test(
+            resuelto.error.message ?? "",
+          );
+          return json(
+            {
+              ok: false,
+              error: noAutorizado
+                ? "No autorizado para aprobar matrículas en esta organizacion"
+                : "Falta ejecutar en la principal 20260810190000_org_matricula_secundaria.sql",
+              details: resuelto.error.message,
+            },
+            noAutorizado ? 403 : 200,
+            corsHeaders,
+          );
+        }
+        if (!resuelto.data?.ok) {
+          return json(
+            {
+              ok: false,
+              error: resuelto.data?.error ??
+                "La persona no es miembro activo de la organizacion",
+            },
+            403,
+            corsHeaders,
+          );
+        }
+      }
+
+      const act = await secundaria.rpc("servicio_activar_matricula", {
+        p_matricula_id: matriculaId,
+        p_actor_identidad_ref: usuario.user.id,
+      });
+      if (act.error) {
+        return json(
+          {
+            ok: false,
+            error: act.error.message,
+            details:
+              "Ejecutar en secundaria 20260811162000_activar_matricula.sql",
+          },
+          200,
+          corsHeaders,
+        );
+      }
+
+      const data = (act.data ?? {}) as Record<string, unknown>;
+      return json(
+        {
+          ok: true,
+          ...data,
+          aprobadoPor: usuario.user.id,
         },
         200,
         corsHeaders,

@@ -3,6 +3,7 @@ import { Link2, Mail, Video, XCircle } from "lucide-vue-next";
 import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
 
 import { sesionesEnVivoCompartidas } from "@/api/services/sesiones-en-vivo-compartidas.service";
+import AsistenciaSesionPanel from "@/components/shared/AsistenciaSesionPanel.vue";
 import CalendarioSesionesEnVivo from "@/components/shared/CalendarioSesionesEnVivo.vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -244,7 +245,7 @@ function etiquetaEstado(estado: SesionEnVivoOrganizacion["estado"]) {
       class="fixed inset-0 z-50 grid place-items-center bg-slate-950/60 p-4"
       @click.self="sesionDetalle = undefined"
     >
-      <Card class="w-full max-w-lg bg-card">
+      <Card class="max-h-[90vh] w-full max-w-2xl overflow-y-auto bg-card">
         <CardContent class="p-6">
           <div class="flex items-start justify-between gap-3">
             <div>
@@ -269,6 +270,9 @@ function etiquetaEstado(estado: SesionEnVivoOrganizacion["estado"]) {
             <Link2 class="mr-1 inline h-4 w-4" />
             {{ sesionDetalle.meetUrl }}
           </p>
+
+          <AsistenciaSesionPanel :sesion-id="sesionDetalle.id" />
+
           <div class="mt-5 flex justify-end gap-2">
             <Button variant="outline" @click="sesionDetalle = undefined"
               >Cerrar</Button

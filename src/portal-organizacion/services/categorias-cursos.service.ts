@@ -2,15 +2,20 @@ import { api } from "@/api/client";
 import { apiConfig } from "@/api/config";
 import { API } from "@/api/endpoints";
 import { resolveMock } from "@/api/mock";
+import { organizacionPrincipalService } from "@/api/services/organizacion-principal.service";
+import { CONTEXTO_SESION_KEY } from "@/lib/constants";
 import {
   categoriasCursosEntidadesMock,
   cursosPerfilesEntidadesMock,
 } from "@/modulos/comunidad/data/entidades-publicas.mock";
 import type { CategoriaCursoEntidad } from "@/modulos/comunidad/types/entidad-publica.types";
 import { catalogoCursosOrganizacion } from "@/portal-organizacion/data/organizacion.mock";
+import type { ContextoSesion } from "@/types/membresia.types";
 
-const CLAVE = "tukuy_demo_categorias_cursos_entidad_v4";
+const CLAVE = "tukuy_demo_categorias_cursos_entidad_v5";
 const ORGANIZACION_DEMO = "org-empresa-abc";
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export type CursoClasificadoEntidad = {
   id: string;
@@ -55,7 +60,30 @@ function aliasCategoria(nombre: string): string {
   return mapa[clave] ?? clave;
 }
 
+function usaBd() {
+  return organizacionPrincipalService.activo();
+}
+
+function instalacionActiva(): string | null {
+  try {
+    const bruto = localStorage.getItem(CONTEXTO_SESION_KEY);
+    if (!bruto) return null;
+    const contexto = JSON.parse(bruto) as ContextoSesion;
+    return contexto.organizacionId ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function esRpcCategoriasAusente(error: unknown) {
+  const mensaje = error instanceof Error ? error.message : String(error);
+  return /org_(listar|guardar|eliminar)_categoria|Could not find the function|PGRST202/i.test(
+    mensaje,
+  );
+}
+
 function semillas(): CategoriaCursoEntidad[] {
+  if (apiConfig.sinDatosDemo) return [];
   return categoriasCursosEntidadesMock
     .filter((item) => item.organizacionId === ORGANIZACION_DEMO)
     .map((item) => {
@@ -70,7 +98,7 @@ function leer(): CategoriaCursoEntidad[] {
     const raw = localStorage.getItem(CLAVE);
     if (raw) {
       const datos = JSON.parse(raw) as CategoriaCursoEntidad[];
-      if (Array.isArray(datos) && datos.length) {
+      if (Array.isArray(datos) && (datos.length || apiConfig.sinDatosDemo)) {
         return datos
           .filter((item) => !item.categoriaPadreId)
           .map((item) => {
@@ -99,9 +127,10 @@ function idsPorNombre(categorias: CategoriaCursoEntidad[], nombre: string) {
     .map((item) => item.id);
 }
 
-function construirCursosClasificados(
+function construirCursosClasificadosDesdeMock(
   categorias: CategoriaCursoEntidad[],
 ): CursoClasificadoEntidad[] {
+  if (apiConfig.sinDatosDemo) return [];
   const porId = new Map(categorias.map((item) => [item.id, item]));
   const filas = new Map<string, CursoClasificadoEntidad>();
 
@@ -164,8 +193,59 @@ function construirCursosClasificados(
   );
 }
 
+async function construirCursosClasificadosDesdeCatalogo(
+  categorias: CategoriaCursoEntidad[],
+): Promise<CursoClasificadoEntidad[]> {
+  const { organizacionService } = await import(
+    "@/api/services/organizacion.service"
+  );
+  const catalogo = await organizacionService.catalogoCursos.listar();
+  const porId = new Map(categorias.map((item) => [item.id, item]));
+
+  return catalogo
+    .map((propuesta) => {
+      const ids = idsPorNombre(categorias, propuesta.categoria || "");
+      const nombres = ids
+        .map((id) => porId.get(id)?.nombre)
+        .filter(Boolean) as string[];
+      return {
+        id: propuesta.id,
+        cursoDocenteId: propuesta.cursoDocenteId || propuesta.id,
+        titulo: propuesta.titulo,
+        imagen: propuesta.imagen,
+        docente: propuesta.docente,
+        estado: propuesta.estado,
+        duracion: propuesta.duracion,
+        categoriaIds: ids,
+        categoriaNombres: nombres.length
+          ? nombres
+          : propuesta.categoria
+            ? [propuesta.categoria]
+            : [],
+        precio: propuesta.precio,
+        gratuito: propuesta.gratuito,
+      } satisfies CursoClasificadoEntidad;
+    })
+    .sort((a, b) => a.titulo.localeCompare(b.titulo, "es"));
+}
+
 export const categoriasCursosService = {
   async listar(): Promise<CategoriaCursoEntidad[]> {
+    if (usaBd()) {
+      const instalacionId = instalacionActiva();
+      if (instalacionId && UUID_RE.test(instalacionId)) {
+        try {
+          const datos =
+            await organizacionPrincipalService.listarCategoriasCursos(
+              instalacionId,
+            );
+          return datos.sort((a, b) => a.orden - b.orden);
+        } catch (error) {
+          if (!esRpcCategoriasAusente(error)) throw error;
+        }
+      }
+    }
+
     const datos = leer().sort((a, b) => a.orden - b.orden);
     if (apiConfig.useMock) return resolveMock(datos);
     try {
@@ -180,7 +260,10 @@ export const categoriasCursosService = {
 
   async listarCursosClasificados(): Promise<CursoClasificadoEntidad[]> {
     const categorias = await this.listar();
-    return resolveMock(construirCursosClasificados(categorias));
+    if (usaBd() || apiConfig.secundariaCursos) {
+      return construirCursosClasificadosDesdeCatalogo(categorias);
+    }
+    return resolveMock(construirCursosClasificadosDesdeMock(categorias));
   },
 
   async contarCursosPorCategoria(): Promise<Record<string, number>> {
@@ -197,6 +280,31 @@ export const categoriasCursosService = {
   async crear(datos: CrearCategoriaInput) {
     const nombre = datos.nombre.trim();
     if (!nombre) throw new Error("El nombre es obligatorio.");
+
+    if (usaBd()) {
+      const instalacionId = instalacionActiva();
+      if (!instalacionId || !UUID_RE.test(instalacionId)) {
+        throw new Error("No hay organización activa en el contexto de sesión");
+      }
+      try {
+        return await organizacionPrincipalService.guardarCategoriaCurso(
+          instalacionId,
+          {
+            id: `cat-${Date.now()}`,
+            organizacionId: instalacionId,
+            nombre,
+            descripcion: datos.descripcion.trim(),
+            color: datos.color || "#0B3A78",
+            visibleEnCatalogo: datos.visibleEnCatalogo,
+            seleccionableComoInteres: datos.seleccionableComoInteres,
+            orden: 0,
+            estado: "ACTIVA",
+          },
+        );
+      } catch (error) {
+        if (!esRpcCategoriasAusente(error)) throw error;
+      }
+    }
 
     if (!apiConfig.useMock) {
       try {
@@ -235,6 +343,29 @@ export const categoriasCursosService = {
   },
 
   async actualizar(id: string, cambios: Partial<CategoriaCursoEntidad>) {
+    if (usaBd()) {
+      const instalacionId = instalacionActiva();
+      if (!instalacionId || !UUID_RE.test(instalacionId)) {
+        throw new Error("No hay organización activa en el contexto de sesión");
+      }
+      try {
+        const actuales =
+          await organizacionPrincipalService.listarCategoriasCursos(
+            instalacionId,
+          );
+        const actual = actuales.find((item) => item.id === id);
+        if (!actual) throw new Error("No se encontró la categoría.");
+        const fusionada = { ...actual, ...cambios, id };
+        delete fusionada.categoriaPadreId;
+        return await organizacionPrincipalService.guardarCategoriaCurso(
+          instalacionId,
+          fusionada,
+        );
+      } catch (error) {
+        if (!esRpcCategoriasAusente(error)) throw error;
+      }
+    }
+
     if (!apiConfig.useMock) {
       try {
         const { data } = await api.patch<CategoriaCursoEntidad>(
@@ -257,11 +388,27 @@ export const categoriasCursosService = {
   },
 
   async eliminar(id: string) {
+    if (usaBd()) {
+      const instalacionId = instalacionActiva();
+      if (!instalacionId || !UUID_RE.test(instalacionId)) {
+        throw new Error("No hay organización activa en el contexto de sesión");
+      }
+      try {
+        await organizacionPrincipalService.eliminarCategoriaCurso(
+          instalacionId,
+          id,
+        );
+        return true;
+      } catch (error) {
+        if (!esRpcCategoriasAusente(error)) throw error;
+      }
+    }
+
     const categorias = leer();
     if (!categorias.some((item) => item.id === id)) {
       throw new Error("No se encontró la categoría.");
     }
-    const cursos = construirCursosClasificados(categorias);
+    const cursos = construirCursosClasificadosDesdeMock(categorias);
     if (cursos.some((curso) => curso.categoriaIds.includes(id))) {
       throw new Error(
         "No se puede eliminar: hay cursos con esta categoría. Desactívala o reasigna los cursos.",

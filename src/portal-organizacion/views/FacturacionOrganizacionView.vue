@@ -120,21 +120,34 @@ function moneda(valor: number, codigo: "PEN" | "USD" = "PEN") {
 }
 
 function fecha(fechaIso: string) {
+  if (!fechaIso || fechaIso === "—") return "—";
+  const marca = Date.parse(
+    /^\d{4}-\d{2}-\d{2}$/.test(fechaIso)
+      ? `${fechaIso}T00:00:00Z`
+      : fechaIso,
+  );
+  if (Number.isNaN(marca)) return fechaIso;
   return new Intl.DateTimeFormat("es-PE", {
     dateStyle: "medium",
     timeZone: "UTC",
-  }).format(new Date(`${fechaIso}T00:00:00Z`));
+  }).format(new Date(marca));
 }
 
 function abrirPlan() {
   if (!facturacion.value) return;
+  if (facturacion.value.soloLectura) {
+    mensaje.value =
+      facturacion.value.mensajeGestion ??
+      "Los cambios de plan los gestiona administración Tukuy.";
+    return;
+  }
   plan.nombre = facturacion.value.plan;
   plan.periodicidad = facturacion.value.periodicidad;
   modalPlan.value = true;
 }
 
 async function guardarPlan() {
-  if (!facturacion.value) return;
+  if (!facturacion.value || facturacion.value.soloLectura) return;
   const elegido =
     planes.find((item) => item.value === plan.nombre) ?? planes[1]!;
   const actualizado = {
@@ -152,6 +165,12 @@ async function guardarPlan() {
 
 function abrirTarjeta() {
   if (!facturacion.value) return;
+  if (facturacion.value.soloLectura) {
+    mensaje.value =
+      facturacion.value.mensajeGestion ??
+      "El medio de pago lo gestiona administración Tukuy.";
+    return;
+  }
   Object.assign(tarjeta, {
     marca: facturacion.value.tarjetaMarca,
     ultimos4: facturacion.value.tarjetaUltimos4,
@@ -161,8 +180,8 @@ function abrirTarjeta() {
 }
 
 async function guardarTarjeta() {
+  if (!facturacion.value || facturacion.value.soloLectura) return;
   if (
-    !facturacion.value ||
     !/^\d{4}$/.test(tarjeta.ultimos4) ||
     !/^\d{2}\/\d{4}$/.test(tarjeta.vencimiento)
   ) {
@@ -217,7 +236,7 @@ function claseEstado(estado: ComprobanteOrganizacion["estado"]) {
       :etiqueta="nombreOrganizacion"
       titulo="Facturación y actualización"
       descripcion="Cambia de plan, actualiza el método de pago y descarga comprobantes de tu suscripción corporativa."
-      texto-accion="Actualizar plan"
+      texto-accion="Ver plan"
       texto-accion-secundaria="Licencia"
       :icono-accion="Sparkles"
       :icono-accion-secundaria="ShieldCheck"
@@ -319,37 +338,48 @@ function claseEstado(estado: ComprobanteOrganizacion["estado"]) {
                 {{ facturacion.periodicidad === "MENSUAL" ? "mes" : "año" }}
               </p>
             </div>
-            <div class="mt-4 grid gap-2">
-              <button
-                v-for="opcion in planes"
-                :key="opcion.value"
-                type="button"
-                class="flex items-center justify-between gap-3 border border-border px-3 py-2.5 text-left transition hover:border-primary hover:bg-muted/40"
-                :class="
-                  opcion.value === facturacion.plan
-                    ? 'border-l-4 border-l-accent bg-accent/10'
-                    : 'border-l-4 border-l-transparent'
-                "
-                @click="
-                  plan.nombre = opcion.value;
-                  modalPlan = true;
-                "
-              >
-                <span>
-                  <span class="block text-sm font-bold">{{ opcion.label }}</span>
-                  <span class="text-[11px] text-muted-foreground">{{
-                    opcion.detalle
-                  }}</span>
-                </span>
-                <span class="shrink-0 text-xs font-black text-primary">
-                  {{ moneda(opcion.mensual) }}
-                </span>
-              </button>
-            </div>
-            <Button class="mt-4 w-full" @click="abrirPlan">
-              <RefreshCw class="h-4 w-4" />
-              Confirmar actualización de plan
-            </Button>
+            <p
+              v-if="facturacion.soloLectura"
+              class="mt-4 text-sm text-muted-foreground"
+            >
+              {{
+                facturacion.mensajeGestion ??
+                "Los cambios de plan los gestiona administración Tukuy."
+              }}
+            </p>
+            <template v-else>
+              <div class="mt-4 grid gap-2">
+                <button
+                  v-for="opcion in planes"
+                  :key="opcion.value"
+                  type="button"
+                  class="flex items-center justify-between gap-3 border border-border px-3 py-2.5 text-left transition hover:border-primary hover:bg-muted/40"
+                  :class="
+                    opcion.value === facturacion.plan
+                      ? 'border-l-4 border-l-accent bg-accent/10'
+                      : 'border-l-4 border-l-transparent'
+                  "
+                  @click="
+                    plan.nombre = opcion.value;
+                    modalPlan = true;
+                  "
+                >
+                  <span>
+                    <span class="block text-sm font-bold">{{ opcion.label }}</span>
+                    <span class="text-[11px] text-muted-foreground">{{
+                      opcion.detalle
+                    }}</span>
+                  </span>
+                  <span class="shrink-0 text-xs font-black text-primary">
+                    {{ moneda(opcion.mensual) }}
+                  </span>
+                </button>
+              </div>
+              <Button class="mt-4 w-full" @click="abrirPlan">
+                <RefreshCw class="h-4 w-4" />
+                Confirmar actualización de plan
+              </Button>
+            </template>
           </CardContent>
         </Card>
 
@@ -364,7 +394,11 @@ function claseEstado(estado: ComprobanteOrganizacion["estado"]) {
                 </p>
                 <h2 class="text-lg font-black">Método de pago</h2>
                 <p class="mt-1 text-xs text-muted-foreground">
-                  Actualiza tarjeta para evitar cortes de servicio
+                  {{
+                    facturacion.soloLectura
+                      ? "Proveedor de cobro registrado en la suscripción"
+                      : "Actualiza tarjeta para evitar cortes de servicio"
+                  }}
                 </p>
               </div>
               <CreditCard class="h-5 w-5 text-primary" />
@@ -379,15 +413,31 @@ function claseEstado(estado: ComprobanteOrganizacion["estado"]) {
               </div>
               <div>
                 <strong class="block text-lg font-black">
-                  {{ facturacion.tarjetaMarca }} ····
-                  {{ facturacion.tarjetaUltimos4 }}
+                  <template v-if="facturacion.soloLectura">
+                    {{ facturacion.tarjetaMarca }}
+                  </template>
+                  <template v-else>
+                    {{ facturacion.tarjetaMarca }} ····
+                    {{ facturacion.tarjetaUltimos4 }}
+                  </template>
                 </strong>
-                <p class="text-xs text-muted-foreground">
+                <p
+                  v-if="!facturacion.soloLectura"
+                  class="text-xs text-muted-foreground"
+                >
                   Vence {{ facturacion.tarjetaVencimiento }}
+                </p>
+                <p v-else class="text-xs text-muted-foreground">
+                  Medio de pago administrado por Tukuy
                 </p>
               </div>
             </div>
-            <Button class="mt-5 w-full" variant="outline" @click="abrirTarjeta">
+            <Button
+              v-if="!facturacion.soloLectura"
+              class="mt-5 w-full"
+              variant="outline"
+              @click="abrirTarjeta"
+            >
               Actualizar tarjeta
             </Button>
             <Button

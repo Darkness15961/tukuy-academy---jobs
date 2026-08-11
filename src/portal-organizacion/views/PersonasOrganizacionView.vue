@@ -97,22 +97,18 @@ onMounted(cargar);
 
 async function cargar() {
   try {
-    // Primero el directorio (RPC): desbloquea la tabla cuanto antes.
+    // Primero el directorio (RPC cacheado): desbloquea la tabla cuanto antes.
     usuarios.value = await organizacionService.usuarios.listar();
     cargando.value = false;
 
-    const [estructurasLista, nivelesLista, unidadesLista, vinculacionesLista, configuracion] =
-      await Promise.all([
-        organizacionService.estructura.estructuras.listar(),
-        organizacionService.estructura.niveles.listar(),
-        organizacionService.estructura.unidades.listar(),
-        organizacionService.estructura.vinculaciones.listar(),
-        organizacionService.obtenerConfiguracion(),
-      ]);
-    estructuras.value = estructurasLista;
-    niveles.value = nivelesLista;
-    unidades.value = unidadesLista;
-    vinculaciones.value = vinculacionesLista;
+    const [snap, configuracion] = await Promise.all([
+      organizacionService.estructura.obtenerSnapshot(),
+      organizacionService.obtenerConfiguracion(),
+    ]);
+    estructuras.value = snap.estructuras;
+    niveles.value = snap.niveles;
+    unidades.value = snap.unidades;
+    vinculaciones.value = snap.vinculaciones;
     requiereDniEnrolamiento.value = configuracion.requiereDniEnrolamiento;
 
     const guardadaId = localStorage.getItem("tukuy_demo_organizacion_estructura_seleccionada");

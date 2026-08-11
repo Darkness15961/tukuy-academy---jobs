@@ -67,7 +67,7 @@ async function guardar() {
     error.value = "El nombre de la organización es obligatorio.";
     return;
   }
-  if (!/^\d{11}$/.test(configuracion.ruc)) {
+  if (configuracion.ruc.trim() && !/^\d{11}$/.test(configuracion.ruc.trim())) {
     error.value = "El RUC debe contener 11 dígitos.";
     return;
   }

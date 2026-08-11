@@ -3,17 +3,22 @@ import PrimeVue from "primevue/config";
 import Aura from "@primeuix/themes/aura";
 
 import App from "@/App.vue";
+import { apiConfig } from "@/api/config";
 import { inicializarTema } from "@/composables/useTema";
 import { env } from "@/lib/env";
+import { limpiarPersistenciaDemoSiCorresponde } from "@/lib/limpiar-persistencia-demo";
 import { inicializarSesionSupabase } from "@/lib/supabase";
 import router from "@/router";
 import "@/style.css";
 
 inicializarTema();
+limpiarPersistenciaDemoSiCorresponde();
 await inicializarSesionSupabase();
 
 if (import.meta.env.DEV) {
-  console.info(`[Tukuy Academy] API: ${env.apiUrl} · mock: ${env.useMock}`);
+  console.info(
+    `[Tukuy Academy] API: ${env.apiUrl} · mock: ${env.useMock} · sinDemo: ${apiConfig.sinDatosDemo} · secundaria: ${env.secundariaCursos}`,
+  );
 }
 
 createApp(App)

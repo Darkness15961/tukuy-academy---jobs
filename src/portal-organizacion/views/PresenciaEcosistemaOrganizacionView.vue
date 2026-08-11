@@ -4,6 +4,7 @@ import {
   ExternalLink,
   Eye,
   EyeOff,
+  ImagePlus,
   Save,
   Sparkles,
 } from "lucide-vue-next";
@@ -17,7 +18,9 @@ import { Button } from "@/components/ui/button";
 import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { organizacionService } from "@/api/services/organizacion.service";
 import { useContextoSesion } from "@/composables/useContextoSesion";
+import { storageAcademia, urlPublicaMedia } from "@/lib/storage-academia";
 import { entidadesComunidadService } from "@/modulos/comunidad/services/entidades.service";
 import type {
   CursoPerfilEntidad,
@@ -25,14 +28,28 @@ import type {
 } from "@/modulos/comunidad/types/entidad-publica.types";
 
 const router = useRouter();
-const { contextoActivo } = useContextoSesion();
+const {
+  contextoActivo,
+  funcionesEntidadActiva,
+  actualizarIdentidadOrganizacion,
+} = useContextoSesion();
 
 const cargando = ref(true);
 const guardando = ref(false);
 const mensaje = ref("");
 const error = ref("");
+const subiendoLogo = ref(false);
+const subiendoPortada = ref(false);
+const selectorLogo = ref<HTMLInputElement | null>(null);
+const selectorPortada = ref<HTMLInputElement | null>(null);
 const entidadId = computed(
   () => contextoActivo.value?.organizacionId ?? "org-empresa-abc",
+);
+
+const logoInstitucional = computed(
+  () =>
+    funcionesEntidadActiva.value.find((item) => item.organizacion?.logo)
+      ?.organizacion?.logo ?? "",
 );
 
 const formulario = reactive({
@@ -50,6 +67,12 @@ const formulario = reactive({
   requiereDniEnrolamiento: true,
 });
 
+const previewLogo = computed(() =>
+  urlPublicaMedia(formulario.logo, "/img/iconoTukuyAcademy.png"),
+);
+const previewPortada = computed(() =>
+  urlPublicaMedia(formulario.portada, "/img/portal-organizacion.png"),
+);
 const cursos = ref<Array<CursoPerfilEntidad & { visibleEnPerfil: boolean }>>(
   [],
 );
@@ -72,16 +95,34 @@ async function cargar() {
   cargando.value = true;
   error.value = "";
   try {
-    const [entidad, cursosEditor] = await Promise.all([
+    const [entidad, cursosEditor, configuracion] = await Promise.all([
       entidadesComunidadService.obtenerPorId(entidadId.value),
       entidadesComunidadService.obtenerCursosEditor(entidadId.value),
+      organizacionService.obtenerConfiguracion(),
     ]);
     if (!entidad) {
       error.value =
         "No hay ficha pública para esta organización en el ecosistema.";
       return;
     }
-    aplicarEntidad(entidad);
+    // Hereda identidad institucional (Configuración / sesión) si la ficha aún no la tiene.
+    aplicarEntidad({
+      ...entidad,
+      nombre:
+        entidad.nombre?.trim() ||
+        configuracion.nombre?.trim() ||
+        contextoActivo.value?.organizacionNombre ||
+        entidad.nombre,
+      logo:
+        entidad.logo?.trim() ||
+        configuracion.logo?.trim() ||
+        logoInstitucional.value ||
+        entidad.logo,
+      requiereDniEnrolamiento:
+        entidad.requiereDniEnrolamiento ??
+        configuracion.requiereDniEnrolamiento ??
+        true,
+    });
     cursos.value = cursosEditor;
   } finally {
     cargando.value = false;
@@ -140,6 +181,10 @@ async function guardarPerfil() {
         requiereDniEnrolamiento: formulario.requiereDniEnrolamiento,
       },
     );
+    actualizarIdentidadOrganizacion({
+      nombre: formulario.nombre.trim(),
+      logo: formulario.logo.trim() || undefined,
+    });
     aplicarEntidad(actualizada);
     mensaje.value = "Presencia pública actualizada. Ya se refleja en Comunidad.";
   } catch (err) {
@@ -168,6 +213,57 @@ async function alternarCurso(
 
 function verPerfilPublico() {
   router.push(`/comunidad/entidades/${entidadId.value}`);
+}
+
+async function subirImagenPerfil(
+  archivo: File,
+  destino: "logo" | "portada",
+) {
+  if (!puedeEditar.value) return;
+  error.value = "";
+  mensaje.value = "";
+  const ocupado = destino === "logo" ? subiendoLogo : subiendoPortada;
+  const anterior =
+    destino === "logo" ? formulario.logo : formulario.portada;
+  ocupado.value = true;
+  const previewLocal = URL.createObjectURL(archivo);
+  if (destino === "logo") formulario.logo = previewLocal;
+  else formulario.portada = previewLocal;
+  try {
+    const subida = await storageAcademia.subirPortada(archivo);
+    const url = subida.publicUrl ?? subida.url;
+    if (destino === "logo") formulario.logo = url;
+    else formulario.portada = url;
+    mensaje.value =
+      destino === "logo"
+        ? "Logo subido. Guarda la ficha para publicarlo."
+        : "Portada subida. Guarda la ficha para publicarla.";
+  } catch (err) {
+    if (destino === "logo") formulario.logo = anterior;
+    else formulario.portada = anterior;
+    error.value =
+      err instanceof Error
+        ? err.message
+        : `No se pudo subir ${destino === "logo" ? "el logo" : "la portada"}.`;
+  } finally {
+    URL.revokeObjectURL(previewLocal);
+    ocupado.value = false;
+  }
+}
+
+function alElegirArchivo(
+  evento: Event,
+  destino: "logo" | "portada",
+) {
+  const input = evento.target as HTMLInputElement;
+  const archivo = input.files?.[0];
+  input.value = "";
+  if (!archivo) return;
+  if (!archivo.type.startsWith("image/")) {
+    error.value = "Elige una imagen.";
+    return;
+  }
+  void subirImagenPerfil(archivo, destino);
 }
 </script>
 
@@ -263,7 +359,7 @@ function verPerfilPublico() {
               class="relative min-h-36 overflow-hidden border border-border bg-muted"
             >
               <img
-                :src="formulario.portada || '/img/portal-organizacion.png'"
+                :src="previewPortada"
                 alt=""
                 class="absolute inset-0 h-full w-full object-cover"
               />
@@ -272,7 +368,7 @@ function verPerfilPublico() {
               />
               <div class="absolute bottom-3 left-3 flex items-center gap-3">
                 <img
-                  :src="formulario.logo || '/img/iconoTukuyAcademy.png'"
+                  :src="previewLogo"
                   alt=""
                   class="h-12 w-12 object-contain bg-white p-1"
                 />
@@ -316,14 +412,78 @@ function verPerfilPublico() {
                   :disabled="!puedeEditar"
                 />
               </label>
-              <label class="grid gap-1.5 text-sm font-bold">
-                Logo (URL)
-                <Input v-model="formulario.logo" :disabled="!puedeEditar" />
-              </label>
-              <label class="grid gap-1.5 text-sm font-bold">
-                Portada (URL)
-                <Input v-model="formulario.portada" :disabled="!puedeEditar" />
-              </label>
+              <div class="grid gap-1.5 text-sm font-bold">
+                <span>Logo</span>
+                <div class="flex items-center gap-3">
+                  <img
+                    :src="previewLogo"
+                    alt=""
+                    class="h-14 w-14 shrink-0 border border-border bg-white object-contain p-1"
+                  />
+                  <div class="min-w-0 flex-1">
+                    <input
+                      ref="selectorLogo"
+                      class="hidden"
+                      type="file"
+                      accept="image/*"
+                      :disabled="!puedeEditar || subiendoLogo"
+                      @change="alElegirArchivo($event, 'logo')"
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      :disabled="!puedeEditar || subiendoLogo"
+                      @click="selectorLogo?.click()"
+                    >
+                      <ImagePlus class="h-4 w-4" />
+                      {{
+                        subiendoLogo
+                          ? "Subiendo…"
+                          : formulario.logo
+                            ? "Cambiar logo"
+                            : "Subir logo"
+                      }}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+              <div class="grid gap-1.5 text-sm font-bold">
+                <span>Portada</span>
+                <div class="flex items-center gap-3">
+                  <img
+                    :src="previewPortada"
+                    alt=""
+                    class="h-14 w-24 shrink-0 border border-border object-cover"
+                  />
+                  <div class="min-w-0 flex-1">
+                    <input
+                      ref="selectorPortada"
+                      class="hidden"
+                      type="file"
+                      accept="image/*"
+                      :disabled="!puedeEditar || subiendoPortada"
+                      @change="alElegirArchivo($event, 'portada')"
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      :disabled="!puedeEditar || subiendoPortada"
+                      @click="selectorPortada?.click()"
+                    >
+                      <ImagePlus class="h-4 w-4" />
+                      {{
+                        subiendoPortada
+                          ? "Subiendo…"
+                          : formulario.portada
+                            ? "Cambiar portada"
+                            : "Subir portada"
+                      }}
+                    </Button>
+                  </div>
+                </div>
+              </div>
               <label class="grid gap-1.5 text-sm font-bold">
                 Sitio web
                 <Input v-model="formulario.sitioWeb" :disabled="!puedeEditar" />

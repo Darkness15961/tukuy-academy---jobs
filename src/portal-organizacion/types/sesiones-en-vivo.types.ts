@@ -47,6 +47,10 @@ export interface SesionEnVivoOrganizacion {
   calendarEventId: string;
   /** Enlace Meet generado al crear el evento. */
   meetUrl: string;
+  /** true si el enlace no es de Google real (fallback local). */
+  meetSimulado?: boolean;
+  /** Motivo del fallback / error de Google Calendar. */
+  meetAviso?: string;
   invitados: InvitadoSesionEnVivo[];
   inscritos: number;
   grabacionUrl?: string;

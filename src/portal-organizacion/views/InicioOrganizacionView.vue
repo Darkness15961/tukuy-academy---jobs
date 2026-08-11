@@ -83,37 +83,26 @@ async function cargarDatos() {
   cargando.value = true;
   try {
     const [
-      nodosEntidad,
-      vinculaciones,
+      snap,
       asignacionesEntidad,
       usuariosEntidad,
-      matriculasEntidad,
       catalogoEntidad,
-      rutasEntidad,
-      certificadosEntidad,
-      pendientesEntidad,
       licenciaEntidad,
     ] = await Promise.all([
-      organizacionService.estructura.unidades.listar(),
-      organizacionService.estructura.vinculaciones.listar(),
+      organizacionService.estructura.obtenerSnapshot(),
       organizacionService.asignaciones.listar(),
       organizacionService.usuarios.listar(),
-      organizacionService.matriculas.listar(),
       organizacionService.catalogoCursos.listar(),
-      organizacionService.rutas.listar(),
-      organizacionService.certificados.listar(),
-      organizacionService.certificadosPendientes.listar(),
       organizacionService.obtenerLicencia(),
     ]);
 
     asignaciones.value = asignacionesEntidad;
     usuarios.value = usuariosEntidad;
-    matriculas.value = matriculasEntidad;
     catalogo.value = catalogoEntidad;
-    rutas.value = rutasEntidad;
-    certificados.value = certificadosEntidad;
-    certificadosPendientes.value = pendientesEntidad;
     licencia.value = licenciaEntidad;
+
+    const vinculaciones = snap.vinculaciones;
+    const nodosEntidad = snap.unidades;
 
     nodos.value = nodosEntidad
       .filter((nodo) => nodo.estado === "ACTIVA" && !nodo.esSistema)
@@ -141,6 +130,19 @@ async function cargarDatos() {
         };
       })
       .sort((a, b) => a.progreso - b.progreso);
+
+    // Secundarios en fondo: no bloquean el panel principal.
+    void Promise.all([
+      organizacionService.matriculas.listar(),
+      organizacionService.rutas.listar(),
+      organizacionService.certificados.listar(),
+      organizacionService.certificadosPendientes.listar(),
+    ]).then(([matriculasEntidad, rutasEntidad, certificadosEntidad, pendientesEntidad]) => {
+      matriculas.value = matriculasEntidad;
+      rutas.value = rutasEntidad;
+      certificados.value = certificadosEntidad;
+      certificadosPendientes.value = pendientesEntidad;
+    });
   } finally {
     cargando.value = false;
   }

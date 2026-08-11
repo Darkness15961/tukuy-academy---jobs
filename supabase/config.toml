@@ -389,6 +389,14 @@ verify_jwt = false
 [functions.media-presign]
 verify_jwt = true
 
+# IPN stub Izipay: autentica con IZIPAY_WEBHOOK_SECRET (no JWT de usuario).
+[functions.izipay-webhook]
+verify_jwt = false
+
+# Token/Generate Izipay: requiere sesión del comprador.
+[functions.izipay-session]
+verify_jwt = true
+
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 

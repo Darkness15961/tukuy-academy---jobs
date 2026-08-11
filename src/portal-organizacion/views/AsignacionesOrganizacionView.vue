@@ -30,18 +30,13 @@ const buscar = ref("");
 const obligatoriedad = ref("TODOS");
 const destino = ref("TODOS");
 const nuevaAsignacion = reactive({
-  curso: "Seguridad y salud en trabajos de obra",
+  cursoId: "",
   destinoId: "ENTIDAD",
   vence: "",
   obligatorio: true,
 });
 
-const opcionesCursos = [
-  "Seguridad y salud en trabajos de obra",
-  "Gestión digital de obras con Tukuy",
-  "Control de almacén y Kardex",
-  "Lectura de planos para personal de campo",
-];
+const opcionesCursos = ref<{ label: string; value: string }[]>([]);
 const opcionesDestinos = computed(() => [
   { label: "Toda la organización", value: "ENTIDAD" },
   ...unidades.value
@@ -69,15 +64,30 @@ const opcionesFiltroDestino = computed(() => [
 ]);
 
 onMounted(async () => {
-  [lista.value, estructuras.value, niveles.value, unidades.value, vinculaciones.value, usuarios.value] =
-    await Promise.all([
-      organizacionService.asignaciones.listar(),
-      organizacionService.estructura.estructuras.listar(),
-      organizacionService.estructura.niveles.listar(),
-      organizacionService.estructura.unidades.listar(),
-      organizacionService.estructura.vinculaciones.listar(),
-      organizacionService.usuarios.listar(),
-    ]);
+  const [listaAsignaciones, snap, usuariosLista, catalogo] = await Promise.all([
+    organizacionService.asignaciones.listar(),
+    organizacionService.estructura.obtenerSnapshot(),
+    organizacionService.usuarios.listar(),
+    organizacionService.catalogoCursos.listar(),
+  ]);
+  lista.value = listaAsignaciones;
+  estructuras.value = snap.estructuras;
+  niveles.value = snap.niveles;
+  unidades.value = snap.unidades;
+  vinculaciones.value = snap.vinculaciones;
+  usuarios.value = usuariosLista;
+  opcionesCursos.value = catalogo
+    .filter((curso) =>
+      ["PUBLICADO", "APROBADO", "EN_CATALOGO"].includes(String(curso.estado)),
+    )
+    .map((curso) => ({
+      label: curso.titulo,
+      value: curso.cursoDocenteId || curso.id,
+    }))
+    .filter((item) => item.value);
+  if (!nuevaAsignacion.cursoId && opcionesCursos.value[0]) {
+    nuevaAsignacion.cursoId = opcionesCursos.value[0].value;
+  }
 });
 
 function cantidadDestino(unidadId: string) {
@@ -126,6 +136,8 @@ function porcentaje(asignacion: Asignacion) {
 }
 
 async function crear() {
+  const curso = opcionesCursos.value.find((item) => item.value === nuevaAsignacion.cursoId);
+  if (!curso) return;
   const fecha = nuevaAsignacion.vence
     ? new Intl.DateTimeFormat("es-PE", {
         day: "2-digit",
@@ -136,7 +148,8 @@ async function crear() {
     : "Sin fecha límite";
   const creada = await organizacionService.asignaciones.crear({
     id: `asig-${Date.now()}`,
-    curso: nuevaAsignacion.curso,
+    cursoId: curso.value,
+    curso: curso.label,
     destino:
       nuevaAsignacion.destinoId === "ENTIDAD"
         ? "Toda la organización"
@@ -313,7 +326,18 @@ function limpiarFiltros() {
 
     <Dialog v-model:visible="modal" modal header="Nueva asignación" :style="{ width: 'min(36rem, calc(100vw - 2rem))' }">
       <div class="grid gap-4">
-        <label><span class="filtro-label">Curso</span><Select v-model="nuevaAsignacion.curso" :options="opcionesCursos" class="filtro-control w-full" /></label>
+        <label>
+          <span class="filtro-label">Curso</span>
+          <Select
+            v-model="nuevaAsignacion.cursoId"
+            :options="opcionesCursos"
+            option-label="label"
+            option-value="value"
+            placeholder="Selecciona un curso publicado"
+            class="filtro-control w-full"
+            :disabled="!opcionesCursos.length"
+          />
+        </label>
         <label><span class="filtro-label">Destino estructural</span><Select v-model="nuevaAsignacion.destinoId" :options="opcionesDestinos" option-label="label" option-value="value" class="filtro-control w-full" /></label>
         <label><span class="filtro-label">Fecha límite</span><InputText v-model="nuevaAsignacion.vence" type="date" class="filtro-control w-full" /></label>
         <label class="flex items-center gap-2 text-sm"><input v-model="nuevaAsignacion.obligatorio" type="checkbox" />Curso obligatorio</label>

@@ -31,9 +31,9 @@ export const tiposUnidadEntidad: TipoUnidadEntidad[] = [
 ];
 
 export const politicasIncorporacionEntidad: PoliticaIncorporacionUnidad[] = [
-  { id: "pol-especialidad", nombre: "Validación por especialidad", modalidad: "CON_APROBACION", especialidadesPermitidas: ["Ingeniería Civil"], requiereColegiaturaActiva: true, estado: "ACTIVA" },
-  { id: "pol-admin", nombre: "Asignación administrativa", modalidad: "ASIGNACION_ADMIN", estado: "ACTIVA" },
-  { id: "pol-abierta", nombre: "Incorporación abierta", modalidad: "ABIERTA", capacidadMaxima: 200, estado: "ACTIVA" },
+  { id: "pol-especialidad", nombre: "Piden unirse y alguien aprueba", modalidad: "CON_APROBACION", especialidadesPermitidas: ["Ingeniería Civil"], requiereColegiaturaActiva: true, estado: "ACTIVA" },
+  { id: "pol-admin", nombre: "Solo un administrador las agrega", modalidad: "ASIGNACION_ADMIN", estado: "ACTIVA" },
+  { id: "pol-abierta", nombre: "Cualquiera puede unirse", modalidad: "ABIERTA", capacidadMaxima: 200, estado: "ACTIVA" },
 ];
 
 export const unidadesOrganizacionales: UnidadOrganizacional[] = [

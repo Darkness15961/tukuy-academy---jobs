@@ -249,6 +249,11 @@ export async function openCertificatePdf(data: CertificateData) {
   window.setTimeout(() => URL.revokeObjectURL(url), 120_000);
 }
 
+export async function blobCertificatePdf(data: CertificateData): Promise<Blob> {
+  const doc = await createCertificateDocument(data);
+  return doc.output("blob");
+}
+
 export async function downloadCertificatePdf(data: CertificateData) {
   const doc = await createCertificateDocument(data);
   const titular = data.holderName

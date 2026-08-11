@@ -1,7 +1,20 @@
 import { api } from "@/api/client";
 import { apiConfig } from "@/api/config";
 import { API } from "@/api/endpoints";
-import { organizacionPrincipalService } from "@/api/services/organizacion-principal.service";
+import {
+  asignacionesRutasBdDisponible,
+  esErrorRpcAsignacionesRutasAusente,
+  esErrorRpcOrganigramaAusente,
+  esErrorRpcPerfilesEntidadAusente,
+  esErrorRpcPresenciaAusente,
+  esErrorRpcSedesReglasAusente,
+  organigramaBdDisponible,
+  organizacionPrincipalService,
+  perfilesEntidadBdDisponible,
+  presenciaAConfiguracion,
+  presenciaBdDisponible,
+  sedesReglasBdDisponible,
+} from "@/api/services/organizacion-principal.service";
 import {
   asignacionesPerfilUsuario,
   estructurasOrganizacionales,
@@ -138,6 +151,8 @@ export interface SedeOrganizacion {
 
 export interface AsignacionOrganizacion {
   id: string;
+  /** Id del curso (docente/secundaria) cuando se conoce; el título sigue en `curso`. */
+  cursoId?: string;
   curso: string;
   destino: string;
   asignados: number;
@@ -217,6 +232,8 @@ export interface LicenciaOrganizacion {
   fin: string;
   estado: "ACTIVA" | "POR_VENCER" | "VENCIDA";
   consumos: ConsumoLicenciaOrganizacion[];
+  /** true cuando la licencia vive en BD (ampliar/renovar no es local). */
+  soloLectura?: boolean;
 }
 
 export interface FacturacionOrganizacion {
@@ -228,6 +245,9 @@ export interface FacturacionOrganizacion {
   tarjetaMarca: string;
   tarjetaUltimos4: string;
   tarjetaVencimiento: string;
+  /** true cuando plan/medio de pago los gestiona administración Tukuy. */
+  soloLectura?: boolean;
+  mensajeGestion?: string;
 }
 
 export interface ComprobanteOrganizacion {
@@ -423,9 +443,231 @@ function usarOrgPrincipal() {
 }
 
 function emitirCambio(recurso: string) {
+  invalidarCachesOrganizacion(recurso);
   window.dispatchEvent(
     new CustomEvent("tukuy:organizacion-datos", { detail: { recurso } }),
   );
+}
+
+const ORG_DATOS_FRESH_MS = 45_000;
+const ORG_DATOS_STALE_MS = 5 * 60_000;
+
+export type SnapshotEstructuraOrganizacion = {
+  estructuras: EstructuraOrganizacional[];
+  niveles: NivelOrganizacional[];
+  tiposUnidad: TipoUnidadEntidad[];
+  unidades: UnidadOrganizacional[];
+  politicasIncorporacion: PoliticaIncorporacionUnidad[];
+  vinculaciones: VinculacionUnidad[];
+};
+
+type CacheEntrada<T> = {
+  clave: string;
+  at: number;
+  data: T;
+};
+
+let cacheSnapshotEstructura: CacheEntrada<SnapshotEstructuraOrganizacion> | null =
+  null;
+let inflightSnapshotEstructura: Promise<SnapshotEstructuraOrganizacion> | null =
+  null;
+let cacheUsuariosOrg: CacheEntrada<UsuarioOrganizacion[]> | null = null;
+let inflightUsuariosOrg: Promise<UsuarioOrganizacion[]> | null = null;
+
+function claveCacheOrg(): string {
+  return contextoActual().organizacionId ?? contextoActual().membresiaId ?? "local";
+}
+
+function invalidarCachesOrganizacion(recurso?: string) {
+  const afectaEstructura =
+    !recurso ||
+    [
+      "estructuras",
+      "niveles",
+      "tiposUnidad",
+      "unidades",
+      "politicasIncorporacion",
+      "vinculaciones",
+      "estructuras-organizacion",
+      "niveles-organizacion",
+      "tipos-unidad",
+      "unidades-organizacionales",
+      "politicas-incorporacion",
+      "vinculaciones-unidad",
+    ].includes(recurso);
+  const afectaUsuarios = !recurso || recurso === "usuarios";
+  if (afectaEstructura) {
+    cacheSnapshotEstructura = null;
+    inflightSnapshotEstructura = null;
+    organizacionPrincipalService.invalidarOrganigrama(
+      contextoActual().organizacionId,
+    );
+  }
+  if (afectaUsuarios) {
+    cacheUsuariosOrg = null;
+    inflightUsuariosOrg = null;
+  }
+}
+
+async function cargarSnapshotEstructuraLocal(): Promise<SnapshotEstructuraOrganizacion> {
+  const [
+    estructurasLista,
+    nivelesLista,
+    tiposLista,
+    unidadesLista,
+    politicasLista,
+    vinculacionesLista,
+  ] = await Promise.all([
+    estructurasLocal.listar(),
+    nivelesLocal.listar(),
+    tiposUnidadLocal.listar(),
+    unidadesLocal.listar(),
+    politicasIncorporacionLocal.listar(),
+    vinculacionesLocal.listar(),
+  ]);
+  return {
+    estructuras: estructurasLista,
+    niveles: nivelesLista,
+    tiposUnidad: tiposLista,
+    unidades: unidadesLista,
+    politicasIncorporacion: politicasLista,
+    vinculaciones: vinculacionesLista,
+  };
+}
+
+async function obtenerSnapshotEstructura(
+  forzar = false,
+): Promise<SnapshotEstructuraOrganizacion> {
+  const clave = claveCacheOrg();
+  const ahora = Date.now();
+  if (
+    !forzar &&
+    cacheSnapshotEstructura &&
+    cacheSnapshotEstructura.clave === clave &&
+    ahora - cacheSnapshotEstructura.at < ORG_DATOS_FRESH_MS
+  ) {
+    return cacheSnapshotEstructura.data;
+  }
+  if (
+    !forzar &&
+    cacheSnapshotEstructura &&
+    cacheSnapshotEstructura.clave === clave &&
+    ahora - cacheSnapshotEstructura.at < ORG_DATOS_STALE_MS
+  ) {
+    void refrescarSnapshotEstructura(true).catch(() => undefined);
+    return cacheSnapshotEstructura.data;
+  }
+  return refrescarSnapshotEstructura(forzar);
+}
+
+async function refrescarSnapshotEstructura(
+  forzar = false,
+): Promise<SnapshotEstructuraOrganizacion> {
+  if (!forzar && inflightSnapshotEstructura) return inflightSnapshotEstructura;
+  const clave = claveCacheOrg();
+  const promesa = (async () => {
+    let data: SnapshotEstructuraOrganizacion;
+    if (usaOrganigramaBd()) {
+      try {
+        const instalacionId = contextoActual().organizacionId!;
+        data = await organizacionPrincipalService.listarOrganigrama(
+          instalacionId,
+          forzar,
+        );
+      } catch (error) {
+        if (!esErrorRpcOrganigramaAusente(error)) throw error;
+        data = await cargarSnapshotEstructuraLocal();
+      }
+    } else {
+      data = await cargarSnapshotEstructuraLocal();
+    }
+    cacheSnapshotEstructura = { clave, at: Date.now(), data };
+    return data;
+  })().finally(() => {
+    inflightSnapshotEstructura = null;
+  });
+  inflightSnapshotEstructura = promesa;
+  return promesa;
+}
+
+async function listarUsuariosConCache(forzar = false): Promise<UsuarioOrganizacion[]> {
+  const clave = claveCacheOrg();
+  const ahora = Date.now();
+  if (
+    !forzar &&
+    cacheUsuariosOrg &&
+    cacheUsuariosOrg.clave === clave &&
+    ahora - cacheUsuariosOrg.at < ORG_DATOS_FRESH_MS
+  ) {
+    return cacheUsuariosOrg.data;
+  }
+  if (
+    !forzar &&
+    cacheUsuariosOrg &&
+    cacheUsuariosOrg.clave === clave &&
+    ahora - cacheUsuariosOrg.at < ORG_DATOS_STALE_MS
+  ) {
+    void refrescarUsuariosOrg(true).catch(() => undefined);
+    return cacheUsuariosOrg.data;
+  }
+  return refrescarUsuariosOrg(forzar);
+}
+
+async function refrescarUsuariosOrg(
+  forzar = false,
+): Promise<UsuarioOrganizacion[]> {
+  if (!forzar && inflightUsuariosOrg) return inflightUsuariosOrg;
+  const clave = claveCacheOrg();
+  const promesa = (async () => {
+    let data: UsuarioOrganizacion[];
+    if (usarOrgPrincipal()) {
+      const instalacionId = contextoActual().organizacionId;
+      if (!instalacionId) {
+        throw new Error("No hay organización activa en el contexto de sesión");
+      }
+      data = await organizacionPrincipalService.listarMiembros(instalacionId);
+    } else {
+      const registros = await usuariosRepositorio.listar();
+      if (!apiConfig.useMock) {
+        data = registros;
+      } else {
+        data = registros.map((usuario) => ({
+          ...usuario,
+          correo: usuario.correo.replace(
+            "@andinaconstructora.pe",
+            "@cipcusco.org.pe",
+          ),
+        }));
+        if (
+          data.some(
+            (usuario, indice) => usuario.correo !== registros[indice]?.correo,
+          )
+        ) {
+          await usuariosRepositorio.reemplazar(data);
+        }
+      }
+    }
+    cacheUsuariosOrg = { clave, at: Date.now(), data };
+    return data;
+  })().finally(() => {
+    inflightUsuariosOrg = null;
+  });
+  inflightUsuariosOrg = promesa;
+  return promesa;
+}
+
+/** Prefetch en segundo plano al entrar al portal organización. */
+export function prefetchPortalOrganizacion(): void {
+  void obtenerSnapshotEstructura().catch(() => undefined);
+  void listarUsuariosConCache().catch(() => undefined);
+  if (usarOrgPrincipal() && perfilesEntidadBdDisponible()) {
+    const instalacionId = contextoActual().organizacionId;
+    if (instalacionId) {
+      void organizacionPrincipalService
+        .listarPerfilesEntidad(instalacionId)
+        .catch(() => undefined);
+    }
+  }
 }
 
 function crearRepositorioOrganizacion<T extends RegistroIdentificable>(
@@ -436,12 +678,14 @@ function crearRepositorioOrganizacion<T extends RegistroIdentificable>(
   semillaPrincipal: readonly T[] = [],
 ) {
   function actual() {
+    const sinDemo = apiConfig.sinDatosDemo || usarOrgPrincipal();
     return crearRepositorioLocal<T>({
       clave: claveContextual(recurso),
       ruta,
-      // Auth Supabase: sin datos del Colegio; se puede editar en local hasta BD.
-      semilla: usarOrgPrincipal() ? semillaPrincipal : semilla,
-      version: usarOrgPrincipal() ? 31 : 21,
+      // Auth Supabase / org real: sin Colegio/Andina; vacío hasta BD o alta manual.
+      semilla: sinDemo ? semillaPrincipal : semilla,
+      // v40: invalida localStorage con demos CIP/Andina.
+      version: sinDemo ? 40 : 21,
     });
   }
 
@@ -482,32 +726,13 @@ const usuariosRepositorio = crearRepositorioOrganizacion<UsuarioOrganizacion>(
 
 const usuarios = {
   ...usuariosRepositorio,
-  async listar() {
-    if (usarOrgPrincipal()) {
-      const instalacionId = contextoActual().organizacionId;
-      if (!instalacionId) {
-        throw new Error("No hay organización activa en el contexto de sesión");
-      }
-      return organizacionPrincipalService.listarMiembros(instalacionId);
-    }
-
-    const registros = await usuariosRepositorio.listar();
-    if (!apiConfig.useMock) return registros;
-    const actualizados = registros.map((usuario) => ({
-      ...usuario,
-      correo: usuario.correo.replace(
-        "@andinaconstructora.pe",
-        "@cipcusco.org.pe",
-      ),
-    }));
-    if (
-      actualizados.some(
-        (usuario, indice) => usuario.correo !== registros[indice]?.correo,
-      )
-    ) {
-      await usuariosRepositorio.reemplazar(actualizados);
-    }
-    return actualizados;
+  async listar(forzar = false) {
+    return listarUsuariosConCache(forzar);
+  },
+  async obtener(id: Identificador) {
+    const lista = await listarUsuariosConCache();
+    const clave = String(id);
+    return lista.find((item) => String(item.id) === clave) ?? null;
   },
 };
 
@@ -554,13 +779,13 @@ const tiposUnidadPrincipal: TipoUnidadEntidad[] = [
 const politicasIncorporacionPrincipal: PoliticaIncorporacionUnidad[] = [
   {
     id: "pol-admin",
-    nombre: "Asignación administrativa",
+    nombre: "Solo un administrador las agrega",
     modalidad: "ASIGNACION_ADMIN",
     estado: "ACTIVA",
   },
   {
     id: "pol-abierta",
-    nombre: "Incorporación abierta",
+    nombre: "Cualquiera puede unirse",
     modalidad: "ABIERTA",
     capacidadMaxima: 500,
     estado: "ACTIVA",
@@ -620,38 +845,37 @@ const unidadesPrincipal: UnidadOrganizacional[] = [
   },
 ];
 
-const perfilesPrincipal: PerfilEntidad[] = perfilesEntidad.filter(
-  (perfil) => perfil.esSistema,
-);
+const perfilesPrincipal: PerfilEntidad[] = [];
 
 const areas = crearRepositorioOrganizacion<AreaOrganizacion>(
   "areas",
   API.organizacion.areas,
   areasOrganizacion,
+  [],
 );
 
-const tiposUnidad = crearRepositorioOrganizacion<TipoUnidadEntidad>(
+const tiposUnidadLocal = crearRepositorioOrganizacion<TipoUnidadEntidad>(
   "tipos-unidad",
   API.organizacion.tiposUnidad,
   tiposUnidadEntidad,
   tiposUnidadPrincipal,
 );
 
-const unidades = crearRepositorioOrganizacion<UnidadOrganizacional>(
+const unidadesLocal = crearRepositorioOrganizacion<UnidadOrganizacional>(
   "unidades-organizacionales",
   API.organizacion.unidades,
   unidadesOrganizacionales,
   unidadesPrincipal,
 );
 
-const vinculaciones = crearRepositorioOrganizacion<VinculacionUnidad>(
+const vinculacionesLocal = crearRepositorioOrganizacion<VinculacionUnidad>(
   "vinculaciones-unidad",
   API.organizacion.vinculaciones,
   vinculacionesUnidad,
   [],
 );
 
-const politicasIncorporacion =
+const politicasIncorporacionLocal =
   crearRepositorioOrganizacion<PoliticaIncorporacionUnidad>(
     "politicas-incorporacion",
     API.organizacion.politicasIncorporacion,
@@ -659,34 +883,330 @@ const politicasIncorporacion =
     politicasIncorporacionPrincipal,
   );
 
-const perfiles = crearRepositorioOrganizacion<PerfilEntidad>(
-  "perfiles-entidad",
-  API.organizacion.perfilesEntidad,
-  perfilesEntidad,
-  perfilesPrincipal,
-);
-
-const estructuras = crearRepositorioOrganizacion<EstructuraOrganizacional>(
+const estructurasLocal = crearRepositorioOrganizacion<EstructuraOrganizacional>(
   "estructuras-organizacion",
   `${API.organizacion.unidades}/estructuras`,
   estructurasOrganizacionales,
   estructurasPrincipal,
 );
 
-const niveles = crearRepositorioOrganizacion<NivelOrganizacional>(
+const nivelesLocal = crearRepositorioOrganizacion<NivelOrganizacional>(
   "niveles-organizacion",
   `${API.organizacion.unidades}/niveles`,
   nivelesOrganizacionales,
   nivelesPrincipal,
 );
 
-const asignacionesPerfil =
+type ClaveOrganigrama =
+  | "estructuras"
+  | "niveles"
+  | "tiposUnidad"
+  | "unidades"
+  | "politicasIncorporacion"
+  | "vinculaciones";
+
+async function snapshotOrganigramaPrincipal() {
+  const instalacionId = contextoActual().organizacionId;
+  if (!instalacionId) {
+    throw new Error("No hay organización activa en el contexto de sesión");
+  }
+  return organizacionPrincipalService.listarOrganigrama(instalacionId);
+}
+
+function usaOrganigramaBd() {
+  return usarOrgPrincipal() && organigramaBdDisponible();
+}
+
+function crearRepoOrganigramaBd<T extends RegistroIdentificable>(
+  local: ReturnType<typeof crearRepositorioOrganizacion<T>>,
+  clave: ClaveOrganigrama,
+  guardar: (instalacionId: string, registro: T) => Promise<T>,
+  eliminarBd?: (instalacionId: string, id: string) => Promise<void>,
+) {
+  return {
+    listar: async () => {
+      if (!usaOrganigramaBd()) return local.listar();
+      try {
+        const snap = await snapshotOrganigramaPrincipal();
+        return snap[clave] as unknown as T[];
+      } catch (error) {
+        if (esErrorRpcOrganigramaAusente(error)) return local.listar();
+        throw error;
+      }
+    },
+    obtener: async (id: Identificador) => {
+      if (!usaOrganigramaBd()) return local.obtener(id);
+      try {
+        const snap = await snapshotOrganigramaPrincipal();
+        const lista = snap[clave] as unknown as T[];
+        return lista.find((item) => item.id === id) ?? null;
+      } catch (error) {
+        if (esErrorRpcOrganigramaAusente(error)) return local.obtener(id);
+        throw error;
+      }
+    },
+    crear: async (registro: T) => {
+      if (!usaOrganigramaBd()) return local.crear(registro);
+      try {
+        const instalacionId = contextoActual().organizacionId!;
+        const creado = await guardar(instalacionId, registro);
+        emitirCambio(clave);
+        return creado;
+      } catch (error) {
+        if (esErrorRpcOrganigramaAusente(error)) return local.crear(registro);
+        throw error;
+      }
+    },
+    actualizar: async (id: Identificador, cambios: Partial<T>) => {
+      if (!usaOrganigramaBd()) return local.actualizar(id, cambios);
+      try {
+        const instalacionId = contextoActual().organizacionId!;
+        const snap = await snapshotOrganigramaPrincipal();
+        const lista = snap[clave] as unknown as T[];
+        const actual = lista.find((item) => item.id === id);
+        if (!actual) throw new Error("Registro no encontrado en organigrama");
+        const fusionado = { ...actual, ...cambios, id } as T;
+        const actualizado = await guardar(instalacionId, fusionado);
+        emitirCambio(clave);
+        return actualizado;
+      } catch (error) {
+        if (esErrorRpcOrganigramaAusente(error)) {
+          return local.actualizar(id, cambios);
+        }
+        throw error;
+      }
+    },
+    eliminar: async (id: Identificador) => {
+      if (!usaOrganigramaBd()) return local.eliminar(id);
+      if (!eliminarBd) {
+        throw new Error("Eliminación no disponible para este recurso en BD");
+      }
+      try {
+        const instalacionId = contextoActual().organizacionId!;
+        await eliminarBd(instalacionId, String(id));
+        emitirCambio(clave);
+      } catch (error) {
+        if (esErrorRpcOrganigramaAusente(error)) {
+          await local.eliminar(id);
+          return;
+        }
+        throw error;
+      }
+    },
+    reemplazar: async (registros: T[]) => {
+      if (!usaOrganigramaBd()) return local.reemplazar(registros);
+      try {
+        const instalacionId = contextoActual().organizacionId!;
+        const guardados: T[] = [];
+        for (const registro of registros) {
+          guardados.push(await guardar(instalacionId, registro));
+        }
+        emitirCambio(clave);
+        return guardados;
+      } catch (error) {
+        if (esErrorRpcOrganigramaAusente(error)) {
+          return local.reemplazar(registros);
+        }
+        throw error;
+      }
+    },
+    reiniciar: () => local.reiniciar(),
+  };
+}
+
+const tiposUnidad = crearRepoOrganigramaBd(
+  tiposUnidadLocal,
+  "tiposUnidad",
+  (instalacionId, registro) =>
+    organizacionPrincipalService.guardarTipoUnidad(instalacionId, registro),
+);
+
+const unidades = crearRepoOrganigramaBd(
+  unidadesLocal,
+  "unidades",
+  (instalacionId, registro) =>
+    organizacionPrincipalService.guardarUnidad(instalacionId, registro),
+  (instalacionId, id) =>
+    organizacionPrincipalService.eliminarUnidad(instalacionId, id),
+);
+
+const vinculaciones = crearRepoOrganigramaBd(
+  vinculacionesLocal,
+  "vinculaciones",
+  (instalacionId, registro) =>
+    organizacionPrincipalService.guardarVinculacion(instalacionId, registro),
+  (instalacionId, id) =>
+    organizacionPrincipalService.eliminarVinculacion(instalacionId, id),
+);
+
+const politicasIncorporacion = crearRepoOrganigramaBd(
+  politicasIncorporacionLocal,
+  "politicasIncorporacion",
+  (instalacionId, registro) =>
+    organizacionPrincipalService.guardarPolitica(instalacionId, registro),
+);
+
+const estructuras = crearRepoOrganigramaBd(
+  estructurasLocal,
+  "estructuras",
+  (instalacionId, registro) =>
+    organizacionPrincipalService.guardarEstructura(instalacionId, registro),
+);
+
+const niveles = crearRepoOrganigramaBd(
+  nivelesLocal,
+  "niveles",
+  (instalacionId, registro) =>
+    organizacionPrincipalService.guardarNivel(instalacionId, registro),
+);
+
+const perfilesLocal = crearRepositorioOrganizacion<PerfilEntidad>(
+  "perfiles-entidad",
+  API.organizacion.perfilesEntidad,
+  perfilesEntidad,
+  perfilesPrincipal,
+);
+
+const asignacionesPerfilLocal =
   crearRepositorioOrganizacion<AsignacionPerfilUsuario>(
     "asignaciones-perfil",
     API.organizacion.asignacionesPerfil,
     asignacionesPerfilUsuario,
     [],
   );
+
+type ClavePerfilesEntidad = "perfiles" | "asignaciones";
+
+async function snapshotPerfilesEntidadPrincipal() {
+  const instalacionId = contextoActual().organizacionId;
+  if (!instalacionId) {
+    throw new Error("No hay organización activa en el contexto de sesión");
+  }
+  return organizacionPrincipalService.listarPerfilesEntidad(instalacionId);
+}
+
+function usaPerfilesEntidadBd() {
+  return usarOrgPrincipal() && perfilesEntidadBdDisponible();
+}
+
+function crearRepoPerfilesEntidadBd<T extends RegistroIdentificable>(
+  local: ReturnType<typeof crearRepositorioOrganizacion<T>>,
+  clave: ClavePerfilesEntidad,
+  recursoEmit: string,
+  guardar: (instalacionId: string, registro: T) => Promise<T>,
+  eliminarBd?: (instalacionId: string, id: string) => Promise<void>,
+) {
+  return {
+    listar: async () => {
+      if (!usaPerfilesEntidadBd()) return local.listar();
+      try {
+        const snap = await snapshotPerfilesEntidadPrincipal();
+        return snap[clave] as unknown as T[];
+      } catch (error) {
+        if (esErrorRpcPerfilesEntidadAusente(error)) return local.listar();
+        throw error;
+      }
+    },
+    obtener: async (id: Identificador) => {
+      if (!usaPerfilesEntidadBd()) return local.obtener(id);
+      try {
+        const snap = await snapshotPerfilesEntidadPrincipal();
+        const lista = snap[clave] as unknown as T[];
+        return lista.find((item) => item.id === id) ?? null;
+      } catch (error) {
+        if (esErrorRpcPerfilesEntidadAusente(error)) return local.obtener(id);
+        throw error;
+      }
+    },
+    crear: async (registro: T) => {
+      if (!usaPerfilesEntidadBd()) return local.crear(registro);
+      try {
+        const instalacionId = contextoActual().organizacionId!;
+        const creado = await guardar(instalacionId, registro);
+        emitirCambio(recursoEmit);
+        return creado;
+      } catch (error) {
+        if (esErrorRpcPerfilesEntidadAusente(error)) return local.crear(registro);
+        throw error;
+      }
+    },
+    actualizar: async (id: Identificador, cambios: Partial<T>) => {
+      if (!usaPerfilesEntidadBd()) return local.actualizar(id, cambios);
+      try {
+        const instalacionId = contextoActual().organizacionId!;
+        const snap = await snapshotPerfilesEntidadPrincipal();
+        const lista = snap[clave] as unknown as T[];
+        const actual = lista.find((item) => item.id === id);
+        if (!actual) throw new Error("Registro no encontrado en perfiles");
+        const fusionado = { ...actual, ...cambios, id } as T;
+        const actualizado = await guardar(instalacionId, fusionado);
+        emitirCambio(recursoEmit);
+        return actualizado;
+      } catch (error) {
+        if (esErrorRpcPerfilesEntidadAusente(error)) {
+          return local.actualizar(id, cambios);
+        }
+        throw error;
+      }
+    },
+    eliminar: async (id: Identificador) => {
+      if (!usaPerfilesEntidadBd()) return local.eliminar(id);
+      if (!eliminarBd) {
+        throw new Error("Eliminación no disponible para este recurso en BD");
+      }
+      try {
+        const instalacionId = contextoActual().organizacionId!;
+        await eliminarBd(instalacionId, String(id));
+        emitirCambio(recursoEmit);
+      } catch (error) {
+        if (esErrorRpcPerfilesEntidadAusente(error)) {
+          await local.eliminar(id);
+          return;
+        }
+        throw error;
+      }
+    },
+    reemplazar: async (registros: T[]) => {
+      if (!usaPerfilesEntidadBd()) return local.reemplazar(registros);
+      try {
+        const instalacionId = contextoActual().organizacionId!;
+        const guardados: T[] = [];
+        for (const registro of registros) {
+          guardados.push(await guardar(instalacionId, registro));
+        }
+        emitirCambio(recursoEmit);
+        return guardados;
+      } catch (error) {
+        if (esErrorRpcPerfilesEntidadAusente(error)) {
+          return local.reemplazar(registros);
+        }
+        throw error;
+      }
+    },
+    reiniciar: () => local.reiniciar(),
+  };
+}
+
+const perfiles = crearRepoPerfilesEntidadBd(
+  perfilesLocal,
+  "perfiles",
+  "perfiles-entidad",
+  (instalacionId, registro) =>
+    organizacionPrincipalService.guardarPerfilEntidad(instalacionId, registro),
+);
+
+const asignacionesPerfil = crearRepoPerfilesEntidadBd(
+  asignacionesPerfilLocal,
+  "asignaciones",
+  "asignaciones-perfil",
+  (instalacionId, registro) =>
+    organizacionPrincipalService.guardarAsignacionPerfil(
+      instalacionId,
+      registro,
+    ),
+  (instalacionId, id) =>
+    organizacionPrincipalService.eliminarAsignacionPerfil(instalacionId, id),
+);
 
 /** Migra el árbol histórico a gobierno protegido + estructuras independientes.
  *  Solo toca nodos del mock original; los creados por el usuario pasan intactos. */
@@ -793,12 +1313,155 @@ async function normalizarJerarquiaOrganizacional() {
 }
 
 
-const reglasAccesoCursos =
+const reglasAccesoCursosLocal =
   crearRepositorioOrganizacion<ReglaAccesoCursoEntidad>(
     "reglas-acceso-cursos",
     API.organizacion.reglasAccesoCursos,
     reglasAccesoCursoEntidad,
+    [],
   );
+
+const sedesLocal = crearRepositorioOrganizacion<SedeOrganizacion>(
+  "sedes",
+  API.organizacion.sedes,
+  [
+    { id: "sede-lima", nombre: "Sede Lima", ciudad: "Lima", usuarios: 263, areas: 3 },
+    { id: "sede-cusco", nombre: "Sede Cusco", ciudad: "Cusco", usuarios: 118, areas: 2 },
+  ],
+  [],
+);
+
+type ClaveSedesReglas = "sedes" | "reglas";
+
+async function snapshotSedesReglasPrincipal() {
+  const instalacionId = contextoActual().organizacionId;
+  if (!instalacionId) {
+    throw new Error("No hay organización activa en el contexto de sesión");
+  }
+  return organizacionPrincipalService.listarSedesReglas(instalacionId);
+}
+
+function usaSedesReglasBd() {
+  return usarOrgPrincipal() && sedesReglasBdDisponible();
+}
+
+function crearRepoSedesReglasBd<T extends RegistroIdentificable>(
+  local: ReturnType<typeof crearRepositorioOrganizacion<T>>,
+  clave: ClaveSedesReglas,
+  recursoEmit: string,
+  guardar: (instalacionId: string, registro: T) => Promise<T>,
+  eliminarBd?: (instalacionId: string, id: string) => Promise<void>,
+) {
+  return {
+    listar: async () => {
+      if (!usaSedesReglasBd()) return local.listar();
+      try {
+        const snap = await snapshotSedesReglasPrincipal();
+        return (clave === "sedes" ? snap.sedes : snap.reglas) as unknown as T[];
+      } catch (error) {
+        if (esErrorRpcSedesReglasAusente(error)) return local.listar();
+        throw error;
+      }
+    },
+    obtener: async (id: Identificador) => {
+      if (!usaSedesReglasBd()) return local.obtener(id);
+      try {
+        const snap = await snapshotSedesReglasPrincipal();
+        const lista = (clave === "sedes" ? snap.sedes : snap.reglas) as unknown as T[];
+        return lista.find((item) => item.id === id) ?? null;
+      } catch (error) {
+        if (esErrorRpcSedesReglasAusente(error)) return local.obtener(id);
+        throw error;
+      }
+    },
+    crear: async (registro: T) => {
+      if (!usaSedesReglasBd()) return local.crear(registro);
+      try {
+        const instalacionId = contextoActual().organizacionId!;
+        const creado = await guardar(instalacionId, registro);
+        emitirCambio(recursoEmit);
+        return creado;
+      } catch (error) {
+        if (esErrorRpcSedesReglasAusente(error)) return local.crear(registro);
+        throw error;
+      }
+    },
+    actualizar: async (id: Identificador, cambios: Partial<T>) => {
+      if (!usaSedesReglasBd()) return local.actualizar(id, cambios);
+      try {
+        const instalacionId = contextoActual().organizacionId!;
+        const snap = await snapshotSedesReglasPrincipal();
+        const lista = (clave === "sedes" ? snap.sedes : snap.reglas) as unknown as T[];
+        const actual = lista.find((item) => item.id === id);
+        if (!actual) throw new Error("Registro no encontrado");
+        const fusionado = { ...actual, ...cambios, id } as T;
+        const actualizado = await guardar(instalacionId, fusionado);
+        emitirCambio(recursoEmit);
+        return actualizado;
+      } catch (error) {
+        if (esErrorRpcSedesReglasAusente(error)) {
+          return local.actualizar(id, cambios);
+        }
+        throw error;
+      }
+    },
+    eliminar: async (id: Identificador) => {
+      if (!usaSedesReglasBd()) return local.eliminar(id);
+      if (!eliminarBd) {
+        throw new Error("Eliminación no disponible para este recurso en BD");
+      }
+      try {
+        const instalacionId = contextoActual().organizacionId!;
+        await eliminarBd(instalacionId, String(id));
+        emitirCambio(recursoEmit);
+      } catch (error) {
+        if (esErrorRpcSedesReglasAusente(error)) {
+          await local.eliminar(id);
+          return;
+        }
+        throw error;
+      }
+    },
+    reemplazar: async (registros: T[]) => {
+      if (!usaSedesReglasBd()) return local.reemplazar(registros);
+      try {
+        const instalacionId = contextoActual().organizacionId!;
+        const guardados: T[] = [];
+        for (const registro of registros) {
+          guardados.push(await guardar(instalacionId, registro));
+        }
+        emitirCambio(recursoEmit);
+        return guardados;
+      } catch (error) {
+        if (esErrorRpcSedesReglasAusente(error)) {
+          return local.reemplazar(registros);
+        }
+        throw error;
+      }
+    },
+    reiniciar: () => local.reiniciar(),
+  };
+}
+
+const reglasAccesoCursos = crearRepoSedesReglasBd(
+  reglasAccesoCursosLocal,
+  "reglas",
+  "reglas-acceso-cursos",
+  (instalacionId, registro) =>
+    organizacionPrincipalService.guardarReglaAcceso(instalacionId, registro),
+  (instalacionId, id) =>
+    organizacionPrincipalService.eliminarReglaAcceso(instalacionId, id),
+);
+
+const sedes = crearRepoSedesReglasBd(
+  sedesLocal,
+  "sedes",
+  "sedes",
+  (instalacionId, registro) =>
+    organizacionPrincipalService.guardarSede(instalacionId, registro),
+  (instalacionId, id) =>
+    organizacionPrincipalService.eliminarSede(instalacionId, id),
+);
 
 async function idsDescendientes(unidadId: string) {
   const lista = await unidades.listar();
@@ -846,6 +1509,70 @@ async function eliminarUnidadConDependencias(
         hijosDirectos.length === 1 ? "nodo descendiente" : "nodos descendientes"
       }. Elimina primero los nodos del último nivel.`,
     );
+  }
+
+  if (usarOrgPrincipal()) {
+    const instalacionId = contextoActual().organizacionId;
+    if (!instalacionId) {
+      throw new Error("No hay organización activa en el contexto de sesión");
+    }
+    const [relaciones, asignaciones, reglas] = await Promise.all([
+      vinculaciones.listar(),
+      asignacionesPerfil.listar(),
+      reglasAccesoCursos.listar(),
+    ]);
+    const relacionesAEliminar = relaciones.filter(
+      (item) => item.unidadId === unidadId,
+    );
+
+    if (organigramaBdDisponible()) {
+      try {
+        await organizacionPrincipalService.eliminarUnidad(
+          instalacionId,
+          unidadId,
+        );
+      } catch (error) {
+        if (!esErrorRpcOrganigramaAusente(error)) throw error;
+        await unidades.eliminar(unidadId);
+      }
+    } else {
+      await unidades.eliminar(unidadId);
+    }
+
+    const asignacionesAActualizar = asignaciones.filter((item) =>
+      item.unidadIds.includes(unidadId),
+    );
+    await Promise.all(
+      asignacionesAActualizar.map((item) => {
+        const unidadIds = item.unidadIds.filter((id) => id !== unidadId);
+        return asignacionesPerfil.actualizar(item.id, {
+          unidadIds,
+          estado: unidadIds.length ? item.estado : "INACTIVA",
+        });
+      }),
+    );
+
+    const reglasAActualizar = reglas.filter(
+      (item) =>
+        item.publico === "UNIDADES" && item.publicoIds.includes(unidadId),
+    );
+    await Promise.all(
+      reglasAActualizar.map((item) => {
+        const publicoIds = item.publicoIds.filter((id) => id !== unidadId);
+        return reglasAccesoCursos.actualizar(item.id, {
+          publicoIds,
+          estado: publicoIds.length ? item.estado : "INACTIVA",
+        });
+      }),
+    );
+
+    return {
+      unidadesEliminadas: 1,
+      vinculacionesEliminadas: relacionesAEliminar.length,
+      asignacionesPerfilActualizadas: asignacionesAActualizar.length,
+      reglasAccesoActualizadas: reglasAActualizar.length,
+      usuariosSinUnidadPrincipal: 0,
+    };
   }
 
   const ids = new Set([unidadId]);
@@ -1024,8 +1751,118 @@ async function incorporarPersona(
   entrada: IncorporacionPersonaOrganizacion,
 ): Promise<ResultadoIncorporacionPersona> {
   if (usarOrgPrincipal()) {
+    const instalacionId = contextoActual().organizacionId!;
+    // Preferir perfiles de Equipos (org_perfil) → sync real a funcion_principal.
+    try {
+      if (perfilesEntidadBdDisponible()) {
+        const snap =
+          await organizacionPrincipalService.listarPerfilesEntidad(
+            instalacionId,
+          );
+        const perfilOrg =
+          snap.perfiles.find((item) => item.id === entrada.perfilId) ??
+          snap.perfiles.find(
+            (item) =>
+              item.nombre.trim().toLowerCase() ===
+              String(entrada.perfilId).trim().toLowerCase(),
+          );
+        if (perfilOrg) {
+          const resultado =
+            await organizacionPrincipalService.incorporarPersonaPerfil(
+              instalacionId,
+              {
+                correo: entrada.correo,
+                perfilOrgId: perfilOrg.id,
+                unidadId: entrada.unidadId,
+                sedeId: entrada.sedeId,
+              },
+            );
+          const miembros =
+            await organizacionPrincipalService.listarMiembros(instalacionId);
+          const usuario =
+            miembros.find(
+              (item) =>
+                item.correo.toLowerCase() ===
+                  entrada.correo.trim().toLowerCase() ||
+                String(item.id) === resultado.identidadId,
+            ) ?? miembros[0];
+          if (!usuario) {
+            throw new Error(
+              "Acceso asignado, pero no se pudo recargar el directorio.",
+            );
+          }
+          let vinculacion: VinculacionUnidad = {
+            id: `vinculo-pendiente-${usuario.id}`,
+            usuarioId: String(usuario.id),
+            unidadId: entrada.unidadId || "",
+            tipo: "PRINCIPAL",
+            origen: "ASIGNACION_ADMINISTRATIVA",
+            estado: "ACTIVA",
+            fechaInicio: new Date().toISOString().slice(0, 10),
+          };
+          if (entrada.unidadId) {
+            try {
+              if (organigramaBdDisponible()) {
+                vinculacion =
+                  await organizacionPrincipalService.guardarVinculacion(
+                    instalacionId,
+                    {
+                      ...vinculacion,
+                      id: `vinc-${usuario.id}-${entrada.unidadId}`,
+                      sedeId: entrada.sedeId,
+                    },
+                  );
+              } else {
+                vinculacion = await vinculaciones.crear({
+                  ...vinculacion,
+                  id: `vinc-${usuario.id}-${entrada.unidadId}`,
+                  sedeId: entrada.sedeId,
+                });
+              }
+            } catch (error) {
+              if (esErrorRpcOrganigramaAusente(error)) {
+                vinculacion = await vinculaciones.crear({
+                  ...vinculacion,
+                  id: `vinc-${usuario.id}-${entrada.unidadId}`,
+                  sedeId: entrada.sedeId,
+                });
+              } else {
+                throw error;
+              }
+            }
+          }
+          return {
+            usuario,
+            vinculacion,
+            asignacionPerfil: resultado.asignacion,
+          };
+        }
+      }
+    } catch (error) {
+      if (
+        !(
+          typeof error === "object" &&
+          error &&
+          "message" in error &&
+          /PERFILES_ENTIDAD_BD_AUSENTE|PGRST202|org_incorporar_persona_perfil/i.test(
+            String((error as { message?: string }).message),
+          )
+        )
+      ) {
+        // Si el perfil org existe pero falló auth sync, propagar.
+        if (
+          error instanceof Error &&
+          !/PERFILES_ENTIDAD_BD_AUSENTE|Could not find the function/i.test(
+            error.message,
+          )
+        ) {
+          throw error;
+        }
+      }
+    }
+
     const perfiles = await organizacionPrincipalService.catalogoPerfiles(
-      contextoActual().organizacionId!,
+      instalacionId,
     );
     const perfil =
       perfiles.find((item) => item.id === entrada.perfilId) ??
@@ -1037,12 +1874,12 @@ async function incorporarPersona(
       );
     }
     await organizacionPrincipalService.asignarAcceso(
-      contextoActual().organizacionId!,
+      instalacionId,
       entrada.correo,
       perfil.codigo,
     );
     const miembros = await organizacionPrincipalService.listarMiembros(
-      contextoActual().organizacionId!,
+      instalacionId,
     );
     const usuario =
       miembros.find(
@@ -1052,18 +1889,49 @@ async function incorporarPersona(
     if (!usuario) {
       throw new Error("Acceso asignado, pero no se pudo recargar el directorio.");
     }
-    // La vinculación a organigrama aún no existe en BD; devolvemos stubs mínimos.
+    // Persistir vínculo a nodo cuando el alta incluye unidad.
+    let vinculacion: VinculacionUnidad = {
+      id: `vinculo-pendiente-${usuario.id}`,
+      usuarioId: String(usuario.id),
+      unidadId: entrada.unidadId || "",
+      tipo: "PRINCIPAL",
+      origen: "ASIGNACION_ADMINISTRATIVA",
+      estado: "ACTIVA",
+      fechaInicio: new Date().toISOString().slice(0, 10),
+    };
+    if (entrada.unidadId) {
+      try {
+        if (organigramaBdDisponible()) {
+          vinculacion = await organizacionPrincipalService.guardarVinculacion(
+            instalacionId,
+            {
+              ...vinculacion,
+              id: `vinc-${usuario.id}-${entrada.unidadId}`,
+              sedeId: entrada.sedeId,
+            },
+          );
+        } else {
+          vinculacion = await vinculaciones.crear({
+            ...vinculacion,
+            id: `vinc-${usuario.id}-${entrada.unidadId}`,
+            sedeId: entrada.sedeId,
+          });
+        }
+      } catch (error) {
+        if (esErrorRpcOrganigramaAusente(error)) {
+          vinculacion = await vinculaciones.crear({
+            ...vinculacion,
+            id: `vinc-${usuario.id}-${entrada.unidadId}`,
+            sedeId: entrada.sedeId,
+          });
+        } else {
+          throw error;
+        }
+      }
+    }
     return {
       usuario,
-      vinculacion: {
-        id: `vinculo-pendiente-${usuario.id}`,
-        usuarioId: String(usuario.id),
-        unidadId: entrada.unidadId || "",
-        tipo: "PRINCIPAL",
-        origen: "ASIGNACION_ADMINISTRATIVA",
-        estado: "ACTIVA",
-        fechaInicio: new Date().toISOString().slice(0, 10),
-      },
+      vinculacion,
       asignacionPerfil: {
         id: `asig-pendiente-${usuario.id}`,
         usuarioId: String(usuario.id),
@@ -1322,12 +2190,13 @@ async function evaluarAccesoCurso(
   usuarioId: string,
   cursoId: string,
 ): Promise<EvaluacionAccesoCursoEntidad> {
-  const [persona, reglas, relaciones, asignaciones, inscripciones] =
+  const [persona, reglas, relaciones, perfilesAsignados, formacion, inscripciones] =
     await Promise.all([
-      usuarios.obtener(Number(usuarioId)),
+      usuarios.obtener(usuarioId),
       reglasAccesoCursos.listar(),
       vinculaciones.listar(),
       asignacionesPerfil.listar(),
+      asignaciones.listar(),
       matriculas.listar(),
     ]);
 
@@ -1400,7 +2269,7 @@ async function evaluarAccesoCurso(
   }
 
   if (regla.publico === "PERFILES") {
-    coincide = asignaciones.some(
+    coincide = perfilesAsignados.some(
       (item) =>
         item.usuarioId === usuarioId &&
         item.estado === "ACTIVA" &&
@@ -1421,6 +2290,35 @@ async function evaluarAccesoCurso(
 
   const requiereAprobacion = regla.modalidad === "CON_APROBACION";
   const accesoDirecto = regla.modalidad === "LIBRE";
+  const soloAsignacion =
+    regla.modalidad === "SOLO_ASIGNACION" || regla.modalidad === "INVITACION";
+  let tieneAsignacionActiva = false;
+  if (soloAsignacion) {
+    const candidatas = formacion.filter(
+      (item) =>
+        item.estado !== "CANCELADA" &&
+        item.estado !== "FINALIZADA" &&
+        item.cursoId === cursoId,
+    );
+    for (const item of candidatas) {
+      const destinatarios = await resolverDestinatariosAsignacion(item);
+      if (destinatarios.includes(usuarioId)) {
+        tieneAsignacionActiva = true;
+        break;
+      }
+    }
+    return {
+      disponible: tieneAsignacionActiva,
+      requiereAprobacion: false,
+      modalidad: regla.modalidad,
+      motivo: tieneAsignacionActiva
+        ? "Tienes una asignación institucional activa para este curso."
+        : "El acceso a este curso se realiza únicamente por asignación o invitación.",
+      unidadOrigenId,
+      reglaId: regla.id,
+    };
+  }
+
   return {
     disponible: accesoDirecto || requiereAprobacion,
     requiereAprobacion,
@@ -1437,6 +2335,73 @@ async function evaluarAccesoCurso(
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+async function resolverDestinatariosAsignacion(
+  asignacion: AsignacionOrganizacion,
+): Promise<string[]> {
+  const [miembros, relaciones] = await Promise.all([
+    usuarios.listar(),
+    vinculaciones.listar(),
+  ]);
+  const activos = new Set(
+    miembros
+      .filter((item) => item.estado === "ACTIVO")
+      .map((item) => String(item.id)),
+  );
+
+  if (!asignacion.destinoUnidadId) {
+    return [...activos];
+  }
+
+  const alcance =
+    asignacion.incluirDescendientes === false
+      ? new Set([asignacion.destinoUnidadId])
+      : await idsDescendientes(asignacion.destinoUnidadId);
+
+  const destinatarios = new Set<string>();
+  for (const relacion of relaciones) {
+    if (relacion.estado !== "ACTIVA") continue;
+    if (!alcance.has(relacion.unidadId)) continue;
+    const usuarioId = String(relacion.usuarioId);
+    if (activos.has(usuarioId)) destinatarios.add(usuarioId);
+  }
+  return [...destinatarios];
+}
+
+async function sincronizarMatriculasDeAsignacion(
+  asignacion: AsignacionOrganizacion,
+): Promise<void> {
+  const cursoId = asignacion.cursoId?.trim() ?? "";
+  if (!cursoId || !UUID_RE.test(cursoId)) return;
+  if (
+    asignacion.estado === "CANCELADA" ||
+    asignacion.estado === "FINALIZADA"
+  ) {
+    return;
+  }
+  if (!(usarOrgPrincipal() && apiConfig.secundariaCursos)) return;
+
+  const destinatarios = await resolverDestinatariosAsignacion(asignacion);
+  const resultados = await Promise.allSettled(
+    destinatarios.map((usuarioId) =>
+      matricularUsuarioEnCurso({
+        usuarioId,
+        cursoId,
+        curso: asignacion.curso,
+        unidadOrigenId: asignacion.destinoUnidadId,
+        modalidad: "ASIGNADA",
+        estadoInicial: "ACTIVO",
+      }),
+    ),
+  );
+  const fallos = resultados.filter((item) => item.status === "rejected");
+  if (fallos.length) {
+    console.warn(
+      `[asignaciones] ${fallos.length}/${destinatarios.length} matrículas no sincronizadas`,
+      fallos.slice(0, 3),
+    );
+  }
+}
 
 async function matricularUsuarioEnCurso(datos: {
   usuarioId: string;
@@ -1456,10 +2421,16 @@ async function matricularUsuarioEnCurso(datos: {
     const { secundariaGatewayService } = await import(
       "@/api/services/secundaria-gateway.service"
     );
-    const resultado = await secundariaGatewayService.matricularEstudiante(
-      datos.cursoId,
-      datos.usuarioId,
-    );
+    const pendiente = datos.estadoInicial === "PENDIENTE";
+    const resultado = pendiente
+      ? await secundariaGatewayService.solicitarMatriculaEstudiante(
+          datos.cursoId,
+          datos.usuarioId,
+        )
+      : await secundariaGatewayService.matricularEstudiante(
+          datos.cursoId,
+          datos.usuarioId,
+        );
     const miembros = await usuarios.listar();
     const persona = miembros.find(
       (item) => String(item.id) === datos.usuarioId,
@@ -1480,18 +2451,20 @@ async function matricularUsuarioEnCurso(datos: {
       estado: datos.estadoInicial ?? "ACTIVO",
       tipo: datos.unidadOrigenId ? "INTERNO" : "EXTERNO",
       condicionAlInscribirse: datos.unidadOrigenId ? "INTERNO" : "EXTERNO",
-      origenAcceso: "ASIGNACION",
+      origenAcceso: pendiente ? "APROBACION" : "ASIGNACION",
       unidadOrigenId: datos.unidadOrigenId,
       modalidad: datos.modalidad,
     };
   }
 
   const [persona, existentes] = await Promise.all([
-    usuarios.obtener(Number(datos.usuarioId)),
+    usuarios.obtener(datos.usuarioId),
     matriculas.listar(),
   ]);
   if (!persona) throw new Error("No se encontró la persona a matricular.");
-  const alumnoId = `alu-${String(persona.id).padStart(3, "0")}`;
+  const alumnoId = UUID_RE.test(String(persona.id))
+    ? String(persona.id)
+    : `alu-${String(persona.id).padStart(3, "0")}`;
   const existente = existentes.find(
     (item) => item.alumnoId === alumnoId && item.cursoId === datos.cursoId,
   );
@@ -1539,6 +2512,44 @@ async function solicitarMatriculaCurso(datos: {
 }
 
 async function aprobarSolicitudMatricula(id: string) {
+  if (usarOrgPrincipal() && apiConfig.secundariaCursos && UUID_RE.test(id)) {
+    const actuales = await matriculas.listar();
+    const pendiente = actuales.find((item) => item.id === id);
+    const { secundariaGatewayService } = await import(
+      "@/api/services/secundaria-gateway.service"
+    );
+    await secundariaGatewayService.activarMatricula(
+      id,
+      pendiente?.alumnoId ? String(pendiente.alumnoId) : undefined,
+    );
+    emitirCambio("matriculas-alumnos");
+    if (pendiente) {
+      return {
+        ...pendiente,
+        estado: "ACTIVO" as const,
+        fechaInscripcion: new Date().toISOString().slice(0, 10),
+      };
+    }
+    return {
+      id,
+      alumnoId: "",
+      cursoId: "",
+      nombre: "",
+      iniciales: "",
+      curso: "",
+      organizacion: contextoActual().organizacionNombre,
+      progreso: 0,
+      ultimoAcceso: "Aún no ingresa",
+      ultimoAccesoFecha: new Date().toISOString().slice(0, 10),
+      fechaInscripcion: new Date().toISOString().slice(0, 10),
+      estado: "ACTIVO" as const,
+      tipo: "INTERNO" as const,
+      condicionAlInscribirse: "INTERNO" as const,
+      origenAcceso: "APROBACION" as const,
+      modalidad: "SOLICITADA" as const,
+    };
+  }
+
   return matriculas.actualizar(id, {
     estado: "ACTIVO",
     fechaInscripcion: new Date().toISOString().slice(0, 10),
@@ -1577,6 +2588,7 @@ const matriculasRepositorio =
             .modalidad ?? "ASIGNADA") as MatriculaAlumnoOrganizacion["modalidad"],
       };
     }),
+    [],
   );
 
 const matriculas = {
@@ -1587,10 +2599,47 @@ const matriculas = {
       const estudiantes = await docenteService.estudiantes.listar();
       const orgNombre =
         contextoActual().organizacionNombre || "Tukuy Academy";
-      return estudiantes.map(
-        (item): MatriculaAlumnoOrganizacion => ({
+      let internos = new Set<string>();
+      try {
+        const instalacionId = contextoActual().organizacionId;
+        if (instalacionId) {
+          const snap =
+            await organizacionPrincipalService.listarOrganigrama(instalacionId);
+          internos = new Set(
+            snap.vinculaciones
+              .filter((v) => v.estado === "ACTIVA")
+              .map((v) => String(v.usuarioId)),
+          );
+        } else {
+          const vinculos = await vinculaciones.listar();
+          internos = new Set(
+            vinculos
+              .filter((v) => v.estado === "ACTIVA")
+              .map((v) => String(v.usuarioId)),
+          );
+        }
+      } catch {
+        try {
+          const vinculos = await vinculaciones.listar();
+          internos = new Set(
+            vinculos
+              .filter((v) => v.estado === "ACTIVA")
+              .map((v) => String(v.usuarioId)),
+          );
+        } catch {
+          // sin organigrama: todos EXTERNO
+        }
+      }
+      return estudiantes.map((item): MatriculaAlumnoOrganizacion => {
+        const alumnoId = item.alumnoId ? item.alumnoId : item.id;
+        const tipo: MatriculaAlumnoOrganizacion["tipo"] = internos.has(
+          String(alumnoId),
+        )
+          ? "INTERNO"
+          : "EXTERNO";
+        return {
           id: item.id,
-          alumnoId: item.alumnoId ? item.alumnoId : item.id,
+          alumnoId,
           cursoId: item.cursoId,
           nombre: item.nombre,
           iniciales: item.iniciales,
@@ -1605,14 +2654,97 @@ const matriculas = {
           )
             ? item.estado
             : "ACTIVO") as MatriculaAlumnoOrganizacion["estado"],
-          tipo: "EXTERNO",
-          condicionAlInscribirse: "EXTERNO",
-          origenAcceso: "CURSO_PUBLICO",
+          tipo,
+          condicionAlInscribirse: tipo,
+          origenAcceso: tipo === "INTERNO" ? "NODO_INTERNO" : "CURSO_PUBLICO",
           modalidad: "LIBRE",
-        }),
-      );
+        };
+      });
     }
     return matriculasRepositorio.listar();
+  },
+
+  /** Portal org: 1 fila por alumno, paginado vía secundaria. */
+  async listarResumen(entrada: {
+    busqueda?: string;
+    cursoId?: string | null;
+    limite?: number;
+    offset?: number;
+  } = {}) {
+    if (usarOrgPrincipal() && apiConfig.secundariaCursos) {
+      const { secundariaGatewayService } = await import(
+        "@/api/services/secundaria-gateway.service"
+      );
+      return secundariaGatewayService.listarAlumnosResumen(entrada);
+    }
+    const todas = await matriculasRepositorio.listar();
+    const termino = (entrada.busqueda ?? "").trim().toLowerCase();
+    const porPersona = new Map<string, MatriculaAlumnoOrganizacion[]>();
+    for (const item of todas) {
+      if (entrada.cursoId && item.cursoId !== entrada.cursoId) continue;
+      const lista = porPersona.get(item.alumnoId) ?? [];
+      lista.push(item);
+      porPersona.set(item.alumnoId, lista);
+    }
+    let alumnos = [...porPersona.entries()].map(([alumnoId, lista]) => {
+      const ordenadas = [...lista].sort((a, b) =>
+        b.ultimoAccesoFecha.localeCompare(a.ultimoAccesoFecha),
+      );
+      const base = ordenadas[0]!;
+      const pendientes = lista.filter((m) => m.estado === "PENDIENTE");
+      return {
+        alumnoId,
+        nombre: base.nombre,
+        iniciales: base.iniciales,
+        correo: "",
+        cursos: lista.length,
+        cursosResumen: [...new Set(lista.map((m) => m.curso))].join(" · "),
+        progreso: Math.round(
+          lista.reduce((s, m) => s + m.progreso, 0) / lista.length,
+        ),
+        estado:
+          lista.find((m) => m.estado === "EN_RIESGO")?.estado ??
+          lista.find((m) => m.estado === "PENDIENTE")?.estado ??
+          lista.find((m) => m.estado === "ACTIVO")?.estado ??
+          "ACTIVO",
+        fechaInscripcion:
+          [...lista].map((m) => m.fechaInscripcion).sort()[0] ?? "",
+        ultimoAcceso: base.ultimoAcceso,
+        ultimoAccesoFecha: base.ultimoAccesoFecha,
+        pendientes: pendientes.length,
+        matriculasPendientes: pendientes.map((m) => ({
+          id: m.id,
+          cursoId: m.cursoId,
+          curso: m.curso,
+          progreso: m.progreso,
+          estado: m.estado,
+        })),
+        organizacion: base.organizacion,
+      };
+    });
+    if (termino) {
+      alumnos = alumnos.filter(
+        (a) =>
+          a.nombre.toLowerCase().includes(termino) ||
+          a.cursosResumen.toLowerCase().includes(termino),
+      );
+    }
+    alumnos.sort((a, b) => a.nombre.localeCompare(b.nombre, "es"));
+    const limite = entrada.limite ?? 50;
+    const offset = entrada.offset ?? 0;
+    const cursos = [
+      ...new Map(
+        todas.map((m) => [m.cursoId, { id: m.cursoId, titulo: m.curso }]),
+      ).values(),
+    ].sort((a, b) => a.titulo.localeCompare(b.titulo, "es"));
+    return {
+      ok: true as const,
+      total: alumnos.length,
+      limite,
+      offset,
+      alumnos: alumnos.slice(offset, offset + limite),
+      cursos,
+    };
   },
 };
 
@@ -1621,6 +2753,7 @@ const certificados =
     "certificados",
     API.organizacion.certificados,
     certificadosOrganizacion,
+    [],
   );
 
 const certificadosPendientes =
@@ -1628,6 +2761,7 @@ const certificadosPendientes =
     "certificados-pendientes",
     API.organizacion.certificadosPendientes,
     certificadosPendientesOrganizacion,
+    [],
   );
 
 async function emitirCertificadoInstitucional(id: string) {
@@ -1672,16 +2806,7 @@ async function emitirCertificadoInstitucional(id: string) {
   return creado;
 }
 
-const sedes = crearRepositorioOrganizacion<SedeOrganizacion>(
-  "sedes",
-  API.organizacion.sedes,
-  [
-    { id: "sede-lima", nombre: "Sede Lima", ciudad: "Lima", usuarios: 263, areas: 3 },
-    { id: "sede-cusco", nombre: "Sede Cusco", ciudad: "Cusco", usuarios: 118, areas: 2 },
-  ],
-);
-
-const asignaciones = crearRepositorioOrganizacion<AsignacionOrganizacion>(
+const asignacionesLocal = crearRepositorioOrganizacion<AsignacionOrganizacion>(
   "asignaciones",
   API.organizacion.asignaciones,
   asignacionesOrganizacion.map((asignacion) => ({
@@ -1689,42 +2814,360 @@ const asignaciones = crearRepositorioOrganizacion<AsignacionOrganizacion>(
     estado: "ACTIVA",
     creadaEn: "2026-07-01",
   })),
+  [],
 );
 
-const rutas = crearRepositorioOrganizacion<RutaOrganizacion>(
+const rutasLocal = crearRepositorioOrganizacion<RutaOrganizacion>(
   "rutas",
   API.organizacion.rutas,
   rutasOrganizacion.map((ruta) => ({
     ...ruta,
     estado: ruta.estado ?? "PUBLICADA",
   })),
+  [],
 );
 
-const comprobantes = crearRepositorioOrganizacion<ComprobanteOrganizacion>(
+type ClaveAsignacionesRutas = "asignaciones" | "rutas";
+
+async function snapshotAsignacionesRutasPrincipal() {
+  const instalacionId = contextoActual().organizacionId;
+  if (!instalacionId) {
+    throw new Error("No hay organización activa en el contexto de sesión");
+  }
+  return organizacionPrincipalService.listarAsignacionesRutas(instalacionId);
+}
+
+function usaAsignacionesRutasBd() {
+  return usarOrgPrincipal() && asignacionesRutasBdDisponible();
+}
+
+function crearRepoAsignacionesRutasBd<T extends RegistroIdentificable>(
+  local: ReturnType<typeof crearRepositorioOrganizacion<T>>,
+  clave: ClaveAsignacionesRutas,
+  recursoEmit: string,
+  guardar: (instalacionId: string, registro: T) => Promise<T>,
+  eliminarBd?: (instalacionId: string, id: string) => Promise<void>,
+) {
+  return {
+    listar: async () => {
+      if (!usaAsignacionesRutasBd()) return local.listar();
+      try {
+        const snap = await snapshotAsignacionesRutasPrincipal();
+        return (
+          clave === "asignaciones" ? snap.asignaciones : snap.rutas
+        ) as unknown as T[];
+      } catch (error) {
+        if (esErrorRpcAsignacionesRutasAusente(error)) return local.listar();
+        throw error;
+      }
+    },
+    obtener: async (id: Identificador) => {
+      if (!usaAsignacionesRutasBd()) return local.obtener(id);
+      try {
+        const snap = await snapshotAsignacionesRutasPrincipal();
+        const lista = (
+          clave === "asignaciones" ? snap.asignaciones : snap.rutas
+        ) as unknown as T[];
+        return lista.find((item) => item.id === id) ?? null;
+      } catch (error) {
+        if (esErrorRpcAsignacionesRutasAusente(error)) return local.obtener(id);
+        throw error;
+      }
+    },
+    crear: async (registro: T) => {
+      if (!usaAsignacionesRutasBd()) return local.crear(registro);
+      try {
+        const instalacionId = contextoActual().organizacionId!;
+        const creado = await guardar(instalacionId, registro);
+        emitirCambio(recursoEmit);
+        return creado;
+      } catch (error) {
+        if (esErrorRpcAsignacionesRutasAusente(error)) return local.crear(registro);
+        throw error;
+      }
+    },
+    actualizar: async (id: Identificador, cambios: Partial<T>) => {
+      if (!usaAsignacionesRutasBd()) return local.actualizar(id, cambios);
+      try {
+        const instalacionId = contextoActual().organizacionId!;
+        const snap = await snapshotAsignacionesRutasPrincipal();
+        const lista = (
+          clave === "asignaciones" ? snap.asignaciones : snap.rutas
+        ) as unknown as T[];
+        const actual = lista.find((item) => item.id === id);
+        if (!actual) throw new Error("Registro no encontrado");
+        const fusionado = { ...actual, ...cambios, id } as T;
+        const actualizado = await guardar(instalacionId, fusionado);
+        emitirCambio(recursoEmit);
+        return actualizado;
+      } catch (error) {
+        if (esErrorRpcAsignacionesRutasAusente(error)) {
+          return local.actualizar(id, cambios);
+        }
+        throw error;
+      }
+    },
+    eliminar: async (id: Identificador) => {
+      if (!usaAsignacionesRutasBd()) return local.eliminar(id);
+      if (!eliminarBd) {
+        throw new Error("Eliminación no disponible para este recurso en BD");
+      }
+      try {
+        const instalacionId = contextoActual().organizacionId!;
+        await eliminarBd(instalacionId, String(id));
+        emitirCambio(recursoEmit);
+      } catch (error) {
+        if (esErrorRpcAsignacionesRutasAusente(error)) {
+          await local.eliminar(id);
+          return;
+        }
+        throw error;
+      }
+    },
+    reemplazar: async (registros: T[]) => {
+      if (!usaAsignacionesRutasBd()) return local.reemplazar(registros);
+      try {
+        const instalacionId = contextoActual().organizacionId!;
+        const guardados: T[] = [];
+        for (const registro of registros) {
+          guardados.push(await guardar(instalacionId, registro));
+        }
+        emitirCambio(recursoEmit);
+        return guardados;
+      } catch (error) {
+        if (esErrorRpcAsignacionesRutasAusente(error)) {
+          return local.reemplazar(registros);
+        }
+        throw error;
+      }
+    },
+    reiniciar: () => local.reiniciar(),
+  };
+}
+
+const asignacionesBase = crearRepoAsignacionesRutasBd(
+  asignacionesLocal,
+  "asignaciones",
+  "asignaciones",
+  (instalacionId, registro) =>
+    organizacionPrincipalService.guardarAsignacion(instalacionId, registro),
+  (instalacionId, id) =>
+    organizacionPrincipalService.eliminarAsignacion(instalacionId, id),
+);
+
+const asignaciones = {
+  ...asignacionesBase,
+  async crear(registro: AsignacionOrganizacion) {
+    const creada = await asignacionesBase.crear({
+      ...registro,
+      estado: registro.estado ?? "ACTIVA",
+      creadaEn: registro.creadaEn ?? new Date().toISOString().slice(0, 10),
+    });
+    await sincronizarMatriculasDeAsignacion(creada);
+    return creada;
+  },
+};
+
+const rutas = crearRepoAsignacionesRutasBd(
+  rutasLocal,
+  "rutas",
+  "rutas",
+  (instalacionId, registro) =>
+    organizacionPrincipalService.guardarRuta(instalacionId, registro),
+  (instalacionId, id) =>
+    organizacionPrincipalService.eliminarRuta(instalacionId, id),
+);
+
+const comprobantesLocal = crearRepositorioOrganizacion<ComprobanteOrganizacion>(
   "comprobantes",
   API.organizacion.comprobantes,
-  [
-    { id: "comp-1842", numero: "F001-0001842", fecha: "2026-07-01", concepto: "Suscripción Empresa Pro", importe: 2490, moneda: "PEN", estado: "PAGADO" },
-    { id: "comp-1721", numero: "F001-0001721", fecha: "2026-06-01", concepto: "Suscripción Empresa Pro", importe: 2490, moneda: "PEN", estado: "PAGADO" },
-    { id: "comp-1605", numero: "F001-0001605", fecha: "2026-05-01", concepto: "Suscripción Empresa Pro", importe: 2490, moneda: "PEN", estado: "PAGADO" },
-  ],
+  usarOrgPrincipal()
+    ? []
+    : [
+        {
+          id: "comp-1842",
+          numero: "F001-0001842",
+          fecha: "2026-07-01",
+          concepto: "Suscripción Empresa Pro",
+          importe: 2490,
+          moneda: "PEN",
+          estado: "PAGADO",
+        },
+        {
+          id: "comp-1721",
+          numero: "F001-0001721",
+          fecha: "2026-06-01",
+          concepto: "Suscripción Empresa Pro",
+          importe: 2490,
+          moneda: "PEN",
+          estado: "PAGADO",
+        },
+        {
+          id: "comp-1605",
+          numero: "F001-0001605",
+          fecha: "2026-05-01",
+          concepto: "Suscripción Empresa Pro",
+          importe: 2490,
+          moneda: "PEN",
+          estado: "PAGADO",
+        },
+      ],
+  [],
 );
 
-const notificaciones = crearRepositorioOrganizacion<NotificacionOrganizacion>(
-  "notificaciones",
-  API.organizacion.notificaciones,
-  [
-    { id: "org-not-1", titulo: "Asignación próxima a vencer", detalle: "Seguridad y salud tiene participantes pendientes.", fecha: "2026-07-16T09:00:00-05:00", leida: false, ruta: "/organizacion/asignaciones" },
-    { id: "org-not-2", titulo: "Consumo de licencias", detalle: "La organización superó el 85% de licencias disponibles.", fecha: "2026-07-15T16:30:00-05:00", leida: false, ruta: "/organizacion/licencia" },
-    { id: "org-not-3", titulo: "Cursos por revisar", detalle: "Hay propuestas de docentes esperando tu visto bueno.", fecha: "2026-07-16T08:15:00-05:00", leida: false, ruta: "/organizacion/cursos" },
-  ],
-);
+const notificacionesLocal =
+  crearRepositorioOrganizacion<NotificacionOrganizacion>(
+    "notificaciones",
+    API.organizacion.notificaciones,
+    usarOrgPrincipal()
+      ? []
+      : [
+          {
+            id: "org-not-1",
+            titulo: "Asignación próxima a vencer",
+            detalle: "Seguridad y salud tiene participantes pendientes.",
+            fecha: "2026-07-16T09:00:00-05:00",
+            leida: false,
+            ruta: "/organizacion/asignaciones",
+          },
+          {
+            id: "org-not-2",
+            titulo: "Consumo de licencias",
+            detalle:
+              "La organización superó el 85% de licencias disponibles.",
+            fecha: "2026-07-15T16:30:00-05:00",
+            leida: false,
+            ruta: "/organizacion/licencia",
+          },
+          {
+            id: "org-not-3",
+            titulo: "Cursos por revisar",
+            detalle: "Hay propuestas de docentes esperando tu visto bueno.",
+            fecha: "2026-07-16T08:15:00-05:00",
+            leida: false,
+            ruta: "/organizacion/cursos",
+          },
+        ],
+    [],
+  );
+
+function claveLeidasAlertas(instalacionId: string) {
+  return `tukuy_org_alertas_leidas_${instalacionId}`;
+}
+
+function leerIdsAlertasLeidas(instalacionId: string): Set<string> {
+  try {
+    const bruto = localStorage.getItem(claveLeidasAlertas(instalacionId));
+    const lista = bruto ? (JSON.parse(bruto) as unknown) : [];
+    return new Set(
+      Array.isArray(lista) ? lista.map((item) => String(item)) : [],
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+function guardarIdsAlertasLeidas(instalacionId: string, ids: Set<string>) {
+  localStorage.setItem(
+    claveLeidasAlertas(instalacionId),
+    JSON.stringify([...ids]),
+  );
+}
+
+const comprobantes = {
+  ...comprobantesLocal,
+  async listar() {
+    if (usarOrgPrincipal()) {
+      const instalacionId = contextoActual().organizacionId;
+      if (!instalacionId) return [];
+      try {
+        return await organizacionPrincipalService.listarComprobantes(
+          instalacionId,
+        );
+      } catch (error) {
+        const mensaje =
+          error instanceof Error ? error.message : String(error);
+        if (/org_listar_comprobantes|Could not find the function|PGRST202/i.test(
+          mensaje,
+        )) {
+          return [];
+        }
+        throw error;
+      }
+    }
+    return comprobantesLocal.listar();
+  },
+};
+
+const notificaciones = {
+  ...notificacionesLocal,
+  async listar() {
+    if (usarOrgPrincipal()) {
+      const instalacionId = contextoActual().organizacionId;
+      if (!instalacionId) return [];
+      try {
+        const alertas =
+          await organizacionPrincipalService.listarAlertasOperativas(
+            instalacionId,
+          );
+        const leidas = leerIdsAlertasLeidas(instalacionId);
+        return alertas.map((item) => ({
+          ...item,
+          leida: leidas.has(item.id),
+        }));
+      } catch (error) {
+        const mensaje =
+          error instanceof Error ? error.message : String(error);
+        if (
+          /org_listar_alertas_operativas|Could not find the function|PGRST202/i.test(
+            mensaje,
+          )
+        ) {
+          return [];
+        }
+        throw error;
+      }
+    }
+    return notificacionesLocal.listar();
+  },
+  async actualizar(
+    id: Identificador,
+    cambios: Partial<NotificacionOrganizacion>,
+  ) {
+    if (usarOrgPrincipal()) {
+      const instalacionId = contextoActual().organizacionId;
+      if (!instalacionId) {
+        throw new Error("No hay organización activa en el contexto de sesión");
+      }
+      if (cambios.leida) {
+        const leidas = leerIdsAlertasLeidas(instalacionId);
+        leidas.add(String(id));
+        guardarIdsAlertasLeidas(instalacionId, leidas);
+      }
+      const lista = await this.listar();
+      const actual = lista.find((item) => item.id === String(id));
+      return {
+        ...(actual ?? {
+          id: String(id),
+          titulo: "",
+          detalle: "",
+          fecha: new Date().toISOString(),
+          leida: false,
+        }),
+        ...cambios,
+        id: String(id),
+      };
+    }
+    return notificacionesLocal.actualizar(id, cambios);
+  },
+};
 
 const catalogoCursosRepositorio =
   crearRepositorioOrganizacion<PropuestaCursoOrganizacion>(
     "catalogo-cursos",
     API.organizacion.catalogoCursos,
     catalogoCursosOrganizacion,
+    [],
   );
 
 const ESTADOS_PROPUESTA = new Set<EstadoPropuestaCursoOrganizacion>([
@@ -2261,7 +3704,7 @@ function almacenConfiguracion() {
           restringirDominio: true,
           requiereDniEnrolamiento: true,
         },
-    usarOrgPrincipal() ? 30 : 4,
+    usarOrgPrincipal() ? 40 : 4,
   );
 }
 
@@ -2281,8 +3724,8 @@ function almacenIntegraciones() {
   ];
   return crearAlmacenDocumento<IntegracionOrganizacion[]>(
     claveContextual("integraciones"),
-    usarOrgPrincipal() ? [] : demos,
-    usarOrgPrincipal() ? 30 : 3,
+    usarOrgPrincipal() || apiConfig.sinDatosDemo ? [] : demos,
+    usarOrgPrincipal() || apiConfig.sinDatosDemo ? 40 : 3,
   );
 }
 
@@ -2393,6 +3836,10 @@ export const organizacionService = {
     const { docenteService } = await import("@/api/services/docente.service");
     return docenteService.firmarCertificado(certificadoId, firmaId);
   },
+  revocarCertificado: async (certificadoId: string, motivo?: string) => {
+    const { docenteService } = await import("@/api/services/docente.service");
+    return docenteService.revocarCertificado(certificadoId, motivo);
+  },
   matricularUsuarioEnCurso,
   solicitarMatriculaCurso,
   aprobarSolicitudMatricula,
@@ -2404,6 +3851,8 @@ export const organizacionService = {
     unidades,
     vinculaciones,
     politicasIncorporacion,
+    obtenerSnapshot: obtenerSnapshotEstructura,
+    prefetch: prefetchPortalOrganizacion,
     perfiles,
     asignacionesPerfil,
     usuariosDeUnidad,
@@ -2443,10 +3892,57 @@ export const organizacionService = {
     cancelar: cancelarSesionEnVivo,
     reenviarInvitaciones: reenviarInvitacionesSesion,
   },
-  obtenerConfiguracion: () =>
-    leerDocumento(API.organizacion.configuracion, almacenConfiguracion()),
-  guardarConfiguracion: (datos: ConfiguracionOrganizacion) =>
-    guardarDocumento(API.organizacion.configuracion, almacenConfiguracion(), datos),
+  obtenerConfiguracion: async () => {
+    if (usarOrgPrincipal() && presenciaBdDisponible()) {
+      const instalacionId = contextoActual().organizacionId;
+      if (!instalacionId) {
+        throw new Error("No hay organización activa en el contexto de sesión");
+      }
+      try {
+        const presencia =
+          await organizacionPrincipalService.obtenerPresencia(instalacionId);
+        const config = presenciaAConfiguracion(presencia);
+        almacenConfiguracion().guardar(config);
+        return config;
+      } catch (error) {
+        if (!esErrorRpcPresenciaAusente(error)) throw error;
+      }
+    }
+    return leerDocumento(API.organizacion.configuracion, almacenConfiguracion());
+  },
+  guardarConfiguracion: async (datos: ConfiguracionOrganizacion) => {
+    if (usarOrgPrincipal() && presenciaBdDisponible()) {
+      const instalacionId = contextoActual().organizacionId;
+      if (!instalacionId) {
+        throw new Error("No hay organización activa en el contexto de sesión");
+      }
+      try {
+        const presencia = await organizacionPrincipalService.guardarPresencia(
+          instalacionId,
+          {
+            nombre: datos.nombre,
+            logo: datos.logo ?? "",
+            ruc: datos.ruc,
+            dominio: datos.dominio,
+            zonaHoraria: datos.zonaHoraria,
+            restringirDominio: datos.restringirDominio,
+            requiereDniEnrolamiento: datos.requiereDniEnrolamiento,
+          },
+        );
+        const config = presenciaAConfiguracion(presencia);
+        almacenConfiguracion().guardar(config);
+        emitirCambio(API.organizacion.configuracion);
+        return config;
+      } catch (error) {
+        if (!esErrorRpcPresenciaAusente(error)) throw error;
+      }
+    }
+    return guardarDocumento(
+      API.organizacion.configuracion,
+      almacenConfiguracion(),
+      datos,
+    );
+  },
   obtenerIntegraciones: () =>
     leerDocumento(API.organizacion.integraciones, almacenIntegraciones()),
   guardarIntegraciones: (datos: IntegracionOrganizacion[]) =>
@@ -2481,10 +3977,53 @@ export const organizacionService = {
       perfilCodigo,
     );
   },
-  guardarLicencia: (datos: LicenciaOrganizacion) =>
-    guardarDocumento(API.organizacion.licencia, almacenLicencia(), datos),
-  obtenerFacturacion: () =>
-    leerDocumento(API.organizacion.facturacion, almacenFacturacion()),
-  guardarFacturacion: (datos: FacturacionOrganizacion) =>
-    guardarDocumento(API.organizacion.facturacion, almacenFacturacion(), datos),
+  guardarLicencia: async (datos: LicenciaOrganizacion) => {
+    if (usarOrgPrincipal()) {
+      throw new Error(
+        "La ampliación o renovación de licencia la gestiona administración Tukuy.",
+      );
+    }
+    return guardarDocumento(
+      API.organizacion.licencia,
+      almacenLicencia(),
+      datos,
+    );
+  },
+  obtenerFacturacion: async () => {
+    if (usarOrgPrincipal()) {
+      const instalacionId = contextoActual().organizacionId;
+      if (!instalacionId) {
+        throw new Error("No hay organización activa en el contexto de sesión");
+      }
+      try {
+        return await organizacionPrincipalService.obtenerFacturacion(
+          instalacionId,
+        );
+      } catch (error) {
+        const mensaje =
+          error instanceof Error ? error.message : String(error);
+        if (
+          /org_obtener_facturacion|Could not find the function|PGRST202/i.test(
+            mensaje,
+          )
+        ) {
+          return almacenFacturacion().leer();
+        }
+        throw error;
+      }
+    }
+    return leerDocumento(API.organizacion.facturacion, almacenFacturacion());
+  },
+  guardarFacturacion: async (datos: FacturacionOrganizacion) => {
+    if (usarOrgPrincipal()) {
+      throw new Error(
+        "Los cambios de plan y medio de pago los gestiona administración Tukuy.",
+      );
+    }
+    return guardarDocumento(
+      API.organizacion.facturacion,
+      almacenFacturacion(),
+      datos,
+    );
+  },
 };

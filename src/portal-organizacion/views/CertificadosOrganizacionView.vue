@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {
   Award,
+  Ban,
   Download,
   Eye,
   FileDown,
@@ -41,6 +42,7 @@ const cargando = ref(true);
 const descargandoId = ref("");
 const emitiendoId = ref("");
 const firmandoId = ref("");
+const revocandoId = ref("");
 const emitidos = ref<CertificadoEmitidoDocente[]>([]);
 const pendientes = ref<CertificadoPendienteDocente[]>([]);
 const pendientesFirma = ref<
@@ -212,10 +214,7 @@ async function emitir(pendienteId: string) {
     if (apiConfig.secundariaCursos) {
       pendientesFirma.value = await organizacionService.listarPendientesFirma();
     }
-    const requiereFirma =
-      (emitido as CertificadoEmitidoDocente & {
-        requiereFirmaInstitucional?: boolean;
-      }).requiereFirmaInstitucional === true;
+    const requiereFirma = emitido.requiereFirmaInstitucional === true;
     mensaje.value = requiereFirma
       ? "Certificado preparado. Falta la firma institucional para publicarlo."
       : "Certificado emitido y enviado al estudiante.";
@@ -269,6 +268,45 @@ async function firmar(item: {
   }
 }
 
+async function revocar(certificado: CertificadoEmitidoDocente) {
+  if (!tienePermiso("certificados.revocar")) {
+    error.value = "Tu perfil no puede revocar certificados.";
+    return;
+  }
+  if (certificado.estado === "REVOCADO" || certificado.revocadoEn) return;
+  const id = certificado.certificadoId || certificado.id;
+  if (!id) return;
+  const confirmar = window.confirm(
+    `¿Revocar el certificado de ${certificado.nombre} (${certificado.codigoVerificacion || id})?\nDejará de validarse en la verificación pública.`,
+  );
+  if (!confirmar) return;
+  revocandoId.value = certificado.id;
+  error.value = "";
+  try {
+    await organizacionService.revocarCertificado(id);
+    emitidos.value = emitidos.value.map((item) =>
+      item.id === certificado.id || item.certificadoId === id
+        ? {
+            ...item,
+            estado: "REVOCADO",
+            revocadoEn: new Date().toISOString(),
+          }
+        : item,
+    );
+    mensaje.value = `Certificado revocado · ${certificado.nombre}`;
+    setTimeout(() => {
+      mensaje.value = "";
+    }, 3500);
+  } catch (causa) {
+    error.value =
+      causa instanceof Error
+        ? causa.message
+        : "No se pudo revocar el certificado.";
+  } finally {
+    revocandoId.value = "";
+  }
+}
+
 function exportar() {
   const filas: Array<Array<string | number>> = [
     ["Código", "Estudiante", "Curso", "Fecha", "Estado", "Nota", "Horas"],
@@ -318,7 +356,12 @@ function exportar() {
   URL.revokeObjectURL(enlace.href);
 }
 
+function codigoCertificado(certificado: CertificadoEmitidoDocente) {
+  return certificado.codigoVerificacion?.trim() || certificado.id;
+}
+
 function datosCertificado(certificado: CertificadoEmitidoDocente) {
+  const codigo = codigoCertificado(certificado);
   return {
     holderName: certificado.nombre,
     courseTitle: certificado.curso,
@@ -329,7 +372,7 @@ function datosCertificado(certificado: CertificadoEmitidoDocente) {
     level: "Aprobado",
     mode: "Virtual",
     issuedAt: certificado.fecha,
-    certificateCode: certificado.id,
+    certificateCode: codigo,
     issuerName:
       certificado.organizacionEmisora ??
       contextoActivo.value?.organizacionNombre ??
@@ -338,7 +381,33 @@ function datosCertificado(certificado: CertificadoEmitidoDocente) {
   };
 }
 
+function clavePdfReal(certificado: CertificadoEmitidoDocente) {
+  const clave = certificado.claveAlmacenamiento?.trim();
+  if (!clave) return null;
+  // Placeholder histórico sin objeto S3 real.
+  if (/^certificados\/[0-9a-f-]{36}\.pdf$/i.test(clave)) return null;
+  if (!clave.startsWith("certificados/")) return null;
+  return clave.replace(/^s3:\/\//, "");
+}
+
 async function verCertificado(certificado: CertificadoEmitidoDocente) {
+  if (certificado.estado === "REVOCADO" || certificado.revocadoEn) {
+    error.value = "Este certificado está revocado.";
+  } else if (certificado.requiereFirmaInstitucional) {
+    error.value =
+      "Este certificado aún no está publicado: falta la firma institucional. El QR no verificará hasta firmarlo.";
+  }
+  const clave = clavePdfReal(certificado);
+  if (clave) {
+    try {
+      const { storageAcademia } = await import("@/lib/storage-academia");
+      const url = await storageAcademia.urlDescargaCertificado(clave);
+      window.open(url, "_blank", "noopener,noreferrer");
+      return;
+    } catch {
+      // fallback local
+    }
+  }
   const { openCertificatePdf } = await import("@/lib/certificado-pdf");
   await openCertificatePdf(datosCertificado(certificado));
 }
@@ -347,6 +416,22 @@ async function descargarCertificado(certificado: CertificadoEmitidoDocente) {
   descargandoId.value = certificado.id;
   error.value = "";
   try {
+    if (certificado.requiereFirmaInstitucional) {
+      error.value =
+        "Descarga generada, pero el certificado aún no verifica en público (falta firma institucional).";
+    }
+    const clave = clavePdfReal(certificado);
+    if (clave) {
+      const { storageAcademia } = await import("@/lib/storage-academia");
+      const url = await storageAcademia.urlDescargaCertificado(clave);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `certificado-${codigoCertificado(certificado)}.pdf`;
+      a.rel = "noopener";
+      a.target = "_blank";
+      a.click();
+      return;
+    }
     const { downloadCertificatePdf } = await import("@/lib/certificado-pdf");
     await downloadCertificatePdf(datosCertificado(certificado));
   } catch {
@@ -745,7 +830,9 @@ async function descargarCertificado(certificado: CertificadoEmitidoDocente) {
           style="min-width: 10rem"
         >
           <template #body="{ data }">
-            <span class="font-black tracking-wide">{{ data.id }}</span>
+            <span class="font-black tracking-wide">{{
+              data.codigoVerificacion || data.id
+            }}</span>
           </template>
         </Column>
 
@@ -802,13 +889,25 @@ async function descargarCertificado(certificado: CertificadoEmitidoDocente) {
           <template #body="{ data }">
             <Tag
               class="w-fit"
-              :severity="data.horasCertificadas ? 'success' : 'secondary'"
-              :value="data.horasCertificadas ? 'Verificado' : 'Registro anterior'"
+              :severity="
+                data.estado === 'REVOCADO' || data.revocadoEn
+                  ? 'danger'
+                  : data.horasCertificadas
+                    ? 'success'
+                    : 'secondary'
+              "
+              :value="
+                data.estado === 'REVOCADO' || data.revocadoEn
+                  ? 'Revocado'
+                  : data.horasCertificadas
+                    ? 'Verificado'
+                    : 'Registro anterior'
+              "
             />
           </template>
         </Column>
 
-        <Column header="Acciones" style="min-width: 11rem">
+        <Column header="Acciones" style="min-width: 14rem">
           <template #body="{ data }">
             <div class="flex flex-wrap gap-2">
               <Button
@@ -833,6 +932,21 @@ async function descargarCertificado(certificado: CertificadoEmitidoDocente) {
               >
                 <FileDown class="h-4 w-4" />
                 PDF
+              </Button>
+              <Button
+                v-if="
+                  tienePermiso('certificados.revocar') &&
+                  data.estado !== 'REVOCADO' &&
+                  !data.revocadoEn
+                "
+                variant="outline"
+                size="sm"
+                class="text-red-700"
+                :disabled="revocandoId === data.id"
+                @click="revocar(data)"
+              >
+                <Ban class="h-4 w-4" />
+                Revocar
               </Button>
             </div>
           </template>

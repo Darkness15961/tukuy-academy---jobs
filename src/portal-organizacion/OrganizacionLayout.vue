@@ -34,15 +34,18 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "reka-ui";
-import { computed, onMounted, ref, watch } from "vue";
-import { RouterView, useRoute, useRouter } from "vue-router";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import LazyRouteOutlet from "@/components/shared/LazyRouteOutlet.vue";
 import SelectorTema from "@/components/shared/SelectorTema.vue";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import { apiConfig } from "@/api/config";
 import {
   organizacionService,
   type NotificacionOrganizacion,
 } from "@/api/services/organizacion.service";
+import { secundariaGatewayService } from "@/api/services/secundaria-gateway.service";
 import { useAuth } from "@/composables/useAuth";
 import { useContextoSesion } from "@/composables/useContextoSesion";
 import {
@@ -69,7 +72,7 @@ type GrupoNav = {
 
 const route = useRoute(),
   router = useRouter();
-const { logout, currentUser, restaurarUsuario } = useAuth();
+const { logout, currentUser, restaurarUsuario, refrescarMembresias } = useAuth();
 const {
   contextoActivo,
   funcionesEntidadActiva,
@@ -104,7 +107,24 @@ async function cargarAvisos() {
 onMounted(() => {
   void restaurarUsuario();
   void cargarAvisos();
+  if (apiConfig.secundariaCursos) {
+    secundariaGatewayService.prefetchOrganizacion();
+  }
+  // Snapshot organigrama + usuarios en segundo plano (Equipos/Personas/etc. reusan cache).
+  organizacionService.estructura.prefetch();
+  window.addEventListener("tukuy:membresias-actualizar", alActualizarMembresias);
 });
+
+onUnmounted(() => {
+  window.removeEventListener(
+    "tukuy:membresias-actualizar",
+    alActualizarMembresias,
+  );
+});
+
+function alActualizarMembresias() {
+  void refrescarMembresias();
+}
 async function abrirAviso(aviso: NotificacionOrganizacion) {
   if (!aviso.leida) {
     await organizacionService.notificaciones.actualizar(aviso.id, { leida: true });
@@ -361,6 +381,17 @@ async function ir(r: string) {
   abierto.value = false;
   await router.push(r);
 }
+
+/** Precarga el chunk JS de la ruta al pasar el mouse (lazy loading anticipado). */
+function prefetchRuta(ruta: string) {
+  const resuelto = router.resolve(ruta);
+  for (const record of resuelto.matched) {
+    const comp = record.components?.default;
+    if (typeof comp === "function") {
+      void (comp as () => Promise<unknown>)().catch(() => undefined);
+    }
+  }
+}
 async function activarFuncion(membresiaId: string) {
   const contexto = cambiarFuncion(membresiaId);
   if (contexto) await router.replace(rutaInicioPortal(contexto.portal));
@@ -437,6 +468,8 @@ async function activarFuncion(membresiaId: string) {
                 : 'border-l-transparent text-muted-foreground hover:border-l-accent/50 hover:bg-muted hover:text-foreground'
             "
             @click="ir(grupo.ruta)"
+            @mouseenter="prefetchRuta(grupo.ruta)"
+            @focus="prefetchRuta(grupo.ruta)"
           >
             <component :is="grupo.icono" class="h-[18px] w-[18px] shrink-0" />
             <span>{{ grupo.etiqueta }}</span>
@@ -483,6 +516,8 @@ async function activarFuncion(membresiaId: string) {
                     "
                     :tabindex="grupoExpandido(grupo) ? 0 : -1"
                     @click="ir(hijo.ruta)"
+                    @mouseenter="prefetchRuta(hijo.ruta)"
+                    @focus="prefetchRuta(hijo.ruta)"
                   >
                     <component :is="hijo.icono" class="h-3.5 w-3.5 shrink-0" />
                     <span>{{ hijo.etiqueta }}</span>
@@ -509,6 +544,8 @@ async function activarFuncion(membresiaId: string) {
               : 'border-l-transparent text-muted-foreground hover:border-l-accent/50 hover:bg-muted hover:text-foreground'
           "
           @click="ir(x.r)"
+          @mouseenter="prefetchRuta(x.r)"
+          @focus="prefetchRuta(x.r)"
         >
           <component :is="x.i" class="h-4 w-4" />
           <span>{{ x.e }}</span>
@@ -654,7 +691,7 @@ async function activarFuncion(membresiaId: string) {
           </DropdownMenuContent>
         </DropdownMenuRoot>
       </header>
-      <main class="p-4 sm:p-7 xl:p-8"><RouterView /></main>
+      <main class="p-4 sm:p-7 xl:p-8"><LazyRouteOutlet /></main>
     </div>
   </div>
 </template>

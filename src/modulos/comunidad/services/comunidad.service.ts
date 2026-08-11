@@ -18,7 +18,9 @@ import type {
   TipoPublicacion,
 } from "../types/comunidad.types";
 
-let publicacionesDemostracion = structuredClone(publicacionesMock);
+let publicacionesDemostracion = apiConfig.sinDatosDemo
+  ? ([] as PublicacionComunidad[])
+  : structuredClone(publicacionesMock);
 
 function obtenerAutorActualMock() {
   const guardado = localStorage.getItem(CONTEXTO_SESION_KEY);
@@ -60,6 +62,9 @@ function obtenerAutorActualMock() {
 
 export const comunidadService = {
   async obtenerPublicaciones(): Promise<PublicacionComunidad[]> {
+    if (apiConfig.sinDatosDemo) {
+      return resolveMock(structuredClone(publicacionesDemostracion));
+    }
     if (apiConfig.useMock) {
       return resolveMock(structuredClone(publicacionesDemostracion));
     }
@@ -143,12 +148,14 @@ export const comunidadService = {
   },
 
   async obtenerGrupos(): Promise<GrupoComunidad[]> {
+    if (apiConfig.sinDatosDemo) return resolveMock([]);
     if (apiConfig.useMock) return resolveMock(structuredClone(gruposMock));
     const { data } = await api.get<GrupoComunidad[]>(API.comunidad.grupos);
     return data;
   },
 
   async obtenerEventos(): Promise<EventoComunidad[]> {
+    if (apiConfig.sinDatosDemo) return resolveMock([]);
     if (apiConfig.useMock) return resolveMock(structuredClone(eventosMock));
     const { data } = await api.get<EventoComunidad[]>(API.comunidad.eventos);
     return data;

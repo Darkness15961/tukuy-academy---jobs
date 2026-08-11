@@ -4,6 +4,7 @@ import { onMounted, onUnmounted, reactive, ref } from "vue";
 
 import { organizacionService } from "@/api/services/organizacion.service";
 import { sesionesEnVivoCompartidas } from "@/api/services/sesiones-en-vivo-compartidas.service";
+import AsistenciaSesionPanel from "@/components/shared/AsistenciaSesionPanel.vue";
 import CalendarioSesionesEnVivo from "@/components/shared/CalendarioSesionesEnVivo.vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -79,14 +80,24 @@ async function programar() {
     !formulario.cursoId ||
     !formulario.fechaHora
   ) {
+    aviso.value =
+      "Completa título, curso y fecha/hora para programar la sesión.";
+    return;
+  }
+  if (!cursos.value.length) {
+    aviso.value =
+      "No hay cursos en la academia. Crea o publica un curso antes de programar.";
     return;
   }
   const curso = cursos.value.find((c) => c.id === formulario.cursoId);
-  if (!curso) return;
+  if (!curso) {
+    aviso.value = "Selecciona un curso válido.";
+    return;
+  }
 
   procesando.value = true;
   try {
-    await organizacionService.sesionesEnVivo.programar({
+    const creada = await organizacionService.sesionesEnVivo.programar({
       titulo: formulario.titulo.trim(),
       cursoId: curso.id,
       cursoTitulo: curso.titulo,
@@ -102,8 +113,17 @@ async function programar() {
     });
     await cargar();
     modalProgramar.value = false;
+    if (creada.meetSimulado) {
+      aviso.value =
+        `Sesión guardada, pero Meet sigue SIMULADO: ${creada.meetAviso ?? "revisa secrets GOOGLE_CALENDAR_* y redeploy."}`;
+    } else {
+      aviso.value = "Sesión guardada con Meet real de Google Calendar.";
+    }
+  } catch (err) {
     aviso.value =
-      "Evento creado y sincronizado: admin, docente del curso y alumnos matriculados.";
+      err instanceof Error
+        ? err.message
+        : "No se pudo guardar la sesión. Revisa la consola / gateway.";
   } finally {
     procesando.value = false;
   }
@@ -130,7 +150,15 @@ function etiquetaEstado(estado: SesionEnVivoOrganizacion["estado"]) {
   <div>
     <p
       v-if="aviso"
-      class="mb-3 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-800 dark:text-emerald-200"
+      class="mb-3 rounded-md border px-4 py-3 text-sm"
+      :class="
+        aviso.toLowerCase().includes('no se pudo') ||
+        aviso.toLowerCase().includes('completa') ||
+        aviso.toLowerCase().includes('no hay') ||
+        aviso.toLowerCase().includes('simulado')
+          ? 'border-red-500/30 bg-red-500/10 text-red-800 dark:text-red-200'
+          : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200'
+      "
     >
       {{ aviso }}
     </p>
@@ -157,8 +185,8 @@ function etiquetaEstado(estado: SesionEnVivoOrganizacion["estado"]) {
         <CardContent class="p-6">
           <h2 class="text-xl font-black">Programar sesión institucional</h2>
           <p class="mt-1 text-sm text-muted-foreground">
-            Invita matrículas del curso automáticamente y sincroniza con docente
-            y alumno.
+            La sesión se guarda en la academia. Meet simulado (Google Calendar
+            OAuth pendiente).
           </p>
           <div class="mt-5 grid gap-3">
             <input
@@ -170,6 +198,9 @@ function etiquetaEstado(estado: SesionEnVivoOrganizacion["estado"]) {
               v-model="formulario.cursoId"
               class="h-11 rounded-md border border-border bg-background px-3"
             >
+              <option v-if="!cursos.length" value="" disabled>
+                Sin cursos disponibles
+              </option>
               <option
                 v-for="curso in cursos"
                 :key="curso.id"
@@ -279,7 +310,16 @@ function etiquetaEstado(estado: SesionEnVivoOrganizacion["estado"]) {
                 }}</Badge>
               </li>
             </ul>
+            <p
+              v-if="!sesionDetalle.invitados.length"
+              class="mt-2 text-sm text-muted-foreground"
+            >
+              Sin invitados por correo (usa la lista de asistencia abajo).
+            </p>
           </div>
+
+          <AsistenciaSesionPanel :sesion-id="sesionDetalle.id" />
+
           <div class="mt-5 flex justify-end gap-2">
             <Button variant="outline" @click="sesionDetalle = undefined"
               >Cerrar</Button

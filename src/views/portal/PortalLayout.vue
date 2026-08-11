@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
-import { RouterView, useRoute, useRouter } from "vue-router";
+import { computed, onMounted, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 
 import { aprendizajeService } from "@/api/services/aprendizaje.service";
+import { apiConfig } from "@/api/config";
 import { organizacionService } from "@/api/services/organizacion.service";
+import { secundariaGatewayService } from "@/api/services/secundaria-gateway.service";
 import AppHeader from "@/components/shared/AppHeader.vue";
+import LazyRouteOutlet from "@/components/shared/LazyRouteOutlet.vue";
 import PortalPageSkeleton from "@/components/shared/PortalPageSkeleton.vue";
 import SiteFooter from "@/components/shared/SiteFooter.vue";
 import { useAuth } from "@/composables/useAuth";
@@ -72,13 +75,14 @@ const mensajeAccesoCurso = ref("");
 
 const activeView = computed(() => resolvePortalView(route.meta.view));
 
-const isPageLoading = computed(
-  () =>
-    userLoading.value ||
-    coursesLoading.value ||
-    jobsLoading.value ||
-    contentLoading.value,
-);
+/** Solo el perfil bloquea el shell; cursos/empleos/contenido cargan en segundo plano. */
+const isPageLoading = computed(() => userLoading.value && !user.value);
+
+onMounted(() => {
+  if (apiConfig.secundariaCursos) {
+    secundariaGatewayService.prefetchAlumno();
+  }
+});
 
 const enrolledCourses = computed(() =>
   courses.value.filter(
@@ -424,7 +428,7 @@ providePortalContext(portalContext);
           : 'bg-background min-h-[calc(100vh-4rem)] flex flex-col justify-between'
     "
   >
-    <RouterView />
+    <LazyRouteOutlet />
     <SiteFooter
       v-if="!route.meta.hideHeaderFooter && !route.meta.hideFooter"
       variant="light"

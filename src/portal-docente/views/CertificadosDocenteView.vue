@@ -187,10 +187,7 @@ async function emitir(pendienteId: string) {
     if (apiConfig.secundariaCursos) {
       pendientesFirma.value = await docenteService.listarPendientesFirma();
     }
-    const requiereFirma =
-      (emitido as CertificadoEmitidoDocente & {
-        requiereFirmaInstitucional?: boolean;
-      }).requiereFirmaInstitucional === true;
+    const requiereFirma = emitido.requiereFirmaInstitucional === true;
     mensaje.value = requiereFirma
       ? "Certificado preparado. Falta la firma institucional para publicarlo."
       : "Certificado emitido y enviado al estudiante.";
@@ -279,6 +276,8 @@ async function exportar() {
 }
 
 function datosCertificado(certificado: CertificadoEmitidoDocente) {
+  const codigo =
+    certificado.codigoVerificacion?.trim() || certificado.id;
   return {
     holderName: certificado.nombre,
     courseTitle: certificado.curso,
@@ -289,7 +288,7 @@ function datosCertificado(certificado: CertificadoEmitidoDocente) {
     level: "Aprobado",
     mode: "Virtual",
     issuedAt: certificado.fecha,
-    certificateCode: certificado.id,
+    certificateCode: codigo,
     issuerName: certificado.organizacionEmisora ??
       contextoActivo.value?.organizacionNombre ?? "Tukuy Academy",
     issuerLogoUrl:
@@ -300,6 +299,10 @@ function datosCertificado(certificado: CertificadoEmitidoDocente) {
 }
 
 async function verCertificado(certificado: CertificadoEmitidoDocente) {
+  if (certificado.requiereFirmaInstitucional) {
+    error.value =
+      "Este certificado aún no está publicado: falta la firma institucional. El QR no verificará hasta firmarlo.";
+  }
   const { openCertificatePdf } = await import("@/lib/certificado-pdf");
   await openCertificatePdf(datosCertificado(certificado));
 }
@@ -308,6 +311,10 @@ async function descargarCertificado(certificado: CertificadoEmitidoDocente) {
   descargandoId.value = certificado.id;
   error.value = "";
   try {
+    if (certificado.requiereFirmaInstitucional) {
+      error.value =
+        "Descarga generada, pero el certificado aún no verifica en público (falta firma institucional).";
+    }
     const { downloadCertificatePdf } = await import("@/lib/certificado-pdf");
     await downloadCertificatePdf(datosCertificado(certificado));
   } catch {

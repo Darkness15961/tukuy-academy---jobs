@@ -20,8 +20,9 @@ import {
   DropdownMenuTrigger,
 } from "reka-ui";
 import { computed, ref } from "vue";
-import { RouterLink, RouterView, useRoute, useRouter } from "vue-router";
+import { RouterLink, useRoute, useRouter } from "vue-router";
 
+import LazyRouteOutlet from "@/components/shared/LazyRouteOutlet.vue";
 import SelectorTema from "@/components/shared/SelectorTema.vue";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -317,6 +318,6 @@ function enlaceActivo(ruta: string) {
       </nav>
     </header>
 
-    <RouterView />
+    <LazyRouteOutlet />
   </div>
 </template>

@@ -122,8 +122,8 @@ function sesionDesdeOrdenSecundaria(
     metodosDisponibles: ["CARD", "YAPE_CODE", "QR", "PAGO_PUSH"],
     autorizacionSesion: "sesion-secundaria",
     llaveRsaPublica: "llave-publica-demostracion",
-    // Mientras no haya merchant Izipay real, la UI usa la pasarela simulada.
-    demostracion: true,
+    // simulacion (default) = pasarela demo; sdk = intenta Izipay real cuando haya merchant.
+    demostracion: apiConfig.pagoModo !== "sdk",
     configuracion: {
       transactionId: String(ahora),
       action: "pay",
@@ -157,7 +157,58 @@ async function crearOrdenEnSecundaria(items: Array<{
     })),
     moneda: "PEN",
   });
-  return sesionDesdeOrdenSecundaria(data);
+  const base = sesionDesdeOrdenSecundaria(data);
+  if (apiConfig.pagoModo !== "sdk") return base;
+  return enriquecerSesionConTokenIzipay(base);
+}
+
+async function enriquecerSesionConTokenIzipay(
+  base: SesionPagoCurso,
+): Promise<SesionPagoCurso> {
+  const { supabasePrincipal } = await import("@/lib/supabase");
+  const { data, error } = await supabasePrincipal().functions.invoke(
+    "izipay-session",
+    { body: { ordenId: base.ordenId } },
+  );
+  if (error) {
+    throw new Error(
+      error.message ||
+        "No se pudo generar el token Izipay. Revisa izipay-session / secretos.",
+    );
+  }
+  if (!data?.ok || !data.autorizacionSesion) {
+    throw new Error(
+      [data?.error, data?.code].filter(Boolean).join(" — ") ||
+        "Izipay no devolvió token de sesión.",
+    );
+  }
+  return {
+    ...base,
+    demostracion: false,
+    entorno: data.entorno === "produccion" ? "produccion" : "pruebas",
+    importe:
+      typeof data.importe === "number" ? data.importe : base.importe,
+    autorizacionSesion: String(data.autorizacionSesion),
+    llaveRsaPublica: String(data.llaveRsaPublica ?? base.llaveRsaPublica),
+    cursoIds: Array.isArray(data.cursoIds) && data.cursoIds.length
+      ? data.cursoIds.map(String)
+      : base.cursoIds,
+    configuracion: {
+      ...base.configuracion,
+      ...(data.configuracion ?? {}),
+      merchantCode:
+        data.configuracion?.merchantCode ??
+        data.merchantCode ??
+        base.configuracion.merchantCode,
+      order: {
+        ...base.configuracion.order,
+        ...(data.configuracion?.order ?? {}),
+      },
+      render: {
+        typeForm: data.configuracion?.render?.typeForm ?? "pop-up",
+      },
+    },
+  };
 }
 
 export const pagosService = {
@@ -220,29 +271,39 @@ export const pagosService = {
     ordenId: string,
     respuesta: ConfirmarRespuestaPago,
   ): Promise<ResumenOrdenPago> {
+    const { esCodigoIzipayExitoso, mensajeAmigableIzipay } = await import(
+      "@/lib/izipay-codigos"
+    );
+    const codigo = respuesta.code ?? "";
+    if (!esCodigoIzipayExitoso(codigo)) {
+      return {
+        ordenId,
+        estado: "rechazada",
+        mensaje: mensajeAmigableIzipay(codigo),
+      };
+    }
+
     if (usarPagosSecundaria()) {
       const { secundariaGatewayService } = await import(
         "@/api/services/secundaria-gateway.service"
       );
       const data = await secundariaGatewayService.confirmarPagoOrden(ordenId, {
-        code: respuesta.code ?? "00",
+        code: codigo,
         transactionId: respuesta.transactionId,
       });
       return {
         ordenId: data.ordenId,
         estado: mapearEstadoOrden(String(data.estado ?? "")),
-        mensaje: data.mensaje,
+        mensaje:
+          data.mensaje || mensajeAmigableIzipay(codigo, "Pago aprobado."),
       };
     }
 
     if (apiConfig.useMock) {
       const resultado: ResumenOrdenPago = {
         ordenId,
-        estado: respuesta.code === "00" ? "pagada" : "rechazada",
-        mensaje:
-          respuesta.code === "00"
-            ? "Pago de demostración aprobado."
-            : "Pago de demostración rechazado.",
+        estado: "pagada",
+        mensaje: "Pago de demostración aprobado.",
       };
       estadoOrdenesMock.set(ordenId, resultado);
       return resolveMock(resultado);

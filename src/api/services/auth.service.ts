@@ -668,6 +668,12 @@ export const authService = {
     });
   },
 
+  /** Recarga membresías/permisos desde obtener_mis_contextos (post sync perfiles). */
+  async refrescarMembresias(): Promise<MembresiaEntrada[]> {
+    if (env.authProvider !== "supabase") return [];
+    return membresiasDesdeSupabase();
+  },
+
   async listarSesiones(): Promise<SesionApiDto[]> {
     const { data } = await api.get<SesionApiDto[] | { data: SesionApiDto[] }>(
       API.auth.sessions,

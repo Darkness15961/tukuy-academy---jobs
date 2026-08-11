@@ -7,6 +7,11 @@ type EnvConfig = {
   useMock: boolean;
   /** Lee cursos del portal docente desde la secundaria vía gateway. */
   secundariaCursos: boolean;
+  /**
+   * simulacion = pasarela demo (confirmar code 00 desde el browser).
+   * sdk = intenta checkout Izipay real (requiere merchant + PAYMENT_MODE≠simulacion en Edge).
+   */
+  pagoModo: "simulacion" | "sdk";
   isProduction: boolean;
 };
 
@@ -23,6 +28,11 @@ function readEnv(): EnvConfig {
   const useMock = import.meta.env.VITE_USE_MOCK !== "false";
   const secundariaCursos =
     import.meta.env.VITE_SECUNDARIA_CURSOS === "true";
+  const pagoModoRaw = (import.meta.env.VITE_PAGO_MODO ?? "simulacion")
+    .trim()
+    .toLowerCase();
+  const pagoModo: EnvConfig["pagoModo"] =
+    pagoModoRaw === "sdk" || pagoModoRaw === "izipay" ? "sdk" : "simulacion";
 
   if (authProvider === "supabase") {
     if (!supabasePrimaryUrl || !supabasePrimaryAnonKey) {
@@ -60,6 +70,7 @@ function readEnv(): EnvConfig {
     supabasePrimaryAnonKey,
     useMock,
     secundariaCursos,
+    pagoModo,
     isProduction,
   };
 }

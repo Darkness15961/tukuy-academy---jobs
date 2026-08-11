@@ -61,6 +61,7 @@ export const ACCIONES_GATEWAY_SECUNDARIA = [
   "eliminar-sesion",
   "actualizar-estado-sesion",
   "list-estudiantes",
+  "list-alumnos-resumen",
   "list-entregas",
   "get-entrega",
   "enviar-entrega",
@@ -154,6 +155,10 @@ export type CursoSecundaria = {
   portadaClave?: string | null;
   /** CSS object-position, p.ej. `30% 20%`. */
   imagenPosicion?: string | null;
+  /** Precio comercial (PEN) desde borrador/org. */
+  precio?: number | null;
+  gratuito?: boolean | null;
+  moneda?: string | null;
   creadoEn: string;
   actualizadoEn: string;
   versionRegistro?: number;
@@ -312,6 +317,7 @@ export type SesionEnVivoSecundaria = {
   cursoTitulo: string;
   titulo: string;
   urlAcceso?: string | null;
+  calendarEventId?: string | null;
   iniciaEn: string;
   terminaEn: string;
   estado?: string | null;
@@ -339,6 +345,39 @@ export type ResultadoListarEstudiantesSecundaria = {
   estudiantes: EstudianteMatriculaSecundaria[];
 };
 
+/** Una fila por alumno (portal organización), con paginación. */
+export type AlumnoResumenSecundaria = {
+  alumnoId: string;
+  nombre: string;
+  iniciales: string;
+  correo?: string;
+  cursos: number;
+  cursosResumen: string;
+  progreso: number;
+  estado: string;
+  fechaInscripcion: string;
+  ultimoAcceso: string;
+  ultimoAccesoFecha: string;
+  pendientes: number;
+  matriculasPendientes: Array<{
+    id: string;
+    cursoId: string;
+    curso: string;
+    progreso: number;
+    estado: string;
+  }>;
+  organizacion?: string;
+};
+
+export type ResultadoListarAlumnosResumenSecundaria = {
+  ok: boolean;
+  total: number;
+  limite: number;
+  offset: number;
+  alumnos: AlumnoResumenSecundaria[];
+  cursos: Array<{ id: string; titulo: string }>;
+};
+
 export type ResultadoListarSesionesSecundaria = {
   ok: boolean;
   total: number;
@@ -348,6 +387,12 @@ export type ResultadoListarSesionesSecundaria = {
 export type ResultadoCrearSesionSecundaria = {
   ok: boolean;
   sesion: SesionEnVivoSecundaria;
+  googleMeet?: {
+    simulado: boolean;
+    meetUrl?: string;
+    calendarEventId?: string;
+    motivo?: string;
+  };
 };
 
 export type CertificadoEmitidoSecundaria = {
@@ -361,11 +406,14 @@ export type CertificadoEmitidoSecundaria = {
   estado: string;
   fecha: string;
   emitidoEn?: string | null;
+  revocadoEn?: string | null;
   notaFinal?: number | null;
   horasCertificadas?: number;
   modulosCompletados?: number;
   organizacionEmisora?: string;
   versionPrograma?: string;
+  documentoId?: string | null;
+  claveAlmacenamiento?: string | null;
 };
 
 export type CertificadoPendienteSecundaria = {

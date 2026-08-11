@@ -86,9 +86,11 @@ function formatearActualizado(iso: string): string {
 export function mapearCursoSecundariaADocente(
   curso: CursoSecundaria,
   contexto?: ContextoSesion | null,
+  extras?: { observacion?: string | null },
 ): CursoDocente {
   const organizacionId = contexto?.organizacionId ?? null;
   const organizacionNombre = contexto?.organizacionNombre ?? "Tukuy Academy";
+  const estado = mapearEstado(curso.estado);
 
   return {
     id: curso.id,
@@ -99,7 +101,11 @@ export function mapearCursoSecundariaADocente(
     titulo: curso.titulo,
     imagen: urlPublicaMedia(curso.portadaClave, IMAGEN_FALLBACK),
     imagenPosicion: normalizarPosicionPortada(curso.imagenPosicion),
-    estado: mapearEstado(curso.estado),
+    estado,
+    observacion:
+      estado === "OBSERVADO"
+        ? extras?.observacion?.trim() || undefined
+        : undefined,
     modalidadImparticion: mapearModalidad(curso.modalidad),
     estudiantes: 0,
     progreso: 0,
@@ -261,6 +267,10 @@ export function mapearCursoSecundariaAPortal(
       : progreso > 0 || matricula
         ? "En curso"
         : "Disponible";
+  const precio = Number(curso.precio ?? 0);
+  const gratuito =
+    curso.gratuito === true || (curso.gratuito !== false && precio <= 0);
+  const dePago = !gratuito && precio > 0;
 
   return {
     id: curso.id,
@@ -271,8 +281,8 @@ export function mapearCursoSecundariaAPortal(
     mode: mapearModalidadPortal(curso.modalidad),
     progress: progreso,
     status: estado,
-    pricing: "free",
-    price: 0,
+    pricing: dePago ? "paid" : "free",
+    price: dePago ? precio : 0,
     imageTone: "from-slate-700 to-slate-900",
     image: urlPublicaMedia(curso.portadaClave, IMAGEN_FALLBACK),
     origen: "tukuy",

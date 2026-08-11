@@ -59,6 +59,23 @@ export function usePasarelaIzipay() {
     error.value = null;
 
     try {
+      const { esCodigoIzipayExitoso, mensajeAmigableIzipay } = await import(
+        "@/lib/izipay-codigos"
+      );
+      if (!esCodigoIzipayExitoso(respuesta.code)) {
+        fase.value = "rechazado";
+        error.value = mensajeAmigableIzipay(
+          respuesta.code,
+          respuesta.messageUser || respuesta.message,
+        );
+        orden.value = {
+          ordenId: sesion.value.ordenId,
+          estado: "rechazada",
+          mensaje: error.value,
+        };
+        return;
+      }
+
       orden.value = await pagosService.confirmarRespuestaIzipay(
         sesion.value.ordenId,
         {
@@ -69,6 +86,11 @@ export function usePasarelaIzipay() {
         },
       );
       fase.value = orden.value.estado === "pagada" ? "pagado" : "rechazado";
+      if (fase.value === "rechazado") {
+        error.value =
+          orden.value.mensaje ||
+          mensajeAmigableIzipay(respuesta.code, "No se confirmó el pago.");
+      }
     } catch (err) {
       fase.value = "rechazado";
       error.value =

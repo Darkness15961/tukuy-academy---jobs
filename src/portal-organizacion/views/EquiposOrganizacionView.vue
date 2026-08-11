@@ -24,19 +24,19 @@ import Tag from "primevue/tag";
 import Textarea from "primevue/textarea";
 import ToggleSwitch from "primevue/toggleswitch";
 import TreeTable from "primevue/treetable";
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { computed, defineAsyncComponent, onMounted, reactive, ref, watch } from "vue";
 
 import {
   organizacionService,
   type UsuarioOrganizacion,
 } from "@/api/services/organizacion.service";
+import { organizacionPrincipalService } from "@/api/services/organizacion-principal.service";
 import { cursosService } from "@/api/services/cursos.service";
 import { Button } from "@/components/ui/button";
 import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import IconoAyuda from "@/components/shared/IconoAyuda.vue";
 import { Card, CardContent } from "@/components/ui/card";
 import { useContextoSesion } from "@/composables/useContextoSesion";
-import OrganigramaOrganizacion from "@/portal-organizacion/components/OrganigramaOrganizacion.vue";
 import type { NodoOrganigramaEntidad } from "@/portal-organizacion/components/NodoOrganigrama.vue";
 import type {
   EstructuraOrganizacional,
@@ -48,12 +48,17 @@ import type {
   UnidadOrganizacional,
   VinculacionUnidad,
 } from "@/portal-organizacion/types/estructura-organizacional.types";
+
 import type { Course } from "@/types/academia";
 import {
   MODULOS_ACCESO,
   PERMISOS_POR_PLANTILLA,
   modulosDePermisos,
 } from "@/lib/control-acceso";
+
+const OrganigramaOrganizacion = defineAsyncComponent(
+  () => import("@/portal-organizacion/components/OrganigramaOrganizacion.vue"),
+);
 
 type Seccion =
   | "estructura"
@@ -66,6 +71,10 @@ type NodoTablaEstructura = {
 };
 
 const cargando = ref(true);
+const cargandoSeccion = ref(false);
+const perfilesListos = ref(false);
+const reglasListas = ref(false);
+const cursosListos = ref(false);
 const { contextoActivo, membresias, tienePermiso } = useContextoSesion();
 const logoEntidad = computed(
   () =>
@@ -219,40 +228,80 @@ const esSuperAdministracion = computed(() =>
 
 onMounted(cargar);
 
+watch(seccion, (nueva) => {
+  void asegurarDatosSeccion(nueva);
+});
+
+async function asegurarDatosSeccion(destino: Seccion) {
+  if (destino === "estructura") return;
+  const necesitaPerfiles =
+    (destino === "perfiles" || destino === "acceso-cursos") &&
+    !perfilesListos.value;
+  const necesitaReglas = destino === "acceso-cursos" && !reglasListas.value;
+  const necesitaCursos = destino === "acceso-cursos" && !cursosListos.value;
+  if (!necesitaPerfiles && !necesitaReglas && !necesitaCursos) return;
+
+  cargandoSeccion.value = true;
+  try {
+    if (necesitaPerfiles) {
+      perfiles.value = await organizacionService.estructura.perfiles.listar();
+      perfilesListos.value = true;
+    }
+    if (necesitaReglas) {
+      reglasAccesoCursos.value =
+        await organizacionService.estructura.reglasAccesoCursos.listar();
+      reglasListas.value = true;
+    }
+    if (necesitaCursos) {
+      cursosDisponibles.value = await cursosService.getAll().catch(() => []);
+      cursosListos.value = true;
+    }
+  } finally {
+    cargandoSeccion.value = false;
+  }
+}
+
 async function cargar() {
   try {
-    await organizacionService.estructura.normalizarJerarquia();
-    [
-      estructuras.value,
-      niveles.value,
-      unidades.value,
-      tiposUnidad.value,
-      politicas.value,
-      vinculaciones.value,
-      perfiles.value,
-      usuarios.value,
-      reglasAccesoCursos.value,
-      cursosDisponibles.value,
-    ] = await Promise.all([
-      organizacionService.estructura.estructuras.listar(),
-      organizacionService.estructura.niveles.listar(),
-      organizacionService.estructura.unidades.listar(),
-      organizacionService.estructura.tiposUnidad.listar(),
-      organizacionService.estructura.politicasIncorporacion.listar(),
-      organizacionService.estructura.vinculaciones.listar(),
-      organizacionService.estructura.perfiles.listar(),
+    // Con org principal el árbol ya nace sembrado en BD; normalizar solo aplica al mock CIP.
+    if (
+      !(
+        organizacionPrincipalService.activo() &&
+        contextoActivo.value?.organizacionId
+      )
+    ) {
+      await organizacionService.estructura.normalizarJerarquia();
+    }
+
+    // Solo lo necesario para pintar estructura (lazy del resto por pestaña).
+    const [snap, usuariosLista, configuracion] = await Promise.all([
+      organizacionService.estructura.obtenerSnapshot(),
       organizacionService.usuarios.listar(),
-      organizacionService.estructura.reglasAccesoCursos.listar(),
-      cursosService.getAll(),
+      organizacionService.obtenerConfiguracion(),
     ]);
-    const configuracion = await organizacionService.obtenerConfiguracion();
+
+    estructuras.value = snap.estructuras;
+    niveles.value = snap.niveles;
+    unidades.value = snap.unidades;
+    tiposUnidad.value = snap.tiposUnidad;
+    politicas.value = snap.politicasIncorporacion;
+    vinculaciones.value = snap.vinculaciones;
+    usuarios.value = usuariosLista;
     requiereDniEnrolamiento.value = configuracion.requiereDniEnrolamiento;
-    const guardadaId = localStorage.getItem("tukuy_demo_organizacion_estructura_seleccionada");
-    if (guardadaId && estructuras.value.some((e) => e.id === guardadaId && !e.esSistema)) {
+
+    const guardadaId = localStorage.getItem(
+      "tukuy_demo_organizacion_estructura_seleccionada",
+    );
+    if (
+      guardadaId &&
+      estructuras.value.some((e) => e.id === guardadaId && !e.esSistema)
+    ) {
       estructuraSeleccionadaId.value = guardadaId;
     } else {
       estructuraSeleccionadaId.value =
-        estructuras.value.find((item) => !item.esSistema && item.estado === "ACTIVA")?.id ?? "";
+        estructuras.value.find(
+          (item) => !item.esSistema && item.estado === "ACTIVA",
+        )?.id ?? "";
     }
   } finally {
     cargando.value = false;
@@ -404,12 +453,20 @@ const opcionesTipoUnidadFormulario = computed(() => {
   if (padre && !esUnidadGobiernoPorId(padre.id)) {
     idsPermitidos.add(padre.tipoUnidadId);
   }
+  // Tipo recién creado / ya elegido en el formulario (debe verse en el Select).
+  const tipoFormulario = formularioUnidad.tipoUnidadId;
+  if (tipoFormulario && tipoFormulario !== OPCION_NUEVO_TIPO) {
+    idsPermitidos.add(tipoFormulario);
+  }
 
-  const heredados = tiposUnidadPersonalizables.value.filter((tipo) =>
-    idsPermitidos.has(tipo.id),
-  );
+  const base = padre
+    ? tiposUnidadPersonalizables.value.filter((tipo) =>
+        idsPermitidos.has(tipo.id),
+      )
+    : tiposUnidadPersonalizables.value;
+
   return [
-    ...(padre ? heredados : tiposUnidadPersonalizables.value),
+    ...base,
     {
       id: OPCION_NUEVO_TIPO,
       nombreSingular: "+ Agregar nuevo tipo",
@@ -423,6 +480,32 @@ const opcionesTipoUnidadFormulario = computed(() => {
 });
 const politicasPorId = computed(
   () => new Map(politicas.value.map((politica) => [politica.id, politica])),
+);
+
+/** Texto claro para humanos (evita jerga “política de incorporación”). */
+function etiquetaComoSeUnen(
+  politica?: PoliticaIncorporacionUnidad | null,
+): string {
+  if (!politica) return "Sin definir";
+  switch (politica.modalidad) {
+    case "ASIGNACION_ADMIN":
+      return "Solo un administrador las agrega";
+    case "ABIERTA":
+      return "Cualquiera puede unirse";
+    case "CON_APROBACION":
+      return "Piden unirse y alguien aprueba";
+    case "AUTOMATICA":
+      return "Entran solas si cumplen reglas";
+    default:
+      return politica.nombre;
+  }
+}
+
+const politicasOpcionesFormulario = computed(() =>
+  politicas.value.map((politica) => ({
+    ...politica,
+    etiqueta: etiquetaComoSeUnen(politica),
+  })),
 );
 const especialidades = computed(() =>
   [...new Set(usuarios.value.map((usuario) => usuario.especialidad).filter(Boolean))]
@@ -975,7 +1058,12 @@ async function crearNivel() {
 
 function abrirModalTipo(desdeUnidad = false) {
   creandoTipoDesdeUnidad.value = desdeUnidad;
-  if (desdeUnidad) formularioUnidad.tipoUnidadId = "";
+  // No borrar el tipo previo: si cancela el modal, conserva el valor.
+  if (desdeUnidad && formularioUnidad.tipoUnidadId === OPCION_NUEVO_TIPO) {
+    formularioUnidad.tipoUnidadId = tipoHeredadoDelPadre(
+      padreIdDesdeFormulario(formularioUnidad.unidadPadreId),
+    );
+  }
   Object.assign(formularioTipo, {
     nombre: "",
     descripcion: "",
@@ -988,25 +1076,39 @@ function seleccionarTipoUnidad(valor: string) {
 }
 
 async function crearTipoUnidad() {
-  if (!formularioTipo.nombre.trim()) return;
-  const nombre = formularioTipo.nombre.trim();
-  const creado = await organizacionService.estructura.tiposUnidad.crear({
-    id: `tipo-${Date.now()}`,
-    nombreSingular: nombre,
-    nombrePlural: nombre,
-    descripcion: formularioTipo.descripcion.trim() || undefined,
-    color: "#0B3A78",
-    permiteSubunidades: true,
-    estado: "ACTIVO",
-  });
-  tiposUnidad.value.push(creado);
-  if (creandoTipoDesdeUnidad.value) {
-    formularioUnidad.tipoUnidadId = creado.id;
+  if (!formularioTipo.nombre.trim() || guardando.value) return;
+  guardando.value = true;
+  mensaje.value = "";
+  try {
+    const nombre = formularioTipo.nombre.trim();
+    const creado = await organizacionService.estructura.tiposUnidad.crear({
+      id: `tipo-${Date.now()}`,
+      nombreSingular: nombre,
+      nombrePlural: `${nombre}s`,
+      descripcion: formularioTipo.descripcion.trim() || undefined,
+      color: "#0B3A78",
+      permiteSubunidades: true,
+      estado: "ACTIVO",
+    });
+    if (!tiposUnidad.value.some((item) => item.id === creado.id)) {
+      tiposUnidad.value.push(creado);
+    }
+    if (creandoTipoDesdeUnidad.value) {
+      formularioUnidad.tipoUnidadId = creado.id;
+    }
+    modalTipo.value = false;
+    creandoTipoDesdeUnidad.value = false;
+    Object.assign(formularioTipo, { nombre: "", descripcion: "" });
+    mensaje.value =
+      "El nuevo tipo de nodo ya puede utilizarse en el organigrama.";
+  } catch (error) {
+    mensaje.value =
+      error instanceof Error
+        ? error.message
+        : "No se pudo crear el tipo de nodo.";
+  } finally {
+    guardando.value = false;
   }
-  modalTipo.value = false;
-  creandoTipoDesdeUnidad.value = false;
-  Object.assign(formularioTipo, { nombre: "", descripcion: "" });
-  mensaje.value = "El nuevo tipo de nodo ya puede utilizarse en el organigrama.";
 }
 
 async function crearPerfil() {
@@ -1155,28 +1257,12 @@ function etiquetaEstado(estado: VinculacionUnidad["estado"]) {
 
 <template>
   <section class="mx-auto grid max-w-375 gap-6">
-    <header class="flex flex-wrap items-end justify-between gap-4">
-      <div>
-        <TituloConAyuda
-          eyebrow="Gobierno institucional"
-          titulo="Organización y accesos"
-          ayuda="Define cómo se organiza la entidad, vincula personas y configura los perfiles bajo Dirección y Administración."
-        />
-      </div>
-      <div class="flex flex-wrap gap-2">
-        <Button
-          v-if="puedeGestionarEstructura"
-          variant="outline"
-          @click="abrirEstructura"
-        >
-          <Plus class="h-4 w-4" />
-          Nueva estructura
-        </Button>
-        <Button v-if="puedeGestionarEstructura" @click="abrirUnidad">
-          <Plus class="h-4 w-4" />
-          Nuevo nodo
-        </Button>
-      </div>
+    <header>
+      <TituloConAyuda
+        eyebrow="Gobierno institucional"
+        titulo="Organización y accesos"
+        ayuda="Define cómo se organiza la entidad, vincula personas y configura los perfiles bajo Dirección y Administración."
+      />
     </header>
 
     <p v-if="mensaje" class="border-l-4 border-l-emerald-600 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-700 dark:text-emerald-300">{{ mensaje }}</p>
@@ -1189,7 +1275,11 @@ function etiquetaEstado(estado: VinculacionUnidad["estado"]) {
         { nombre: 'Nodos configurados', valor: unidades.length, icono: GitBranch },
         { nombre: 'Personas vinculadas', valor: usuariosVinculados, icono: UsersRound },
         { nombre: 'Solicitudes pendientes', valor: solicitudesPendientes.length, icono: UserPlus },
-        { nombre: 'Perfiles institucionales', valor: perfiles.length, icono: ShieldCheck },
+        {
+          nombre: 'Perfiles institucionales',
+          valor: perfilesListos ? perfiles.length : '…',
+          icono: ShieldCheck,
+        },
       ]" :key="item.nombre" class="border-border border-t-4 border-t-primary bg-card">
         <CardContent class="flex items-center gap-4 p-5">
           <span class="grid h-11 w-11 place-items-center bg-primary/10 text-primary"><component :is="item.icono" class="h-5 w-5" /></span>
@@ -1258,17 +1348,27 @@ function etiquetaEstado(estado: VinculacionUnidad["estado"]) {
           </Button>
         </div>
       </div>
-      <OrganigramaOrganizacion
-        v-else-if="vistaEstructura === 'ORGANIGRAMA'"
-        :nombre-entidad="nombreEntidad"
-        :nombre-estructura="estructuraSeleccionada.nombre"
-        :logo-entidad="logoEntidad"
-        :nodos="nodosOrganigrama"
-        :niveles="nivelesEstructura"
-        @seleccionar="abrirEditarUnidad"
-        @agregar-subnivel="abrirCrearSubunidad"
-        @agregar-mismo-nivel="abrirCrearMismoNivel"
-      />
+      <Suspense v-else-if="vistaEstructura === 'ORGANIGRAMA'">
+        <OrganigramaOrganizacion
+          :nombre-entidad="nombreEntidad"
+          :nombre-estructura="estructuraSeleccionada.nombre"
+          :logo-entidad="logoEntidad"
+          :nodos="nodosOrganigrama"
+          :niveles="nivelesEstructura"
+          @seleccionar="abrirEditarUnidad"
+          @agregar-subnivel="abrirCrearSubunidad"
+          @agregar-mismo-nivel="abrirCrearMismoNivel"
+        />
+        <template #fallback>
+          <div
+            class="grid place-items-center gap-3 p-16 text-sm text-muted-foreground"
+            aria-busy="true"
+          >
+            <Skeleton class="h-48 w-full max-w-3xl" />
+            Cargando organigrama…
+          </div>
+        </template>
+      </Suspense>
       <TreeTable
         v-else
         v-model:expanded-keys="nodosTablaExpandidos"
@@ -1310,9 +1410,13 @@ function etiquetaEstado(estado: VinculacionUnidad["estado"]) {
             {{ nombreUsuario(node.data.responsableUsuarioId) }}
           </template>
         </Column>
-        <Column header="Incorporación" style="min-width: 14rem">
+        <Column header="Cómo se unen" style="min-width: 16rem">
           <template #body="{ node }">
-            {{ politicasPorId.get(node.data.politicaIncorporacionId)?.nombre || "Sin política" }}
+            {{
+              etiquetaComoSeUnen(
+                politicasPorId.get(node.data.politicaIncorporacionId),
+              )
+            }}
           </template>
         </Column>
         <Column header="Miembros" style="min-width: 11rem">
@@ -1333,6 +1437,14 @@ function etiquetaEstado(estado: VinculacionUnidad["estado"]) {
         </Column>
       </TreeTable>
     </section>
+
+    <div
+      v-if="cargandoSeccion"
+      class="border border-border bg-card p-4 text-sm text-muted-foreground"
+      aria-busy="true"
+    >
+      Cargando sección…
+    </div>
 
     <section v-else-if="seccion === 'perfiles'" class="grid gap-5">
       <div class="flex flex-wrap items-center justify-between gap-3">
@@ -1529,8 +1641,19 @@ function etiquetaEstado(estado: VinculacionUnidad["estado"]) {
           </div>
         </label>
         <label class="sm:col-span-2">
-          <span class="filtro-label">Política de incorporación</span>
-          <Select v-model="formularioUnidad.politicaIncorporacionId" :options="politicas" option-label="nombre" option-value="id" class="filtro-control w-full" />
+          <span class="filtro-label">Cómo se unen las personas a este nodo</span>
+          <Select
+            v-model="formularioUnidad.politicaIncorporacionId"
+            :options="politicasOpcionesFormulario"
+            option-label="etiqueta"
+            option-value="id"
+            class="filtro-control w-full"
+            placeholder="Elige quién puede pertenecer a este nodo"
+          />
+          <p class="mt-1 text-[11px] text-muted-foreground">
+            Define si solo un admin agrega miembros, si cualquiera puede
+            unirse, o si deben pedir aprobación.
+          </p>
         </label>
         <div class="sm:col-span-2 flex items-center justify-between gap-4 border border-border bg-muted/30 p-4">
           <div>
@@ -1732,8 +1855,11 @@ function etiquetaEstado(estado: VinculacionUnidad["estado"]) {
       </div>
       <template #footer>
         <Button variant="outline" @click="modalTipo = false">Cancelar</Button>
-        <Button :disabled="!formularioTipo.nombre.trim()" @click="crearTipoUnidad">
-          Crear tipo
+        <Button
+          :disabled="!formularioTipo.nombre.trim() || guardando"
+          @click="crearTipoUnidad"
+        >
+          {{ guardando ? "Guardando..." : "Crear tipo" }}
         </Button>
       </template>
     </Dialog>

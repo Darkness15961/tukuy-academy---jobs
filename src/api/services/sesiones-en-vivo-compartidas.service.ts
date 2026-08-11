@@ -24,7 +24,7 @@ import { enrichCourse } from "@/lib/presentacion-curso";
 import { cursoEstaMatriculado } from "@/lib/acceso-curso";
 import type { SesionEnVivoSecundaria } from "@/lib/contrato-secundaria";
 
-const VERSION = 3;
+const VERSION = 4;
 const EVENTO = "tukuy:sesiones-en-vivo";
 const ORG_ACADEMIA_TUKUY = "org-academia-tukuy";
 
@@ -92,7 +92,7 @@ function mapearSesionSecundariaAOrg(
     duracionMinutos: minutos,
     estado: docente.estado,
     proveedor: "GOOGLE_CALENDAR_MEET",
-    calendarEventId: `sec-${sesion.id}`,
+    calendarEventId: sesion.calendarEventId || `sec-${sesion.id}`,
     meetUrl: sesion.urlAcceso || "",
     invitados: [],
     inscritos: Number(sesion.inscritos ?? 0),
@@ -110,6 +110,7 @@ async function listarSesionesSecundaria(
 }
 
 function semillaPara(organizacionId: string) {
+  if (apiConfig.sinDatosDemo || apiConfig.secundariaCursos) return [];
   return sesionesEnVivoOrganizacion.filter(
     (sesion) => sesion.organizacionId === organizacionId,
   );
@@ -412,12 +413,27 @@ async function programar(input: ProgramarSesionEnVivoInput) {
       titulo: input.titulo.trim(),
       iniciaEn: inicio.toISOString(),
       terminaEn: fin.toISOString(),
-      urlAcceso: simularEventoCalendarMeet(input.titulo).meetUrl,
+      // El gateway crea Meet real (o simulado) y rellena url_acceso.
+      urlAcceso: null,
+      attendees: input.emailsInvitados,
     });
     const mapeada = mapearSesionSecundariaAOrg(
       creada.sesion,
       input.organizacionId,
     );
+    if (creada.googleMeet) {
+      mapeada.meetSimulado = creada.googleMeet.simulado;
+      mapeada.meetAviso = creada.googleMeet.simulado
+        ? creada.googleMeet.motivo ||
+          "Google Calendar no configurado o falló; Meet simulado."
+        : undefined;
+      if (creada.googleMeet.meetUrl) {
+        mapeada.meetUrl = creada.googleMeet.meetUrl;
+      }
+      if (creada.googleMeet.calendarEventId) {
+        mapeada.calendarEventId = creada.googleMeet.calendarEventId;
+      }
+    }
     emitirCambio(input.organizacionId);
     return mapeada;
   }
@@ -702,18 +718,14 @@ async function listarParaContexto(
  */
 async function listarCursosParaCalendario(contexto: ContextoSesion) {
   if (apiConfig.secundariaCursos) {
+    // En secundaria permitimos sesiones en vivo sobre cualquier curso
+    // (aunque sea VIRTUAL): la modalidad del catálogo no bloquea Meet.
     const listado = await secundariaGatewayService.listarCursos();
-    return listado.cursos
-      .filter((curso) =>
-        cursoAdmiteSesionesEnVivo(
-          mapearModalidadCalendario(curso.modalidad),
-        ),
-      )
-      .map((curso) => ({
-        id: curso.id,
-        titulo: curso.titulo,
-        modalidadImparticion: mapearModalidadCalendario(curso.modalidad),
-      }));
+    return listado.cursos.map((curso) => ({
+      id: curso.id,
+      titulo: curso.titulo,
+      modalidadImparticion: mapearModalidadCalendario(curso.modalidad),
+    }));
   }
 
   const independiente =

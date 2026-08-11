@@ -76,6 +76,7 @@ watch(
     await portal.matricularTrasCompra(ids);
     await entidadesComunidadService.sincronizarMatriculaTrasPago(ids);
     matriculaAplicada.value = true;
+    clearCart();
   },
 );
 
@@ -253,7 +254,7 @@ function irACursos() {
               :error="pasarela.error.value"
               :procesando="pasarela.procesando.value"
               :puede-iniciar="puedePagar"
-              texto-botón="Pagar carrito con Izipay"
+              texto-boton="Pagar carrito con Izipay"
               :esta-habilitado="pasarela.estaHabilitado"
               @iniciar="pagarConIzipay"
               @simular="pasarela.simularAprobacion"
@@ -301,7 +302,7 @@ function irACursos() {
               </strong>
             </div>
             <p class="mt-2 text-right text-xs text-[#64748B]">
-              Importe final validado por el servidor
+              Importe final autorizado por el servidor (precio del catálogo)
             </p>
 
             <div class="mt-6 grid gap-3">

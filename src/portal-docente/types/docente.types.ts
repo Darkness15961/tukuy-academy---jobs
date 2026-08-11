@@ -145,6 +145,15 @@ export interface CertificadoEmitidoDocente {
   modulosCompletados?: number;
   versionPrograma?: string;
   organizacionEmisora?: string;
+  /** Código público TA-YYYY-… (si falta, id puede ser el código). */
+  codigoVerificacion?: string;
+  /** UUID del certificado en secundaria (para firmar/revocar/PDF). */
+  certificadoId?: string;
+  documentoId?: string;
+  claveAlmacenamiento?: string;
+  revocadoEn?: string;
+  /** true = emitido pero aún no publicado en índice (falta firma org). */
+  requiereFirmaInstitucional?: boolean;
 }
 
 export interface CertificadoPendienteDocente {

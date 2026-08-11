@@ -1,6 +1,10 @@
 import { supabasePrincipal } from "@/lib/supabase";
 
-export type KindMediaAcademia = "portada" | "material" | "entrega";
+export type KindMediaAcademia =
+  | "portada"
+  | "material"
+  | "entrega"
+  | "certificado";
 
 export type ResultadoSubidaMedia = {
   objectKey: string;
@@ -125,8 +129,24 @@ export const storageAcademia = {
   subirEntrega(archivo: File) {
     return subirConPresign("entrega", archivo);
   },
+  subirCertificado(archivo: File) {
+    return subirConPresign("certificado", archivo);
+  },
 
   async urlDescargaEntrega(objectKey: string) {
+    const key = objectKey.replace(/^s3:\/\//, "");
+    const { data, error } = await supabasePrincipal().functions.invoke(
+      "media-presign",
+      { body: { action: "presign-download", objectKey: key } },
+    );
+    if (error) throw new Error(error.message);
+    if (!data?.ok || !data.downloadUrl) {
+      throw new Error(data?.error || "No se pudo firmar la descarga.");
+    }
+    return String(data.downloadUrl);
+  },
+
+  async urlDescargaCertificado(objectKey: string) {
     const key = objectKey.replace(/^s3:\/\//, "");
     const { data, error } = await supabasePrincipal().functions.invoke(
       "media-presign",

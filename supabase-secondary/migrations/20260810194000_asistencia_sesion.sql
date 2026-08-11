@@ -206,8 +206,8 @@ end;
 $$;
 
 -- ---------------------------------------------------------------------------
--- Marcar asistencia masiva
--- p_items: [{ "estudianteId": uuid, "estado": "PRESENTE"|"AUSENTE"|"TARDANZA" }]
+-- Marcar asistencia masiva (siempre rellena matricula_ref)
+-- p_items: [{ "estudianteId": uuid, "matriculaId"?: uuid, "estado": "PRESENTE"|"AUSENTE"|"TARDANZA" }]
 -- ---------------------------------------------------------------------------
 
 create or replace function public.servicio_marcar_asistencia_sesion(
@@ -218,16 +218,17 @@ create or replace function public.servicio_marcar_asistencia_sesion(
 returns jsonb
 language plpgsql
 security definer
-set search_path = ''
+set search_path = public, pg_temp
 as $$
 declare
   v_sesion public.sesion_en_vivo;
   v_item jsonb;
   v_estudiante uuid;
+  v_matricula_id uuid;
   v_estado text;
   v_count integer := 0;
   v_col_est text := public._servicio_columna_estudiante_matricula();
-  v_existe boolean;
+  v_actualizado integer;
 begin
   if p_sesion_id is null then
     raise exception 'Sesion requerida';
@@ -246,29 +247,55 @@ begin
 
   for v_item in select value from jsonb_array_elements(p_items)
   loop
+    v_matricula_id := null;
+    v_estudiante := null;
+
+    begin
+      v_matricula_id := nullif(trim(coalesce(v_item->>'matriculaId', '')), '')::uuid;
+    exception
+      when others then
+        v_matricula_id := null;
+    end;
+
     begin
       v_estudiante := nullif(trim(coalesce(v_item->>'estudianteId', '')), '')::uuid;
     exception
       when others then
-        continue;
+        v_estudiante := null;
     end;
-    if v_estudiante is null then
-      continue;
-    end if;
 
-    execute format(
-      'select exists(
-         select 1
+    if v_matricula_id is null and v_estudiante is not null then
+      execute format(
+        'select m.id
          from public.matricula_curso m
          where m.edicion_curso_id = $1
            and m.%I = $2
-       )',
-      v_col_est
-    )
-    into v_existe
-    using v_sesion.edicion_curso_id, v_estudiante;
+         limit 1',
+        v_col_est
+      )
+      into v_matricula_id
+      using v_sesion.edicion_curso_id, v_estudiante;
+    end if;
 
-    if not coalesce(v_existe, false) then
+    if v_matricula_id is null then
+      continue;
+    end if;
+
+    if v_estudiante is null then
+      execute format(
+        'select m.%I from public.matricula_curso m where m.id = $1',
+        v_col_est
+      )
+      into v_estudiante
+      using v_matricula_id;
+    end if;
+
+    if not exists (
+      select 1
+      from public.matricula_curso m
+      where m.id = v_matricula_id
+        and m.edicion_curso_id = v_sesion.edicion_curso_id
+    ) then
       continue;
     end if;
 
@@ -277,35 +304,55 @@ begin
       v_estado := 'AUSENTE';
     end if;
 
-    insert into public.asistencia_sesion (
-      id,
-      sesion_en_vivo_id,
-      estudiante_identidad_ref,
-      estado,
-      marcado_en,
-      marcado_por,
-      creado_en,
-      actualizado_en
-    ) values (
-      gen_random_uuid(),
-      p_sesion_id,
-      v_estudiante,
-      v_estado,
-      now(),
-      p_marcador_identidad_ref,
-      now(),
-      now()
-    )
-    on conflict (sesion_en_vivo_id, estudiante_identidad_ref)
-      where (estudiante_identidad_ref is not null)
-    do update set
-      estado = excluded.estado,
+    update public.asistencia_sesion
+    set
+      estado = v_estado,
+      matricula_ref = v_matricula_id,
+      estudiante_identidad_ref = coalesce(estudiante_identidad_ref, v_estudiante),
       marcado_en = now(),
-      marcado_por = excluded.marcado_por,
-      actualizado_en = now();
+      marcado_por = p_marcador_identidad_ref,
+      actualizado_en = now()
+    where sesion_en_vivo_id = p_sesion_id
+      and (
+        matricula_ref = v_matricula_id
+        or (v_estudiante is not null and estudiante_identidad_ref = v_estudiante)
+      );
+
+    get diagnostics v_actualizado = row_count;
+
+    if v_actualizado = 0 then
+      insert into public.asistencia_sesion (
+        id,
+        sesion_en_vivo_id,
+        matricula_ref,
+        estudiante_identidad_ref,
+        estado,
+        marcado_en,
+        marcado_por,
+        creado_en,
+        actualizado_en
+      ) values (
+        gen_random_uuid(),
+        p_sesion_id,
+        v_matricula_id,
+        v_estudiante,
+        v_estado,
+        now(),
+        p_marcador_identidad_ref,
+        now(),
+        now()
+      );
+    end if;
 
     v_count := v_count + 1;
   end loop;
+
+  if v_count = 0 then
+    return jsonb_build_object(
+      'ok', false,
+      'error', 'Ningun alumno valido para marcar (revisa matriculaId/estudianteId)'
+    );
+  end if;
 
   return public.servicio_listar_asistencia_sesion(p_sesion_id)
     || jsonb_build_object('marcados', v_count);

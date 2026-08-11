@@ -7,6 +7,7 @@ import {
   organizacionService,
   type PropuestaCursoOrganizacion,
 } from "@/api/services/organizacion.service";
+import { apiConfig } from "@/api/config";
 import { Button } from "@/components/ui/button";
 import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -56,11 +57,83 @@ onMounted(async () => {
         "Primero debes confirmar la revisión de contenido antes de definir precio y acceso.";
       return;
     }
-    revision.value = obtenerRevisionCursoMock(
-      propuesta.value.id,
-      propuesta.value.cursoDocenteId,
-      propuesta.value.titulo,
-    );
+
+    if (!apiConfig.secundariaCursos) {
+      revision.value = obtenerRevisionCursoMock(
+        propuesta.value.id,
+        propuesta.value.cursoDocenteId,
+        propuesta.value.titulo,
+      );
+    } else {
+      try {
+        const { secundariaGatewayService } = await import(
+          "@/api/services/secundaria-gateway.service"
+        );
+        const detalle = await secundariaGatewayService.obtenerBorrador(
+          propuesta.value.cursoDocenteId,
+        );
+        const borrador = (detalle.borrador ?? {}) as Record<string, unknown>;
+        const curso = (detalle.curso ?? {}) as Record<string, unknown>;
+        const secciones = Array.isArray(borrador.secciones)
+          ? (borrador.secciones as Array<Record<string, unknown>>)
+          : [];
+        const objetivos = Array.isArray(borrador.objetivos)
+          ? borrador.objetivos.map(String)
+          : [];
+        const requisitos = Array.isArray(borrador.requisitos)
+          ? borrador.requisitos.map(String)
+          : [];
+        revision.value = {
+          cursoId: propuesta.value.cursoDocenteId,
+          version: Number(curso.totalVersiones ?? 1),
+          descripcion: String(
+            borrador.descripcion ?? curso.resumen ?? propuesta.value.titulo,
+          ),
+          objetivos: objetivos.length
+            ? objetivos
+            : [`Revisar el contenido de ${propuesta.value.titulo}.`],
+          requisitos: requisitos.length
+            ? requisitos
+            : ["Acceso a la plataforma Tukuy"],
+          modulos: secciones.map((seccion, indice) => {
+            const clases = Array.isArray(seccion.clases)
+              ? seccion.clases.map(String)
+              : [];
+            const items = Array.isArray(seccion.items)
+              ? (seccion.items as Array<Record<string, unknown>>)
+              : [];
+            return {
+              id: String(
+                seccion.id ?? `${propuesta.value!.cursoDocenteId}-m${indice}`,
+              ),
+              titulo: String(seccion.titulo ?? `Módulo ${indice + 1}`),
+              descripcion: String(seccion.descripcion ?? ""),
+              clases: clases.length
+                ? clases
+                : items.map((item) => String(item.titulo ?? "Actividad")),
+              recursos: [],
+              actividades: items.map((item) =>
+                String(item.titulo ?? "Actividad"),
+              ),
+            };
+          }),
+          horasCertificables: Number(
+            (curso.versionActual as { horas?: number } | undefined)?.horas ??
+              propuesta.value.horas ??
+              0,
+          ),
+          notaMinimaPropuesta: Number(borrador.notaMinima ?? 11),
+          certificadoPropuesto: Boolean(borrador.certificado ?? true),
+          enviadaEn: propuesta.value.actualizadoEn ?? new Date().toISOString(),
+        };
+      } catch {
+        revision.value = obtenerRevisionCursoMock(
+          propuesta.value.id,
+          propuesta.value.cursoDocenteId,
+          propuesta.value.titulo,
+        );
+      }
+    }
     nodos.value = unidades
       .filter((nodo) => nodo.estado === "ACTIVA")
       .map((nodo) => ({
@@ -127,6 +200,7 @@ async function confirmar(
     try {
       await organizacionService.asignaciones.crear({
         id: `asig-${Date.now()}`,
+        cursoId: propuesta.value.cursoDocenteId,
         curso: propuesta.value.titulo,
         destino: destinoLabel,
         asignados,

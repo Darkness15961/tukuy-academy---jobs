@@ -17,10 +17,11 @@ import { RouterLink } from "vue-router";
 
 import { organizacionService } from "@/api/services/organizacion.service";
 import { sesionesEnVivoCompartidas } from "@/api/services/sesiones-en-vivo-compartidas.service";
+import AsistenciaSesionPanel from "@/components/shared/AsistenciaSesionPanel.vue";
+import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import { useContextoSesion } from "@/composables/useContextoSesion";
 import type {
   SesionEnVivoOrganizacion,
@@ -240,10 +241,20 @@ async function programar() {
     !formulario.fechaHora ||
     !formulario.docenteEmail.includes("@")
   ) {
+    aviso.value =
+      "Completa título, curso, fecha/hora y correo del docente.";
+    return;
+  }
+  if (!cursos.value.length) {
+    aviso.value =
+      "No hay cursos en la academia. Crea o publica un curso antes de programar.";
     return;
   }
   const curso = cursos.value.find((c) => c.id === formulario.cursoId);
-  if (!curso) return;
+  if (!curso) {
+    aviso.value = "Selecciona un curso válido.";
+    return;
+  }
 
   procesando.value = true;
   try {
@@ -269,8 +280,18 @@ async function programar() {
     diaSeleccionado.value = claveDia(new Date(creada.fechaHoraInicio));
     modalProgramar.value = false;
     sesionDetalle.value = creada;
+    if (creada.meetSimulado) {
+      aviso.value =
+        `Sesión guardada, pero Meet sigue SIMULADO: ${creada.meetAviso ?? "revisa secrets GOOGLE_CALENDAR_* y redeploy."}`;
+    } else {
+      aviso.value =
+        "Sesión guardada con Meet real de Google Calendar.";
+    }
+  } catch (err) {
     aviso.value =
-      "Evento compartido creado: visible para admin, docente del curso y alumnos matriculados (Meet + invitaciones).";
+      err instanceof Error
+        ? err.message
+        : "No se pudo guardar la sesión. Revisa la consola / gateway.";
   } finally {
     procesando.value = false;
   }
@@ -334,7 +355,15 @@ function reemplazar(sesion: SesionEnVivoOrganizacion) {
 
     <p
       v-if="aviso"
-      class="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-800 dark:text-emerald-200"
+      class="rounded-md border px-4 py-3 text-sm"
+      :class="
+        aviso.toLowerCase().includes('no se pudo') ||
+        aviso.toLowerCase().includes('completa') ||
+        aviso.toLowerCase().includes('no hay') ||
+        aviso.toLowerCase().includes('simulado')
+          ? 'border-red-500/30 bg-red-500/10 text-red-800 dark:text-red-200'
+          : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200'
+      "
     >
       {{ aviso }}
     </p>
@@ -519,13 +548,8 @@ function reemplazar(sesion: SesionEnVivoOrganizacion) {
         <CardContent class="p-6">
           <h2 class="text-xl font-black">Programar sesión en vivo</h2>
           <p class="mt-1 text-sm text-muted-foreground">
-            Simula
-            <code class="text-xs">calendar.events.insert</code>
-            con
-            <code class="text-xs">conferenceData</code>
-            (Meet) y
-            <code class="text-xs">attendees</code>
-            por correo.
+            La sesión se guarda en la academia. El enlace Meet es simulado por
+            ahora (Google Calendar OAuth pendiente).
           </p>
 
           <div class="mt-5 grid gap-3">
@@ -538,6 +562,9 @@ function reemplazar(sesion: SesionEnVivoOrganizacion) {
               v-model="formulario.cursoId"
               class="h-11 rounded-md border border-border bg-background px-3"
             >
+              <option v-if="!cursos.length" value="" disabled>
+                Sin cursos disponibles
+              </option>
               <option
                 v-for="curso in cursos"
                 :key="curso.id"
@@ -687,9 +714,11 @@ function reemplazar(sesion: SesionEnVivoOrganizacion) {
               v-if="!sesionDetalle.invitados.length"
               class="mt-2 text-sm text-muted-foreground"
             >
-              Sin invitados registrados en el evento.
+              Sin invitados por correo (usa la lista de asistencia abajo).
             </p>
           </div>
+
+          <AsistenciaSesionPanel :sesion-id="sesionDetalle.id" />
 
           <div class="mt-6 flex flex-wrap justify-end gap-2">
             <Button

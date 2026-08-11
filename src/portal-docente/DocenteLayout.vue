@@ -29,8 +29,9 @@ import {
   DropdownMenuTrigger,
 } from "reka-ui";
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { RouterView, useRoute, useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 
+import LazyRouteOutlet from "@/components/shared/LazyRouteOutlet.vue";
 import SelectorTema from "@/components/shared/SelectorTema.vue";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -71,7 +72,8 @@ const inicialesUsuario = computed(() => currentUser.value?.initials ?? "DT");
 
 async function cargarIndicadores() {
   if (apiConfig.secundariaCursos) {
-    await secundariaGatewayService.bootstrapDocente();
+    // Prefetch no bloqueante; listarEntregas reutiliza SWR del bootstrap.
+    secundariaGatewayService.prefetchDocente();
   }
   const [evaluaciones, avisos] = await Promise.all([
     academicoService.listarEntregasDocente(),
@@ -94,7 +96,10 @@ onMounted(() => {
       // Si falla la sync, conserva la sesión local.
     }
     await restaurarUsuario();
-    await cargarIndicadores();
+    if (apiConfig.secundariaCursos) {
+      secundariaGatewayService.prefetchDocente();
+    }
+    void cargarIndicadores();
   })();
   window.addEventListener("tukuy:docente-datos", alCambiarDatos);
   window.addEventListener("tukuy:academico-datos", alCambiarDatos);
@@ -498,7 +503,7 @@ async function abrirAviso(aviso: NotificacionDocente) {
         </DropdownMenuRoot>
       </header>
 
-      <main class="p-4 sm:p-7 xl:p-8"><RouterView /></main>
+      <main class="p-4 sm:p-7 xl:p-8"><LazyRouteOutlet /></main>
     </div>
   </div>
 </template>

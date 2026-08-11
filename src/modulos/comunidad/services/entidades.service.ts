@@ -3,8 +3,14 @@ import { apiConfig } from "@/api/config";
 import { API } from "@/api/endpoints";
 import { resolveMock } from "@/api/mock";
 import { organizacionService } from "@/api/services/organizacion.service";
-import { USUARIO_SESION_KEY } from "@/lib/constants";
+import {
+  esErrorRpcPresenciaAusente,
+  organizacionPrincipalService,
+  presenciaBdDisponible,
+} from "@/api/services/organizacion-principal.service";
+import { CONTEXTO_SESION_KEY, USUARIO_SESION_KEY } from "@/lib/constants";
 import type { UserProfile } from "@/types/academia";
+import type { ContextoSesion } from "@/types/membresia.types";
 import {
   categoriasCursosEntidadesMock,
   cursosPerfilesEntidadesMock,
@@ -34,6 +40,82 @@ type MapaVisibilidadCursos = Record<
   Record<string, { visibleEnPerfil: boolean }>
 >;
 
+/** Overlay de presencia: no pisa con cadenas vacías lo que ya venía de base/identidad. */
+function fusionarOverlayPerfil(
+  base: EntidadPublicaComunidad,
+  overlay?: Partial<EntidadPublicaComunidad> | null,
+): EntidadPublicaComunidad {
+  if (!overlay) return base;
+  const fusionado: EntidadPublicaComunidad = { ...base };
+  (Object.keys(overlay) as Array<keyof EntidadPublicaComunidad>).forEach(
+    (clave) => {
+      const valor = overlay[clave];
+      if (valor === undefined || valor === null) return;
+      if (typeof valor === "string" && !valor.trim()) return;
+      if (Array.isArray(valor) && valor.length === 0) return;
+      (fusionado as Record<string, unknown>)[clave as string] = valor;
+    },
+  );
+  return fusionado;
+}
+
+function contextoSesionLocal(): ContextoSesion | null {
+  try {
+    const raw = localStorage.getItem(CONTEXTO_SESION_KEY);
+    return raw ? (JSON.parse(raw) as ContextoSesion) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Ficha mínima cuando la org real aún no está en el directorio mock de Comunidad. */
+function entidadBaseDesdeOrganizacion(
+  id: string,
+): EntidadPublicaComunidad {
+  const contexto = contextoSesionLocal();
+  const nombreContexto =
+    contexto?.organizacionId === id
+      ? contexto.organizacionNombre?.trim()
+      : "";
+  let logoGuardado = "";
+  try {
+    const raw = localStorage.getItem(`tukuy_identidad_entidad_${id}`);
+    const identidad = raw
+      ? (JSON.parse(raw) as { nombre?: string; logo?: string })
+      : null;
+    logoGuardado = identidad?.logo?.trim() ?? "";
+  } catch {
+    logoGuardado = "";
+  }
+  return {
+    id,
+    nombre: nombreContexto || "Organización",
+    slug: id.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 48) || "entidad",
+    tipo: "EMPRESA",
+    sector: "",
+    ciudad: "",
+    region: "",
+    descripcionCorta: "",
+    descripcion: "",
+    logo: logoGuardado,
+    portada: "",
+    verificada: false,
+    miembros: 0,
+    publicaciones: 0,
+    cursosActivos: 0,
+    vacantesAbiertas: 0,
+    correoContacto: "",
+    etiquetas: [],
+    requiereDniEnrolamiento: true,
+  };
+}
+
+function entidadConPerfilPersonalizado(
+  entidad: EntidadPublicaComunidad,
+): EntidadPublicaComunidad {
+  return fusionarOverlayPerfil(entidad, leerPerfiles()[entidad.id]);
+}
+
 function leerPerfiles(): MapaPerfiles {
   try {
     const raw = localStorage.getItem(CLAVE_PERFILES_ENTIDAD);
@@ -58,18 +140,6 @@ function leerVisibilidadCursos(): MapaVisibilidadCursos {
 
 function guardarVisibilidadCursos(mapa: MapaVisibilidadCursos) {
   localStorage.setItem(CLAVE_CURSOS_VISIBILIDAD, JSON.stringify(mapa));
-}
-
-function entidadConPerfilPersonalizado(
-  entidad: EntidadPublicaComunidad,
-): EntidadPublicaComunidad {
-  const overlay = leerPerfiles()[entidad.id];
-  if (!overlay) return entidad;
-  return {
-    ...entidad,
-    ...overlay,
-    etiquetas: overlay.etiquetas ?? entidad.etiquetas,
-  };
 }
 
 function leerEstados(): MapaEstados {
@@ -187,8 +257,28 @@ function correoSolicitante(perfil: UserProfile | null) {
   return `${base || "solicitante"}@comunidad.tukuy`;
 }
 
+function usaPresenciaBd() {
+  return apiConfig.sinDatosDemo && presenciaBdDisponible();
+}
+
 export const entidadesComunidadService = {
   async listar(): Promise<EntidadPublicaComunidad[]> {
+    if (usaPresenciaBd()) {
+      try {
+        return await organizacionPrincipalService.listarPresenciasPublicas();
+      } catch (error) {
+        if (!esErrorRpcPresenciaAusente(error)) throw error;
+      }
+    }
+    if (apiConfig.sinDatosDemo) {
+      const contexto = contextoSesionLocal();
+      const id = contexto?.organizacionId;
+      if (!id) return resolveMock([]);
+      const propia = entidadConPerfilPersonalizado(
+        entidadBaseDesdeOrganizacion(id),
+      );
+      return resolveMock([propia]);
+    }
     if (apiConfig.useMock) {
       return resolveMock(
         structuredClone(
@@ -203,15 +293,22 @@ export const entidadesComunidadService = {
   },
 
   async obtenerPorId(id: string): Promise<EntidadPublicaComunidad | null> {
-    if (apiConfig.useMock) {
+    if (usaPresenciaBd()) {
+      try {
+        return await organizacionPrincipalService.obtenerPresencia(id);
+      } catch (error) {
+        if (!esErrorRpcPresenciaAusente(error)) throw error;
+      }
+    }
+    if (apiConfig.useMock || apiConfig.sinDatosDemo) {
       const entidad =
-        entidadesPublicasMock.find(
-          (item) => item.id === id || item.slug === id,
-        ) ?? null;
+        apiConfig.sinDatosDemo
+          ? entidadBaseDesdeOrganizacion(id)
+          : entidadesPublicasMock.find(
+              (item) => item.id === id || item.slug === id,
+            ) ?? entidadBaseDesdeOrganizacion(id);
       return resolveMock(
-        entidad
-          ? structuredClone(entidadConPerfilPersonalizado(entidad))
-          : null,
+        structuredClone(entidadConPerfilPersonalizado(entidad)),
       );
     }
     const { data } = await api.get<EntidadPublicaComunidad>(
@@ -240,14 +337,39 @@ export const entidadesComunidadService = {
       >
     >,
   ): Promise<EntidadPublicaComunidad> {
-    if (apiConfig.useMock) {
-      const base = entidadesPublicasMock.find((item) => item.id === entidadId);
-      if (!base) throw new Error("No se encontró la entidad.");
+    if (usaPresenciaBd()) {
+      try {
+        return await organizacionPrincipalService.guardarPresencia(
+          entidadId,
+          cambios,
+        );
+      } catch (error) {
+        if (!esErrorRpcPresenciaAusente(error)) throw error;
+      }
+    }
+    if (apiConfig.useMock || apiConfig.sinDatosDemo) {
+      const base =
+        apiConfig.sinDatosDemo
+          ? entidadBaseDesdeOrganizacion(entidadId)
+          : entidadesPublicasMock.find((item) => item.id === entidadId) ??
+            entidadBaseDesdeOrganizacion(entidadId);
       const mapa = leerPerfiles();
-      mapa[entidadId] = {
-        ...(mapa[entidadId] ?? {}),
-        ...cambios,
-      };
+      const previos = mapa[entidadId] ?? {};
+      const limpios: Partial<EntidadPublicaComunidad> = { ...previos };
+      (Object.keys(cambios) as Array<keyof typeof cambios>).forEach((clave) => {
+        const valor = cambios[clave];
+        if (valor === undefined) return;
+        if (typeof valor === "string" && !valor.trim()) {
+          delete limpios[clave];
+          return;
+        }
+        if (Array.isArray(valor) && valor.length === 0) {
+          delete limpios[clave];
+          return;
+        }
+        (limpios as Record<string, unknown>)[clave] = valor;
+      });
+      mapa[entidadId] = limpios;
       guardarPerfiles(mapa);
       return resolveMock(
         structuredClone(entidadConPerfilPersonalizado(base)),
@@ -295,6 +417,33 @@ export const entidadesComunidadService = {
   },
 
   async obtenerCategorias(entidadId: string): Promise<CategoriaCursoEntidad[]> {
+    if (
+      organizacionPrincipalService.activo() &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        entidadId,
+      )
+    ) {
+      try {
+        const categorias =
+          await organizacionPrincipalService.listarCategoriasCatalogo(
+            entidadId,
+          );
+        return categorias
+          .filter((item) => item.estado === "ACTIVA")
+          .sort((a, b) => a.orden - b.orden);
+      } catch (error) {
+        const mensaje =
+          error instanceof Error ? error.message : String(error);
+        if (
+          !/org_listar_categorias_catalogo|Could not find the function|PGRST202/i.test(
+            mensaje,
+          )
+        ) {
+          throw error;
+        }
+      }
+    }
+
     if (apiConfig.useMock) {
       let configuradas: CategoriaCursoEntidad[] = [];
       if (entidadId === "org-empresa-abc") {
@@ -320,6 +469,7 @@ export const entidadesComunidadService = {
   },
 
   async obtenerCursos(entidadId: string): Promise<CursoPerfilEntidad[]> {
+    if (apiConfig.sinDatosDemo) return resolveMock([]);
     if (apiConfig.useMock) {
       const visibilidad = leerVisibilidadCursos()[entidadId] ?? {};
       return resolveMock(
@@ -332,7 +482,6 @@ export const entidadesComunidadService = {
             .filter((item) => visibilidad[item.id]?.visibleEnPerfil !== false)
             .map((item) => ({
               ...item,
-              // Metadato local para el editor de presencia (no afecta consumidores tipados).
             })),
         ),
       );
@@ -347,6 +496,7 @@ export const entidadesComunidadService = {
   async obtenerCursosEditor(
     entidadId: string,
   ): Promise<Array<CursoPerfilEntidad & { visibleEnPerfil: boolean }>> {
+    if (apiConfig.sinDatosDemo) return resolveMock([]);
     if (apiConfig.useMock) {
       const visibilidad = leerVisibilidadCursos()[entidadId] ?? {};
       return resolveMock(

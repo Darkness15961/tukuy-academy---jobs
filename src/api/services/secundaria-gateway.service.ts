@@ -14,6 +14,7 @@ import type {
   ResultadoGuardarCursoSecundaria,
   ResultadoListarEntregasSecundaria,
   ResultadoListarEstudiantesSecundaria,
+  ResultadoListarAlumnosResumenSecundaria,
   ResultadoListarSesionesSecundaria,
   ResultadoMisCursosSecundaria,
   ResultadoPublicarCurso,
@@ -21,7 +22,17 @@ import type {
 } from "@/lib/contrato-secundaria";
 import type { BorradorCursoDocente } from "@/portal-docente/types/docente.types";
 
-const CACHE_TTL_MS = 45_000;
+/** Datos frescos: se sirven sin red. */
+const CACHE_FRESH_MS = 45_000;
+/** Tras fresh, se siguen sirviendo (SWR) hasta este tope mientras revalidan en fondo. */
+const CACHE_STALE_MS = 5 * 60_000;
+
+type FragmentoClave =
+  | "cursos"
+  | "misCursos"
+  | "entregas"
+  | "sesiones"
+  | "estudiantes";
 
 type FragmentosCache = {
   at: number;
@@ -45,6 +56,35 @@ const inflightAlumnoPorInstalacion = new Map<
   string,
   Promise<BootstrapAlumnoSecundaria>
 >();
+const revalidacionPorClave = new Map<string, Promise<unknown>>();
+
+/** Qué fragmentos invalidar por acción (evita vaciar todo el catálogo). */
+const FRAGMENTOS_POR_ACCION: Record<string, FragmentoClave[] | "*"> = {
+  "guardar-curso": ["cursos"],
+  "publicar-curso": ["cursos"],
+  "actualizar-estado-curso": ["cursos"],
+  "revisar-contenido": ["cursos"],
+  "observar-curso": ["cursos"],
+  "aprobar-curso": ["cursos"],
+  "matricular-curso": ["misCursos", "estudiantes", "cursos"],
+  "matricular-estudiante": ["misCursos", "estudiantes", "cursos"],
+  "confirmar-pago-orden": ["misCursos", "estudiantes", "cursos"],
+  "completar-actividad": ["misCursos", "entregas"],
+  "guardar-apuntes": ["misCursos"],
+  "crear-sesion": ["sesiones"],
+  "actualizar-sesion": ["sesiones"],
+  "eliminar-sesion": ["sesiones"],
+  "actualizar-estado-sesion": ["sesiones"],
+  "crear-orden-compra": [],
+  "marcar-asistencia-sesion": [],
+  "emitir-certificado": [],
+  "firmar-certificado": [],
+  "calificar-entrega": ["entregas"],
+  "enviar-entrega": ["entregas"],
+  "solicitar-correccion-entrega": ["entregas"],
+  "enviar-mensaje": [],
+  "marcar-conversacion-leida": [],
+};
 
 export function instalacionSecundariaActiva(): string {
   const { contextoActivo } = useContextoSesion();
@@ -52,29 +92,75 @@ export function instalacionSecundariaActiva(): string {
   return UUID_RE.test(id) ? id : INSTALACION_TUKUY_ACADEMY_ID;
 }
 
-function cacheVivo(): FragmentosCache | null {
+function obtenerCache(): FragmentosCache | null {
   const clave = instalacionSecundariaActiva();
   const cache = cachePorInstalacion.get(clave) ?? null;
   if (!cache) return null;
-  if (Date.now() - cache.at > CACHE_TTL_MS) {
+  if (Date.now() - cache.at > CACHE_STALE_MS) {
     cachePorInstalacion.delete(clave);
     return null;
   }
   return cache;
 }
 
+function cacheEsFresco(cache: FragmentosCache | null): boolean {
+  return !!cache && Date.now() - cache.at <= CACHE_FRESH_MS;
+}
+
 function fusionarCache(parcial: Omit<FragmentosCache, "at">) {
-  cachePorInstalacion.set(instalacionSecundariaActiva(), {
-    ...(cacheVivo() ?? { at: 0 }),
+  const clave = instalacionSecundariaActiva();
+  const previo = cachePorInstalacion.get(clave);
+  const base =
+    previo && Date.now() - previo.at <= CACHE_STALE_MS
+      ? previo
+      : ({ at: 0 } as FragmentosCache);
+  cachePorInstalacion.set(clave, {
+    ...base,
     ...parcial,
     at: Date.now(),
   });
 }
 
+function invalidarFragmentos(...fragmentos: FragmentoClave[]) {
+  const clave = instalacionSecundariaActiva();
+  const cache = cachePorInstalacion.get(clave);
+  if (!cache) return;
+  const siguiente: FragmentosCache = { ...cache, at: cache.at };
+  for (const fragmento of fragmentos) {
+    delete siguiente[fragmento];
+  }
+  cachePorInstalacion.set(clave, siguiente);
+  if (fragmentos.includes("cursos") || fragmentos.includes("misCursos")) {
+    inflightAlumnoPorInstalacion.delete(clave);
+  }
+  if (
+    fragmentos.includes("cursos") ||
+    fragmentos.includes("entregas") ||
+    fragmentos.includes("sesiones") ||
+    fragmentos.includes("estudiantes")
+  ) {
+    inflightDocentePorInstalacion.delete(clave);
+  }
+}
+
 export function invalidarCacheSecundaria() {
-  cachePorInstalacion.clear();
-  inflightDocentePorInstalacion.clear();
-  inflightAlumnoPorInstalacion.clear();
+  const clave = instalacionSecundariaActiva();
+  cachePorInstalacion.delete(clave);
+  inflightDocentePorInstalacion.delete(clave);
+  inflightAlumnoPorInstalacion.delete(clave);
+  for (const k of [...revalidacionPorClave.keys()]) {
+    if (k.startsWith(`${clave}:`)) revalidacionPorClave.delete(k);
+  }
+}
+
+function invalidarPorMutacion(action: string) {
+  const mapa = FRAGMENTOS_POR_ACCION[action];
+  if (mapa === undefined || mapa === "*") {
+    invalidarCacheSecundaria();
+    return;
+  }
+  if (mapa.length === 0) return;
+  invalidarFragmentos(...mapa);
 }
 
 async function invocar<T>(action: string, extra: Record<string, unknown> = {}) {
@@ -105,8 +191,59 @@ async function invocarMutacion<T>(
   try {
     return await invocar<T>(action, extra);
   } finally {
-    invalidarCacheSecundaria();
+    invalidarPorMutacion(action);
   }
+}
+
+function claveRevalidacion(fragmento: string): string {
+  return `${instalacionSecundariaActiva()}:${fragmento}`;
+}
+
+/** Sirve cache (fresco o stale) y revalida en segundo plano si ya no es fresco. */
+async function conCacheSWR<T>(opciones: {
+  fragmento: FragmentoClave;
+  leer: () => T | undefined;
+  cargar: () => Promise<T>;
+  guardar: (data: T) => void;
+  forzar?: boolean;
+}): Promise<T> {
+  const existente = opciones.forzar ? undefined : opciones.leer();
+  const cache = obtenerCache();
+  const fresco = cacheEsFresco(cache);
+  const clave = claveRevalidacion(opciones.fragmento);
+
+  if (existente !== undefined) {
+    if (!fresco) {
+      if (!revalidacionPorClave.has(clave)) {
+        const promesa = opciones
+          .cargar()
+          .then((data) => {
+            opciones.guardar(data);
+            return data;
+          })
+          .finally(() => {
+            revalidacionPorClave.delete(clave);
+          });
+        revalidacionPorClave.set(clave, promesa);
+      }
+    }
+    return existente;
+  }
+
+  const enCurso = revalidacionPorClave.get(clave) as Promise<T> | undefined;
+  if (enCurso) return enCurso;
+
+  const promesa = opciones
+    .cargar()
+    .then((data) => {
+      opciones.guardar(data);
+      return data;
+    })
+    .finally(() => {
+      revalidacionPorClave.delete(clave);
+    });
+  revalidacionPorClave.set(clave, promesa);
+  return promesa;
 }
 
 export const secundariaGatewayService = {
@@ -121,83 +258,124 @@ export const secundariaGatewayService = {
 
   async bootstrapDocente(forzar = false): Promise<BootstrapDocenteSecundaria> {
     const instalacion = instalacionSecundariaActiva();
+    const dispararRed = () => {
+      const existente = inflightDocentePorInstalacion.get(instalacion);
+      if (existente) return existente;
+      const promesa = invocar<BootstrapDocenteSecundaria>("bootstrap-docente")
+        .then((data) => {
+          fusionarCache({
+            cursos: data.cursos,
+            entregas: data.entregas,
+            sesiones: data.sesiones,
+            estudiantes: data.estudiantes,
+          });
+          return data;
+        })
+        .finally(() => {
+          inflightDocentePorInstalacion.delete(instalacion);
+        });
+      inflightDocentePorInstalacion.set(instalacion, promesa);
+      return promesa;
+    };
+
     if (!forzar) {
-      const vivo = cacheVivo();
+      const cache = obtenerCache();
       if (
-        vivo?.cursos &&
-        vivo.entregas &&
-        vivo.sesiones &&
-        vivo.estudiantes
+        cache?.cursos &&
+        cache.entregas &&
+        cache.sesiones &&
+        cache.estudiantes
       ) {
+        if (!cacheEsFresco(cache)) void dispararRed();
         return {
           ok: true,
-          cursos: vivo.cursos,
-          entregas: vivo.entregas,
-          sesiones: vivo.sesiones,
-          estudiantes: vivo.estudiantes,
+          cursos: cache.cursos,
+          entregas: cache.entregas,
+          sesiones: cache.sesiones,
+          estudiantes: cache.estudiantes,
         };
       }
       const enCurso = inflightDocentePorInstalacion.get(instalacion);
       if (enCurso) return enCurso;
     }
 
-    const promesa = invocar<BootstrapDocenteSecundaria>("bootstrap-docente")
-      .then((data) => {
-        fusionarCache({
-          cursos: data.cursos,
-          entregas: data.entregas,
-          sesiones: data.sesiones,
-          estudiantes: data.estudiantes,
-        });
-        return data;
-      })
-      .finally(() => {
-        inflightDocentePorInstalacion.delete(instalacion);
-      });
-    inflightDocentePorInstalacion.set(instalacion, promesa);
-    return promesa;
+    return dispararRed();
   },
 
   async bootstrapAlumno(forzar = false): Promise<BootstrapAlumnoSecundaria> {
     const instalacion = instalacionSecundariaActiva();
+    const dispararRed = () => {
+      const existente = inflightAlumnoPorInstalacion.get(instalacion);
+      if (existente) return existente;
+      const promesa = invocar<BootstrapAlumnoSecundaria>("bootstrap-alumno")
+        .then((data) => {
+          fusionarCache({
+            cursos: data.cursos,
+            misCursos: data.misCursos,
+          });
+          return data;
+        })
+        .finally(() => {
+          inflightAlumnoPorInstalacion.delete(instalacion);
+        });
+      inflightAlumnoPorInstalacion.set(instalacion, promesa);
+      return promesa;
+    };
+
     if (!forzar) {
-      const vivo = cacheVivo();
-      if (vivo?.cursos && vivo.misCursos) {
+      const cache = obtenerCache();
+      if (cache?.cursos && cache.misCursos) {
+        if (!cacheEsFresco(cache)) void dispararRed();
         return {
           ok: true,
-          cursos: vivo.cursos,
-          misCursos: vivo.misCursos,
+          cursos: cache.cursos,
+          misCursos: cache.misCursos,
         };
       }
       const enCurso = inflightAlumnoPorInstalacion.get(instalacion);
       if (enCurso) return enCurso;
     }
 
-    const promesa = invocar<BootstrapAlumnoSecundaria>("bootstrap-alumno")
-      .then((data) => {
-        fusionarCache({
-          cursos: data.cursos,
-          misCursos: data.misCursos,
-        });
-        return data;
-      })
-      .finally(() => {
-        inflightAlumnoPorInstalacion.delete(instalacion);
-      });
-    inflightAlumnoPorInstalacion.set(instalacion, promesa);
-    return promesa;
+    return dispararRed();
+  },
+
+  /** Prefetch en segundo plano (layouts); no bloquea la UI. */
+  prefetchAlumno(): void {
+    void this.bootstrapAlumno().catch(() => undefined);
+  },
+
+  prefetchDocente(): void {
+    void this.bootstrapDocente().catch(() => undefined);
+  },
+
+  prefetchOrganizacion(): void {
+    void Promise.all([
+      this.listarCursos().catch(() => undefined),
+      this.listarSesiones().catch(() => undefined),
+    ]);
   },
 
   async listarCursos(limite = 100): Promise<ListadoCursosSecundaria> {
-    const vivo = cacheVivo();
-    if (vivo?.cursos && limite <= 100) return vivo.cursos;
+    if (limite > 100) {
+      const data = await invocar<{
+        ok: true;
+        cursos: ListadoCursosSecundaria;
+      }>("list-cursos", { limite });
+      return data.cursos;
+    }
 
-    const data = await invocar<{
-      ok: true;
-      cursos: ListadoCursosSecundaria;
-    }>("list-cursos", { limite });
-    fusionarCache({ cursos: data.cursos });
-    return data.cursos;
+    return conCacheSWR({
+      fragmento: "cursos",
+      leer: () => obtenerCache()?.cursos,
+      cargar: async () => {
+        const data = await invocar<{
+          ok: true;
+          cursos: ListadoCursosSecundaria;
+        }>("list-cursos", { limite });
+        return data.cursos;
+      },
+      guardar: (cursos) => fusionarCache({ cursos }),
+    });
   },
 
   async obtenerCurso(cursoId: string): Promise<CursoSecundaria> {
@@ -257,6 +435,33 @@ export const secundariaGatewayService = {
       estudianteIdentidadRef: string;
       advertenciaSync: string | null;
     }>("matricular-estudiante", { cursoId, estudianteId });
+  },
+
+  /** Solicitud de matrícula (queda PENDIENTE hasta aprobación). */
+  async solicitarMatriculaEstudiante(cursoId: string, estudianteId: string) {
+    return invocarMutacion<{
+      ok: true;
+      matriculaId: string;
+      edicionId: string;
+      cursoId: string;
+      estudianteIdentidadRef: string;
+      estado: string;
+      yaExistia?: boolean;
+    }>("solicitar-matricula", { cursoId, estudianteId });
+  },
+
+  /** Activa una matrícula pendiente (aprobación institucional). */
+  async activarMatricula(matriculaId: string, estudianteId?: string) {
+    return invocarMutacion<{
+      ok: true;
+      matriculaId: string;
+      estado: string;
+      estudianteId: string;
+      cursoId: string | null;
+    }>("activar-matricula", {
+      matriculaId,
+      estudianteId: estudianteId ?? null,
+    });
   },
 
   async listarCursosRevision() {
@@ -384,7 +589,11 @@ export const secundariaGatewayService = {
 
   async marcarAsistenciaSesion(
     sesionId: string,
-    items: Array<{ estudianteId: string; estado: string }>,
+    items: Array<{
+      estudianteId: string;
+      estado: string;
+      matriculaId?: string;
+    }>,
   ) {
     return invocarMutacion<{
       ok: true;
@@ -394,6 +603,7 @@ export const secundariaGatewayService = {
       marcados?: number;
       asistencias: Array<{
         estudianteId: string;
+        matriculaId?: string;
         nombre: string;
         iniciales?: string;
         estado: string;
@@ -402,12 +612,12 @@ export const secundariaGatewayService = {
   },
 
   async listarMisCursos(): Promise<ResultadoMisCursosSecundaria> {
-    const vivo = cacheVivo();
-    if (vivo?.misCursos) return vivo.misCursos;
-
-    const data = await invocar<ResultadoMisCursosSecundaria>("mis-cursos");
-    fusionarCache({ misCursos: data });
-    return data;
+    return conCacheSWR({
+      fragmento: "misCursos",
+      leer: () => obtenerCache()?.misCursos,
+      cargar: () => invocar<ResultadoMisCursosSecundaria>("mis-cursos"),
+      guardar: (misCursos) => fusionarCache({ misCursos }),
+    });
   },
 
   async obtenerContenidoAprendizaje(
@@ -441,15 +651,21 @@ export const secundariaGatewayService = {
   },
 
   async listarSesiones(cursoId?: string): Promise<ResultadoListarSesionesSecundaria> {
-    const vivo = cacheVivo();
-    if (!cursoId && vivo?.sesiones) return vivo.sesiones;
+    if (cursoId) {
+      return invocar<ResultadoListarSesionesSecundaria>("list-sesiones", {
+        cursoId,
+      });
+    }
 
-    const data = await invocar<ResultadoListarSesionesSecundaria>(
-      "list-sesiones",
-      { cursoId: cursoId ?? null },
-    );
-    if (!cursoId) fusionarCache({ sesiones: data });
-    return data;
+    return conCacheSWR({
+      fragmento: "sesiones",
+      leer: () => obtenerCache()?.sesiones,
+      cargar: () =>
+        invocar<ResultadoListarSesionesSecundaria>("list-sesiones", {
+          cursoId: null,
+        }),
+      guardar: (sesiones) => fusionarCache({ sesiones }),
+    });
   },
 
   async crearSesion(entrada: {
@@ -458,11 +674,24 @@ export const secundariaGatewayService = {
     iniciaEn: string;
     terminaEn: string;
     urlAcceso?: string | null;
+    attendees?: string[];
   }): Promise<ResultadoCrearSesionSecundaria> {
     return invocarMutacion<ResultadoCrearSesionSecundaria>(
       "crear-sesion",
       entrada,
     );
+  },
+
+  async probeGoogleCalendar() {
+    return invocar<{
+      ok: boolean;
+      configurado: boolean;
+      simulado?: boolean;
+      meetUrl?: string;
+      calendarEventId?: string;
+      motivo?: string;
+      error?: string;
+    }>("probe-google-calendar");
   },
 
   async actualizarSesion(entrada: {
@@ -497,15 +726,35 @@ export const secundariaGatewayService = {
   async listarEstudiantes(
     cursoId?: string,
   ): Promise<ResultadoListarEstudiantesSecundaria> {
-    const vivo = cacheVivo();
-    if (!cursoId && vivo?.estudiantes) return vivo.estudiantes;
+    if (cursoId) {
+      return invocar<ResultadoListarEstudiantesSecundaria>("list-estudiantes", {
+        cursoId,
+      });
+    }
 
-    const data = await invocar<ResultadoListarEstudiantesSecundaria>(
-      "list-estudiantes",
-      { cursoId: cursoId ?? null },
-    );
-    if (!cursoId) fusionarCache({ estudiantes: data });
-    return data;
+    return conCacheSWR({
+      fragmento: "estudiantes",
+      leer: () => obtenerCache()?.estudiantes,
+      cargar: () =>
+        invocar<ResultadoListarEstudiantesSecundaria>("list-estudiantes", {
+          cursoId: null,
+        }),
+      guardar: (estudiantes) => fusionarCache({ estudiantes }),
+    });
+  },
+
+  async listarAlumnosResumen(entrada: {
+    busqueda?: string;
+    cursoId?: string | null;
+    limite?: number;
+    offset?: number;
+  } = {}) {
+    return invocar<ResultadoListarAlumnosResumenSecundaria>("list-alumnos-resumen", {
+      busqueda: entrada.busqueda ?? null,
+      cursoId: entrada.cursoId ?? null,
+      limite: entrada.limite ?? 50,
+      offset: entrada.offset ?? 0,
+    });
   },
 
   async actualizarEstadoCurso(
@@ -555,6 +804,43 @@ export const secundariaGatewayService = {
     }>("emitir-certificado", { matriculaId });
   },
 
+  async actualizarDocumentoCertificado(entrada: {
+    certificadoId: string;
+    claveAlmacenamiento: string;
+    tamanoBytes?: number;
+    huellaDocumento?: string;
+  }) {
+    return invocarMutacion<{
+      ok: true;
+      certificadoId: string;
+      documentoId?: string;
+      claveAlmacenamiento: string;
+    }>("actualizar-documento-certificado", {
+      certificadoId: entrada.certificadoId,
+      claveAlmacenamiento: entrada.claveAlmacenamiento,
+      tamanoBytes: entrada.tamanoBytes ?? null,
+      huellaDocumento: entrada.huellaDocumento ?? null,
+    });
+  },
+
+  async revocarCertificado(entrada: {
+    certificadoId: string;
+    motivo?: string;
+  }) {
+    return invocarMutacion<{
+      ok: true;
+      certificadoId: string;
+      codigoVerificacion?: string;
+      yaRevocado?: boolean;
+      revocadoEn?: string;
+      indicePublico?: unknown;
+      advertenciaIndice?: string | null;
+    }>("revocar-certificado", {
+      certificadoId: entrada.certificadoId,
+      motivo: entrada.motivo ?? null,
+    });
+  },
+
   async listarCertificadosPendientesFirma() {
     return invocar<{
       ok: true;
@@ -600,28 +886,40 @@ export const secundariaGatewayService = {
       !entrada.cursoId &&
       entrada.soloPropias !== true &&
       entrada.incluirArchivo !== true;
-    const vivo = cacheVivo();
-    if (sinFiltros && vivo?.entregas) return vivo.entregas;
 
-    const data = await invocar<{
-      ok: true;
-      total: number;
-      entregas: import("@/lib/contrato-secundaria").EntregaActividadSecundaria[];
-    }>("list-entregas", {
-      cursoId: entrada.cursoId ?? null,
-      soloPropias: entrada.soloPropias === true,
-      incluirArchivo: entrada.incluirArchivo === true,
-    });
-    if (sinFiltros) {
-      fusionarCache({
-        entregas: {
-          ok: true,
-          total: data.total,
-          entregas: data.entregas,
-        },
+    if (!sinFiltros) {
+      return invocar<{
+        ok: true;
+        total: number;
+        entregas: import("@/lib/contrato-secundaria").EntregaActividadSecundaria[];
+      }>("list-entregas", {
+        cursoId: entrada.cursoId ?? null,
+        soloPropias: entrada.soloPropias === true,
+        incluirArchivo: entrada.incluirArchivo === true,
       });
     }
-    return data;
+
+    return conCacheSWR({
+      fragmento: "entregas",
+      leer: () => obtenerCache()?.entregas,
+      cargar: async () => {
+        const data = await invocar<{
+          ok: true;
+          total: number;
+          entregas: import("@/lib/contrato-secundaria").EntregaActividadSecundaria[];
+        }>("list-entregas", {
+          cursoId: null,
+          soloPropias: false,
+          incluirArchivo: false,
+        });
+        return {
+          ok: true as const,
+          total: data.total,
+          entregas: data.entregas,
+        };
+      },
+      guardar: (entregas) => fusionarCache({ entregas }),
+    });
   },
 
   async obtenerEntrega(entregaId: string, incluirArchivo = true) {
