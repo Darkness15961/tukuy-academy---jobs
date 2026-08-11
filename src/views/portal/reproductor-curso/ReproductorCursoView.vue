@@ -16,9 +16,10 @@ import {
   MessageSquare,
   Play,
   RefreshCw,
+  Send,
   Star,
-  Trophy,
   Upload,
+  UserRound,
   X,
 } from "lucide-vue-next";
 import { computed, onMounted, ref, watch } from "vue";
@@ -37,6 +38,7 @@ import {
   cursoEstaMatriculado,
   cursoRequiereCompra,
 } from "@/lib/acceso-curso";
+import { urlEmbedYoutube } from "@/lib/youtube";
 import type { Course } from "@/types/academia";
 import type {
   ContenidoCursoAprendizaje,
@@ -88,6 +90,12 @@ const activeItem = computed<ItemAprendizaje>(() => {
   };
 });
 
+const embedYoutube = computed(() =>
+  activeItem.value.type === "video"
+    ? urlEmbedYoutube(activeItem.value.videoUrl)
+    : null,
+);
+
 const totalItemsCount = computed(() =>
   syllabusSections.value.reduce((sum, s) => sum + s.items.length, 0),
 );
@@ -126,12 +134,38 @@ const collapsedSections = ref<Record<string, boolean>>({});
 const activeTab = ref<"descripcion" | "preguntas" | "notas" | "resenas">(
   "descripcion",
 );
+
+type MensajeCursoAlumno = {
+  id: string;
+  contenido: string;
+  hora: string;
+  autor: "DOCENTE" | "ESTUDIANTE";
+};
+type DocenteCursoAlumno = {
+  id: string;
+  nombre: string;
+  cargo: string;
+  iniciales: string;
+};
+
+const docenteCurso = ref<DocenteCursoAlumno | null>(null);
+const conversacionId = ref("");
+const mensajesDocente = ref<MensajeCursoAlumno[]>([]);
+const textoMensajeDocente = ref("");
+const cargandoChat = ref(false);
+const enviandoMensaje = ref(false);
+const errorChat = ref("");
+
 const sidebarOpen = ref(false);
 const selectorPdf = ref<HTMLInputElement | null>(null);
 const archivoSeleccionado = ref<File>();
 const entregaActual = ref<EntregaActividadAcademica>();
 const enviandoEntrega = ref(false);
 const errorEntrega = ref("");
+const apuntes = ref("");
+const guardandoApuntes = ref(false);
+const mensajeApuntes = ref("");
+let timerApuntes: ReturnType<typeof setTimeout> | null = null;
 
 function sincronizarPortal(progreso: number, estado: Course["status"]) {
   const target = portal.courses.value.find((c) => c.id === courseId.value);
@@ -175,9 +209,10 @@ async function cargarCurso() {
       return;
     }
 
-    const [contenidoCurso, progreso] = await Promise.all([
+    const [contenidoCurso, progreso, textoApuntes] = await Promise.all([
       aprendizajeService.obtenerContenido(courseId.value),
       aprendizajeService.obtenerProgreso(courseId.value),
+      aprendizajeService.obtenerApuntes(courseId.value),
     ]);
 
     contenido.value = contenidoCurso;
@@ -187,6 +222,7 @@ async function cargarCurso() {
 
     completedItems.value = [...progreso.itemsCompletados];
     userGrades.value = { ...progreso.notas };
+    apuntes.value = textoApuntes;
     activeItemId.value =
       progreso.itemActivoId ||
       contenidoCurso.modulos[0]?.items[0]?.id ||
@@ -195,6 +231,7 @@ async function cargarCurso() {
     sincronizarPortal(progreso.progreso, progreso.estado);
     restaurarEstadoQuizActivo();
     await cargarEntregaActiva();
+    await cargarChatDocente();
   } catch (err) {
     errorCarga.value =
       err instanceof Error
@@ -219,6 +256,84 @@ function restaurarEstadoQuizActivo() {
     quizResult.value = null;
   }
 }
+
+async function persistirApuntes() {
+  if (guardandoApuntes.value) return;
+  guardandoApuntes.value = true;
+  mensajeApuntes.value = "";
+  try {
+    apuntes.value = await aprendizajeService.guardarApuntes(
+      courseId.value,
+      apuntes.value,
+    );
+    mensajeApuntes.value = "Apuntes guardados.";
+    window.setTimeout(() => {
+      if (mensajeApuntes.value === "Apuntes guardados.") {
+        mensajeApuntes.value = "";
+      }
+    }, 1800);
+  } catch (causa) {
+    mensajeApuntes.value =
+      causa instanceof Error
+        ? causa.message
+        : "No se pudieron guardar los apuntes.";
+  } finally {
+    guardandoApuntes.value = false;
+  }
+}
+
+function programarGuardadoApuntes() {
+  if (timerApuntes) clearTimeout(timerApuntes);
+  timerApuntes = setTimeout(() => {
+    void persistirApuntes();
+  }, 800);
+}
+
+async function cargarChatDocente() {
+  cargandoChat.value = true;
+  errorChat.value = "";
+  try {
+    const chat = await aprendizajeService.abrirChatConDocente(courseId.value);
+    docenteCurso.value = chat.docente;
+    conversacionId.value = chat.conversacionId;
+    mensajesDocente.value = chat.mensajes;
+  } catch (causa) {
+    errorChat.value =
+      causa instanceof Error
+        ? causa.message
+        : "No se pudo abrir el chat con el docente.";
+    docenteCurso.value = null;
+    conversacionId.value = "";
+    mensajesDocente.value = [];
+  } finally {
+    cargandoChat.value = false;
+  }
+}
+
+async function enviarMensajeAlDocente() {
+  const texto = textoMensajeDocente.value.trim();
+  if (!texto || !conversacionId.value || enviandoMensaje.value) return;
+  enviandoMensaje.value = true;
+  errorChat.value = "";
+  try {
+    const mensaje = await aprendizajeService.enviarMensajeAlDocente(
+      conversacionId.value,
+      texto,
+    );
+    mensajesDocente.value = [...mensajesDocente.value, mensaje];
+    textoMensajeDocente.value = "";
+  } catch (causa) {
+    errorChat.value =
+      causa instanceof Error ? causa.message : "No se pudo enviar el mensaje.";
+  } finally {
+    enviandoMensaje.value = false;
+  }
+}
+
+function irAMensajeDocente() {
+  activeTab.value = "preguntas";
+}
+
 
 async function toggleItem(itemId: string) {
   if (completedItems.value.includes(itemId)) {
@@ -442,6 +557,12 @@ watch(courseId, cargarCurso);
           <h1 class="min-w-0 truncate text-sm font-bold text-foreground">
             {{ course.title }}
           </h1>
+          <p
+            v-if="docenteCurso"
+            class="mt-0.5 truncate text-[11px] text-muted-foreground"
+          >
+            Docente: {{ docenteCurso.nombre }}
+          </p>
         </div>
       </div>
 
@@ -489,19 +610,41 @@ watch(courseId, cargarCurso);
         >
           <!-- Video Player State -->
           <template v-if="activeItem.type === 'video'">
+            <iframe
+              v-if="embedYoutube"
+              :key="activeItem.id"
+              class="absolute inset-0 h-full w-full"
+              :src="embedYoutube"
+              :title="activeItem.title"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+              allowfullscreen
+              referrerpolicy="strict-origin-when-cross-origin"
+            />
             <div
+              v-if="embedYoutube && !completedItems.includes(activeItem.id)"
+              class="absolute bottom-3 right-3 z-10"
+            >
+              <Button
+                size="sm"
+                class="bg-primary text-white hover:bg-primary/90 font-semibold shadow-lg"
+                @click="simulateQuickComplete"
+              >
+                Marcar como vista
+              </Button>
+            </div>
+            <div
+              v-else-if="!embedYoutube"
               class="absolute inset-0 flex flex-col items-center justify-center gap-4 text-center p-6"
             >
-              <button
-                type="button"
-                class="group grid h-16 w-16 place-items-center rounded-full bg-card/10 transition hover:bg-card/20 hover:scale-105"
+              <div
+                class="grid h-16 w-16 place-items-center rounded-full bg-card/10"
               >
                 <Play class="h-7 w-7 text-white fill-white" />
-              </button>
+              </div>
               <div class="space-y-1.5">
                 <span
                   class="text-xs font-bold text-blue-400 tracking-wider uppercase"
-                  >Reproduciendo clase en video</span
+                  >Video de YouTube</span
                 >
                 <h3
                   class="text-base font-bold text-white max-w-xl mx-auto truncate"
@@ -510,27 +653,16 @@ watch(courseId, cargarCurso);
                 </h3>
               </div>
               <p class="max-w-md text-xs text-slate-400">
-                Interactúa con las lecciones y cuestionarios para simular tu
-                avance del curso.
+                Esta clase aún no tiene un enlace de YouTube. El docente puede
+                anclarlo desde el constructor del curso.
               </p>
-
-              <div class="mt-4 flex flex-wrap gap-2">
-                <Button
-                  size="sm"
-                  class="bg-primary text-white hover:bg-primary/90 font-semibold"
-                  @click="simulateQuickComplete"
-                >
-                  <Trophy class="mr-1.5 h-3.5 w-3.5" /> Completar contenidos
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  class="border-white/20 bg-card/10 text-white hover:bg-card/25 hover:text-white"
-                  @click="simulateReset"
-                >
-                  <RefreshCw class="mr-1.5 h-3.5 w-3.5" /> Reiniciar avance
-                </Button>
-              </div>
+              <Button
+                size="sm"
+                class="mt-2 bg-primary text-white hover:bg-primary/90 font-semibold"
+                @click="simulateQuickComplete"
+              >
+                Marcar como vista
+              </Button>
             </div>
           </template>
 
@@ -924,7 +1056,7 @@ watch(courseId, cargarCurso);
               "
               @click="activeTab = 'preguntas'"
             >
-              Preguntas y respuestas
+              Mensaje al docente
             </button>
             <button
               type="button"
@@ -972,7 +1104,7 @@ watch(courseId, cargarCurso);
                   class="flex items-center gap-2 text-xs font-bold uppercase text-muted-foreground"
                 >
                   <ClipboardCheck class="h-4 w-4 text-primary" />
-                  Avance simulado
+                  Avance
                 </div>
                 <strong class="mt-2 block text-3xl font-black text-foreground"
                   >{{ completedItemsCount }}/{{ totalItemsCount }}</strong
@@ -1013,6 +1145,38 @@ watch(courseId, cargarCurso);
                   {{ gradeStatus }}
                 </strong>
               </div>
+            </div>
+
+            <!-- Docente del curso -->
+            <div
+              class="mt-8 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-border bg-muted/40 p-4"
+            >
+              <div class="flex min-w-0 items-center gap-3">
+                <span
+                  class="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-primary text-sm font-black text-white"
+                >
+                  {{ docenteCurso?.iniciales || "DO" }}
+                </span>
+                <div class="min-w-0">
+                  <p class="text-xs font-bold uppercase text-muted-foreground">
+                    Tu docente
+                  </p>
+                  <p class="truncate text-base font-black text-foreground">
+                    {{ docenteCurso?.nombre || "Docente del curso" }}
+                  </p>
+                  <p class="text-xs text-muted-foreground">
+                    {{ docenteCurso?.cargo || "Instructor" }}
+                  </p>
+                </div>
+              </div>
+              <Button
+                size="sm"
+                class="bg-primary text-white"
+                @click="irAMensajeDocente"
+              >
+                <MessageSquare class="h-4 w-4" />
+                Escribir al docente
+              </Button>
             </div>
 
             <!-- What you will learn -->
@@ -1070,26 +1234,123 @@ watch(courseId, cargarCurso);
           </template>
 
           <template v-else-if="activeTab === 'preguntas'">
-            <div class="flex flex-col items-center gap-4 py-12 text-center">
-              <MessageSquare class="h-12 w-12 text-muted-foreground/60" />
-              <h3 class="text-base font-bold text-foreground">
-                Preguntas y respuestas
-              </h3>
-              <p class="max-w-md text-sm text-muted-foreground">
-                Próximamente podrás hacer preguntas sobre las lecciones y el
-                instructor responderá aquí.
+            <div class="grid gap-4">
+              <div class="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 class="text-base font-bold text-foreground">
+                    Mensaje directo al docente
+                  </h3>
+                  <p class="mt-1 text-sm text-muted-foreground">
+                    Conversación privada con
+                    {{ docenteCurso?.nombre || "tu instructor" }}. No es el foro
+                    entre compañeros.
+                  </p>
+                </div>
+                <div
+                  v-if="docenteCurso"
+                  class="flex items-center gap-2 rounded-full border border-border bg-muted px-3 py-1.5"
+                >
+                  <UserRound class="h-4 w-4 text-primary" />
+                  <span class="text-xs font-semibold">{{
+                    docenteCurso.nombre
+                  }}</span>
+                </div>
+              </div>
+
+              <p v-if="errorChat" class="text-sm font-semibold text-red-600">
+                {{ errorChat }}
               </p>
+
+              <div
+                class="flex max-h-80 min-h-56 flex-col gap-3 overflow-y-auto rounded-xl border border-border bg-muted/30 p-4"
+              >
+                <div
+                  v-if="cargandoChat"
+                  class="py-10 text-center text-sm text-muted-foreground"
+                >
+                  Cargando conversación…
+                </div>
+                <p
+                  v-else-if="!mensajesDocente.length"
+                  class="py-10 text-center text-sm text-muted-foreground"
+                >
+                  Aún no hay mensajes. Escribe tu primera duda al docente.
+                </p>
+                <div
+                  v-for="mensaje in mensajesDocente"
+                  :key="mensaje.id"
+                  class="max-w-[85%] rounded-lg px-3 py-2 text-sm shadow-sm"
+                  :class="
+                    mensaje.autor === 'ESTUDIANTE'
+                      ? 'ml-auto bg-primary text-white'
+                      : 'bg-card text-foreground'
+                  "
+                >
+                  <p>{{ mensaje.contenido }}</p>
+                  <p class="mt-1 text-right text-[10px] opacity-70">
+                    {{ mensaje.hora }}
+                  </p>
+                </div>
+              </div>
+
+              <form
+                class="flex gap-2"
+                @submit.prevent="enviarMensajeAlDocente"
+              >
+                <input
+                  v-model="textoMensajeDocente"
+                  class="h-10 flex-1 rounded-md border border-border bg-background px-3 text-sm outline-none ring-primary focus:ring-2"
+                  placeholder="Escribe un mensaje para tu docente…"
+                  :disabled="!conversacionId || enviandoMensaje"
+                />
+                <Button
+                  type="submit"
+                  :disabled="
+                    !textoMensajeDocente.trim() ||
+                    !conversacionId ||
+                    enviandoMensaje
+                  "
+                >
+                  <Send class="h-4 w-4" />
+                  Enviar
+                </Button>
+              </form>
             </div>
           </template>
 
           <template v-else-if="activeTab === 'notas'">
-            <div class="flex flex-col items-center gap-4 py-12 text-center">
-              <FileText class="h-12 w-12 text-muted-foreground/60" />
-              <h3 class="text-base font-bold text-foreground">Tus notas</h3>
-              <p class="max-w-md text-sm text-muted-foreground">
-                Guarda apuntes importantes durante las clases para repasarlos
-                más adelante.
-              </p>
+            <div class="grid gap-4">
+              <div>
+                <h3 class="text-base font-bold text-foreground">Tus apuntes</h3>
+                <p class="mt-1 text-sm text-muted-foreground">
+                  Se guardan en tu matrícula del curso (secundaria).
+                </p>
+              </div>
+              <textarea
+                v-model="apuntes"
+                rows="10"
+                class="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none ring-primary focus:ring-2"
+                placeholder="Escribe ideas clave, dudas o recordatorios de la clase…"
+                @input="programarGuardadoApuntes"
+                @blur="persistirApuntes"
+              />
+              <div class="flex items-center justify-between gap-3">
+                <p class="text-xs text-muted-foreground">
+                  {{
+                    guardandoApuntes
+                      ? "Guardando…"
+                      : mensajeApuntes || "Autoguardado al escribir."
+                  }}
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  :disabled="guardandoApuntes"
+                  @click="persistirApuntes"
+                >
+                  Guardar ahora
+                </Button>
+              </div>
             </div>
           </template>
 

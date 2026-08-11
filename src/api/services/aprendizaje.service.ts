@@ -4,6 +4,11 @@ import { API } from "@/api/endpoints";
 import { resolveMock } from "@/api/mock";
 import { crearRepositorioLocal } from "@/api/repositorio-local";
 import {
+  mapearContenidoAprendizajeSecundaria,
+  mapearMatriculaAProgreso,
+} from "@/api/services/mapper-curso-secundaria";
+import { secundariaGatewayService } from "@/api/services/secundaria-gateway.service";
+import {
   crearContenidoCursoSemilla,
   idsItemsContenido,
   primerItemId,
@@ -131,6 +136,12 @@ function recalcularProgreso(
 
 export const aprendizajeService = {
   async obtenerContenido(cursoId: string): Promise<ContenidoCursoAprendizaje> {
+    if (apiConfig.secundariaCursos) {
+      const data =
+        await secundariaGatewayService.obtenerContenidoAprendizaje(cursoId);
+      return mapearContenidoAprendizajeSecundaria(data).contenido;
+    }
+
     await migrarLegadoAsync();
 
     if (!apiConfig.useMock) {
@@ -144,6 +155,12 @@ export const aprendizajeService = {
   },
 
   async obtenerProgreso(cursoId: string): Promise<ProgresoCursoAprendizaje> {
+    if (apiConfig.secundariaCursos) {
+      const data =
+        await secundariaGatewayService.obtenerContenidoAprendizaje(cursoId);
+      return mapearContenidoAprendizajeSecundaria(data).progreso;
+    }
+
     await migrarLegadoAsync();
 
     if (!apiConfig.useMock) {
@@ -162,10 +179,121 @@ export const aprendizajeService = {
     return resolveMock(inicial);
   },
 
+  async obtenerApuntes(cursoId: string): Promise<string> {
+    if (apiConfig.secundariaCursos) {
+      const data =
+        await secundariaGatewayService.obtenerContenidoAprendizaje(cursoId);
+      return mapearContenidoAprendizajeSecundaria(data).apuntes;
+    }
+    return "";
+  },
+
+  async guardarApuntes(cursoId: string, apuntes: string): Promise<string> {
+    if (apiConfig.secundariaCursos) {
+      const resultado = await secundariaGatewayService.guardarApuntes(
+        cursoId,
+        apuntes,
+      );
+      return resultado.apuntes;
+    }
+    return apuntes;
+  },
+
   async guardarProgreso(
     cursoId: string,
     cambios: ActualizarProgresoCurso,
   ): Promise<ProgresoCursoAprendizaje> {
+    if (apiConfig.secundariaCursos) {
+      const actual =
+        await secundariaGatewayService.obtenerContenidoAprendizaje(cursoId);
+      const mapeado = mapearContenidoAprendizajeSecundaria(actual);
+      const itemsAntes = new Set(mapeado.progreso.itemsCompletados);
+      const itemsNuevos = (cambios.itemsCompletados ?? []).filter(
+        (id) => !itemsAntes.has(id),
+      );
+      const notas = cambios.notas ?? mapeado.progreso.notas;
+      const notasNuevas = Object.entries(notas).filter(([id, valor]) => {
+        const previa = mapeado.progreso.notas[id];
+        return (
+          typeof valor === "number" &&
+          Number.isFinite(valor) &&
+          previa !== valor
+        );
+      });
+
+      let ultimo = mapeado.progreso;
+
+      for (const [actividadId, nota] of notasNuevas) {
+        if (itemsNuevos.includes(actividadId)) continue;
+        const resultado = await secundariaGatewayService.completarActividad(
+          cursoId,
+          actividadId,
+          { nota, marcarCompletada: false },
+        );
+        ultimo = {
+          ...ultimo,
+          itemsCompletados: resultado.itemsCompletados,
+          notas: {
+            ...ultimo.notas,
+            ...(resultado.notas ?? {}),
+            ...(typeof resultado.nota === "number"
+              ? { [actividadId]: resultado.nota }
+              : { [actividadId]: nota }),
+          },
+          progreso: Number(resultado.progresoPorcentaje),
+          estado:
+            resultado.estado === "Completado" ? "Completado" : "En curso",
+          itemActivoId: cambios.itemActivoId ?? ultimo.itemActivoId,
+          actualizadoEn: new Date().toISOString(),
+        };
+      }
+
+      for (const actividadId of itemsNuevos) {
+        const nota = notas[actividadId];
+        const resultado = await secundariaGatewayService.completarActividad(
+          cursoId,
+          actividadId,
+          {
+            nota: typeof nota === "number" ? nota : null,
+            marcarCompletada: true,
+          },
+        );
+        ultimo = {
+          ...ultimo,
+          itemsCompletados: resultado.itemsCompletados,
+          notas: {
+            ...ultimo.notas,
+            ...(resultado.notas ?? {}),
+            ...(typeof resultado.nota === "number"
+              ? { [actividadId]: resultado.nota }
+              : typeof nota === "number"
+                ? { [actividadId]: nota }
+                : {}),
+          },
+          progreso: Number(resultado.progresoPorcentaje),
+          estado:
+            resultado.estado === "Completado" ? "Completado" : "En curso",
+          itemActivoId: cambios.itemActivoId ?? ultimo.itemActivoId,
+          actualizadoEn: new Date().toISOString(),
+        };
+      }
+
+      if (
+        !itemsNuevos.length &&
+        !notasNuevas.length &&
+        cambios.itemActivoId
+      ) {
+        ultimo = { ...ultimo, itemActivoId: cambios.itemActivoId };
+      }
+
+      return {
+        ...ultimo,
+        id: cursoId,
+        itemActivoId: cambios.itemActivoId ?? ultimo.itemActivoId,
+        notas: { ...ultimo.notas, ...notas },
+      };
+    }
+
     if (!apiConfig.useMock) {
       const { data } = await api.patch<ProgresoCursoAprendizaje>(
         API.courses.progress(cursoId),
@@ -204,6 +332,11 @@ export const aprendizajeService = {
   },
 
   async listarProgresos(): Promise<ProgresoCursoAprendizaje[]> {
+    if (apiConfig.secundariaCursos) {
+      const listado = await secundariaGatewayService.listarMisCursos();
+      return listado.cursos.map(mapearMatriculaAProgreso);
+    }
+
     await migrarLegadoAsync();
 
     if (!apiConfig.useMock) {
@@ -230,6 +363,64 @@ export const aprendizajeService = {
         status: p.estado,
       };
     });
+  },
+
+  async abrirChatConDocente(cursoId: string) {
+    if (!apiConfig.secundariaCursos) {
+      return {
+        conversacionId: `mock-${cursoId}`,
+        docente: {
+          id: "docente-mock",
+          nombre: "Docente del curso",
+          cargo: "Instructor",
+          iniciales: "DO",
+        },
+        mensajes: [] as Array<{
+          id: string;
+          contenido: string;
+          hora: string;
+          autor: "DOCENTE" | "ESTUDIANTE";
+        }>,
+      };
+    }
+    const data = await secundariaGatewayService.abrirChatCursoAlumno(cursoId);
+    return {
+      conversacionId: data.conversacionId,
+      docente: data.docente,
+      mensajes: (data.mensajes ?? []).map((mensaje) => ({
+        id: mensaje.id,
+        contenido: mensaje.contenido,
+        hora: mensaje.hora,
+        autor: mensaje.autor,
+      })),
+    };
+  },
+
+  async enviarMensajeAlDocente(
+    conversacionId: string,
+    contenido: string,
+  ) {
+    if (!apiConfig.secundariaCursos) {
+      return {
+        id: `msg-${Date.now()}`,
+        contenido,
+        hora: new Intl.DateTimeFormat("es-PE", {
+          hour: "2-digit",
+          minute: "2-digit",
+        }).format(new Date()),
+        autor: "ESTUDIANTE" as const,
+      };
+    }
+    const data = await secundariaGatewayService.enviarMensaje(
+      conversacionId,
+      contenido,
+    );
+    return {
+      id: data.mensaje.id,
+      contenido: data.mensaje.contenido,
+      hora: data.mensaje.hora,
+      autor: data.mensaje.autor,
+    };
   },
 
   reiniciarDemo(cursoId?: string): void {

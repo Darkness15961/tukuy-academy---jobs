@@ -88,7 +88,7 @@ async function cargar() {
 const nombreOrganizacion = computed(
   () =>
     contextoActivo.value?.organizacionNombre ??
-    "COLEGIO DE INGENIEROS CUSCO",
+    "Tu organización",
 );
 
 const consumoUsuarios = computed(() =>
@@ -102,7 +102,15 @@ const porcentajeUsuarios = computed(() => {
 
 const diasRestantes = computed(() => {
   if (!licencia.value?.fin) return 0;
-  const fin = new Date(`${licencia.value.fin}T00:00:00Z`).getTime();
+  const finTexto = licencia.value.fin;
+  if (
+    finTexto === "Indefinida" ||
+    finTexto === "Sin vencimiento" ||
+    Number.isNaN(Date.parse(`${finTexto}T00:00:00Z`))
+  ) {
+    return Number.POSITIVE_INFINITY;
+  }
+  const fin = new Date(`${finTexto}T00:00:00Z`).getTime();
   const hoy = Date.now();
   return Math.max(0, Math.ceil((fin - hoy) / (1000 * 60 * 60 * 24)));
 });
@@ -114,12 +122,14 @@ const licenciasDisponibles = computed(
 );
 
 function fechaLegible(fecha?: string) {
-  return fecha
-    ? new Intl.DateTimeFormat("es-PE", {
-        dateStyle: "medium",
-        timeZone: "UTC",
-      }).format(new Date(`${fecha}T00:00:00Z`))
-    : "—";
+  if (!fecha) return "—";
+  if (fecha === "Indefinida" || fecha === "Sin vencimiento") return fecha;
+  const marca = Date.parse(`${fecha}T00:00:00Z`);
+  if (Number.isNaN(marca)) return fecha;
+  return new Intl.DateTimeFormat("es-PE", {
+    dateStyle: "medium",
+    timeZone: "UTC",
+  }).format(new Date(marca));
 }
 
 function tonoEstado(estado: LicenciaOrganizacion["estado"]) {
@@ -239,7 +249,11 @@ async function guardar() {
                 {{ fechaLegible(licencia.fin) }}
               </strong>
               <p class="text-[11px] text-muted-foreground">
-                {{ diasRestantes }} días restantes
+                {{
+                  Number.isFinite(diasRestantes)
+                    ? `${diasRestantes} días restantes`
+                    : "Vigencia indefinida"
+                }}
               </p>
             </div>
           </CardContent>

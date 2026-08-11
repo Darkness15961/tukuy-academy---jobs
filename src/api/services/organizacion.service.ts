@@ -1,6 +1,7 @@
 import { api } from "@/api/client";
 import { apiConfig } from "@/api/config";
 import { API } from "@/api/endpoints";
+import { organizacionPrincipalService } from "@/api/services/organizacion-principal.service";
 import {
   asignacionesPerfilUsuario,
   estructurasOrganizacionales,
@@ -56,7 +57,8 @@ type Identificador = string | number;
 type RegistroIdentificable = { id: Identificador };
 
 export interface UsuarioOrganizacion {
-  id: number;
+  /** En mock es number; con Supabase es el UUID de identidad_principal. */
+  id: string | number;
   nombre: string;
   iniciales: string;
   correo: string;
@@ -413,6 +415,13 @@ function claveContextual(recurso: string) {
   return `tukuy_demo_organizacion_${ambito}_${recurso}`;
 }
 
+function usarOrgPrincipal() {
+  return (
+    organizacionPrincipalService.activo() &&
+    Boolean(contextoActual().organizacionId)
+  );
+}
+
 function emitirCambio(recurso: string) {
   window.dispatchEvent(
     new CustomEvent("tukuy:organizacion-datos", { detail: { recurso } }),
@@ -423,15 +432,19 @@ function crearRepositorioOrganizacion<T extends RegistroIdentificable>(
   recurso: string,
   ruta: string,
   semilla: readonly T[],
+  /** Semilla mínima sin demos CIP; si falta, arranca vacío. */
+  semillaPrincipal: readonly T[] = [],
 ) {
   function actual() {
     return crearRepositorioLocal<T>({
       clave: claveContextual(recurso),
       ruta,
-      semilla,
-      version: 21,
+      // Auth Supabase: sin datos del Colegio; se puede editar en local hasta BD.
+      semilla: usarOrgPrincipal() ? semillaPrincipal : semilla,
+      version: usarOrgPrincipal() ? 31 : 21,
     });
   }
+
   return {
     listar: () => actual().listar(),
     obtener: (id: Identificador) => actual().obtener(id),
@@ -470,6 +483,14 @@ const usuariosRepositorio = crearRepositorioOrganizacion<UsuarioOrganizacion>(
 const usuarios = {
   ...usuariosRepositorio,
   async listar() {
+    if (usarOrgPrincipal()) {
+      const instalacionId = contextoActual().organizacionId;
+      if (!instalacionId) {
+        throw new Error("No hay organización activa en el contexto de sesión");
+      }
+      return organizacionPrincipalService.listarMiembros(instalacionId);
+    }
+
     const registros = await usuariosRepositorio.listar();
     if (!apiConfig.useMock) return registros;
     const actualizados = registros.map((usuario) => ({
@@ -490,6 +511,119 @@ const usuarios = {
   },
 };
 
+/** Catálogos mínimos para editar organigrama sin demos del Colegio. */
+const tiposUnidadPrincipal: TipoUnidadEntidad[] = [
+  {
+    id: "tipo-direccion",
+    nombreSingular: "Dirección",
+    nombrePlural: "Direcciones",
+    descripcion: "Unidad de conducción institucional.",
+    color: "#B87A00",
+    permiteSubunidades: true,
+    estado: "ACTIVO",
+  },
+  {
+    id: "tipo-administracion",
+    nombreSingular: "Administración",
+    nombrePlural: "Administraciones",
+    descripcion: "Ejecuta la operación y administra la estructura.",
+    color: "#C58A00",
+    permiteSubunidades: true,
+    estado: "ACTIVO",
+  },
+  {
+    id: "tipo-area",
+    nombreSingular: "Área",
+    nombrePlural: "Áreas",
+    descripcion: "Unidad operativa de la organización.",
+    color: "#0B3A78",
+    permiteSubunidades: true,
+    estado: "ACTIVO",
+  },
+  {
+    id: "tipo-equipo",
+    nombreSingular: "Equipo",
+    nombrePlural: "Equipos",
+    descripcion: "Grupo de trabajo dentro de un área.",
+    color: "#0E7490",
+    permiteSubunidades: true,
+    estado: "ACTIVO",
+  },
+];
+
+const politicasIncorporacionPrincipal: PoliticaIncorporacionUnidad[] = [
+  {
+    id: "pol-admin",
+    nombre: "Asignación administrativa",
+    modalidad: "ASIGNACION_ADMIN",
+    estado: "ACTIVA",
+  },
+  {
+    id: "pol-abierta",
+    nombre: "Incorporación abierta",
+    modalidad: "ABIERTA",
+    capacidadMaxima: 500,
+    estado: "ACTIVA",
+  },
+];
+
+const estructurasPrincipal: EstructuraOrganizacional[] = [
+  {
+    id: "estructura-gobierno",
+    nombre: "Gobierno y administración",
+    descripcion: "Funciones protegidas necesarias para operar la entidad.",
+    tipo: "GOBIERNO",
+    modoJerarquia: "FLEXIBLE",
+    esSistema: true,
+    estado: "ACTIVA",
+  },
+];
+
+const nivelesPrincipal: NivelOrganizacional[] = [
+  {
+    id: "nivel-gobierno",
+    estructuraId: "estructura-gobierno",
+    nombre: "Gobierno",
+    orden: 1,
+    estado: "ACTIVO",
+  },
+];
+
+const unidadesPrincipal: UnidadOrganizacional[] = [
+  {
+    id: "unidad-direccion-gobierno",
+    nombre: "Dirección",
+    codigo: "DIR",
+    codigoSistema: "DIRECCION",
+    esSistema: true,
+    estructuraId: "estructura-gobierno",
+    nivelId: "nivel-gobierno",
+    tipoUnidadId: "tipo-direccion",
+    unidadPadreId: null,
+    politicaIncorporacionId: "pol-admin",
+    orden: 1,
+    estado: "ACTIVA",
+  },
+  {
+    id: "unidad-administracion",
+    nombre: "Administración",
+    codigo: "ADM",
+    codigoSistema: "ADMINISTRACION",
+    esSistema: true,
+    estructuraId: "estructura-gobierno",
+    nivelId: "nivel-gobierno",
+    tipoUnidadId: "tipo-administracion",
+    unidadPadreId: null,
+    politicaIncorporacionId: "pol-admin",
+    orden: 2,
+    estado: "ACTIVA",
+  },
+];
+
+const perfilesPrincipal: PerfilEntidad[] = perfilesEntidad.filter(
+  (perfil) => perfil.esSistema,
+);
+
 const areas = crearRepositorioOrganizacion<AreaOrganizacion>(
   "areas",
   API.organizacion.areas,
@@ -500,18 +634,21 @@ const tiposUnidad = crearRepositorioOrganizacion<TipoUnidadEntidad>(
   "tipos-unidad",
   API.organizacion.tiposUnidad,
   tiposUnidadEntidad,
+  tiposUnidadPrincipal,
 );
 
 const unidades = crearRepositorioOrganizacion<UnidadOrganizacional>(
   "unidades-organizacionales",
   API.organizacion.unidades,
   unidadesOrganizacionales,
+  unidadesPrincipal,
 );
 
 const vinculaciones = crearRepositorioOrganizacion<VinculacionUnidad>(
   "vinculaciones-unidad",
   API.organizacion.vinculaciones,
   vinculacionesUnidad,
+  [],
 );
 
 const politicasIncorporacion =
@@ -519,24 +656,28 @@ const politicasIncorporacion =
     "politicas-incorporacion",
     API.organizacion.politicasIncorporacion,
     politicasIncorporacionEntidad,
+    politicasIncorporacionPrincipal,
   );
 
 const perfiles = crearRepositorioOrganizacion<PerfilEntidad>(
   "perfiles-entidad",
   API.organizacion.perfilesEntidad,
   perfilesEntidad,
+  perfilesPrincipal,
 );
 
 const estructuras = crearRepositorioOrganizacion<EstructuraOrganizacional>(
   "estructuras-organizacion",
   `${API.organizacion.unidades}/estructuras`,
   estructurasOrganizacionales,
+  estructurasPrincipal,
 );
 
 const niveles = crearRepositorioOrganizacion<NivelOrganizacional>(
   "niveles-organizacion",
   `${API.organizacion.unidades}/niveles`,
   nivelesOrganizacionales,
+  nivelesPrincipal,
 );
 
 const asignacionesPerfil =
@@ -544,12 +685,13 @@ const asignacionesPerfil =
     "asignaciones-perfil",
     API.organizacion.asignacionesPerfil,
     asignacionesPerfilUsuario,
+    [],
   );
 
 /** Migra el árbol histórico a gobierno protegido + estructuras independientes.
  *  Solo toca nodos del mock original; los creados por el usuario pasan intactos. */
 async function normalizarJerarquiaOrganizacional() {
-  if (!apiConfig.useMock) return;
+  if (!apiConfig.useMock || usarOrgPrincipal()) return;
   const perfilesActuales = await perfiles.listar();
   const perfilesProtegidos = perfilesEntidad.filter((perfil) => perfil.esSistema);
   const perfilesNormalizados = [...perfilesActuales];
@@ -881,6 +1023,59 @@ function inicialesPersona(nombre: string) {
 async function incorporarPersona(
   entrada: IncorporacionPersonaOrganizacion,
 ): Promise<ResultadoIncorporacionPersona> {
+  if (usarOrgPrincipal()) {
+    const perfiles = await organizacionPrincipalService.catalogoPerfiles(
+      contextoActual().organizacionId!,
+    );
+    const perfil =
+      perfiles.find((item) => item.id === entrada.perfilId) ??
+      perfiles.find((item) => item.codigo === entrada.perfilId) ??
+      perfiles.find((item) => item.codigo === "STUDENT");
+    if (!perfil) {
+      throw new Error(
+        "No hay perfiles asignables. Verifica que exista STUDENT u otro perfil de organización.",
+      );
+    }
+    await organizacionPrincipalService.asignarAcceso(
+      contextoActual().organizacionId!,
+      entrada.correo,
+      perfil.codigo,
+    );
+    const miembros = await organizacionPrincipalService.listarMiembros(
+      contextoActual().organizacionId!,
+    );
+    const usuario =
+      miembros.find(
+        (item) =>
+          item.correo.toLowerCase() === entrada.correo.trim().toLowerCase(),
+      ) ?? miembros[0];
+    if (!usuario) {
+      throw new Error("Acceso asignado, pero no se pudo recargar el directorio.");
+    }
+    // La vinculación a organigrama aún no existe en BD; devolvemos stubs mínimos.
+    return {
+      usuario,
+      vinculacion: {
+        id: `vinculo-pendiente-${usuario.id}`,
+        usuarioId: String(usuario.id),
+        unidadId: entrada.unidadId || "",
+        tipo: "PRINCIPAL",
+        origen: "ASIGNACION_ADMINISTRATIVA",
+        estado: "ACTIVA",
+        fechaInicio: new Date().toISOString().slice(0, 10),
+      },
+      asignacionPerfil: {
+        id: `asig-pendiente-${usuario.id}`,
+        usuarioId: String(usuario.id),
+        perfilId: perfil.id,
+        unidadIds: entrada.unidadId ? [entrada.unidadId] : [],
+        sedeIds: entrada.sedeId ? [entrada.sedeId] : [],
+        incluirDescendientes: false,
+        esPrincipal: true,
+        estado: "ACTIVA",
+      },
+    };
+  }
   if (!apiConfig.useMock) {
     const { data } = await api.post<ResultadoIncorporacionPersona>(
       `${API.organizacion.usuarios}/incorporaciones`,
@@ -1307,7 +1502,7 @@ async function aprobarSolicitudMatricula(id: string) {
   });
 }
 
-const matriculas =
+const matriculasRepositorio =
   crearRepositorioOrganizacion<MatriculaAlumnoOrganizacion>(
     "matriculas-alumnos",
     API.organizacion.alumnos,
@@ -1341,6 +1536,43 @@ const matriculas =
     }),
   );
 
+const matriculas = {
+  ...matriculasRepositorio,
+  async listar() {
+    if (usarOrgPrincipal() && apiConfig.secundariaCursos) {
+      const { docenteService } = await import("@/api/services/docente.service");
+      const estudiantes = await docenteService.estudiantes.listar();
+      const orgNombre =
+        contextoActual().organizacionNombre || "Tukuy Academy";
+      return estudiantes.map(
+        (item): MatriculaAlumnoOrganizacion => ({
+          id: item.id,
+          alumnoId: item.alumnoId ? item.alumnoId : item.id,
+          cursoId: item.cursoId,
+          nombre: item.nombre,
+          iniciales: item.iniciales,
+          curso: item.curso,
+          organizacion: item.organizacion || orgNombre,
+          progreso: Number(item.progreso ?? 0),
+          ultimoAcceso: item.ultimoAcceso,
+          ultimoAccesoFecha: item.ultimoAccesoFecha,
+          fechaInscripcion: item.fechaInscripcion,
+          estado: (["ACTIVO", "COMPLETADO", "EN_RIESGO", "PENDIENTE"].includes(
+            item.estado,
+          )
+            ? item.estado
+            : "ACTIVO") as MatriculaAlumnoOrganizacion["estado"],
+          tipo: "EXTERNO",
+          condicionAlInscribirse: "EXTERNO",
+          origenAcceso: "CURSO_PUBLICO",
+          modalidad: "LIBRE",
+        }),
+      );
+    }
+    return matriculasRepositorio.listar();
+  },
+};
+
 const certificados =
   crearRepositorioOrganizacion<CertificadoEmitidoDocente>(
     "certificados",
@@ -1356,6 +1588,10 @@ const certificadosPendientes =
   );
 
 async function emitirCertificadoInstitucional(id: string) {
+  if (apiConfig.secundariaCursos) {
+    const { docenteService } = await import("@/api/services/docente.service");
+    return docenteService.emitirCertificado(id);
+  }
   if (!apiConfig.useMock) {
     const { data } = await api.post<CertificadoEmitidoDocente>(
       API.organizacion.emitirCertificado(id),
@@ -1528,6 +1764,20 @@ async function sincronizarEstadoDocente(
   estado: EstadoCursoDocente,
   extras?: { observacion?: string },
 ) {
+  if (apiConfig.secundariaCursos && estado === "PUBLICADO") {
+    try {
+      const { secundariaGatewayService } = await import(
+        "@/api/services/secundaria-gateway.service"
+      );
+      await secundariaGatewayService.publicarCurso({
+        cursoId: cursoDocenteId,
+        estadoPublicacion: "PUBLICADO",
+      });
+    } catch {
+      // Si falla el gateway, aún actualizamos la fila local del catálogo.
+    }
+    return;
+  }
   if (!apiConfig.useMock) return;
   try {
     const { docenteService } = await import("@/api/services/docente.service");
@@ -1684,38 +1934,50 @@ async function publicarCursoPropuesto(
 
 function almacenConfiguracion() {
   const contexto = contextoActual();
+  const semillaPrincipal: ConfiguracionOrganizacion = {
+    nombre: contexto.organizacionNombre || "Tukuy Academy",
+    logo: "/img/iconoTukuyAcademy.png",
+    ruc: "",
+    dominio: "",
+    zonaHoraria: "America/Lima",
+    restringirDominio: false,
+    requiereDniEnrolamiento: false,
+  };
   return crearAlmacenDocumento<ConfiguracionOrganizacion>(
     claveContextual("configuracion"),
-    {
-      nombre: contexto.organizacionNombre || "COLEGIO DE INGENIEROS CUSCO",
-      logo: "/img/LogoColegioING.png",
-      ruc: "20601234567",
-      dominio: "cipcusco.org.pe",
-      zonaHoraria: "America/Lima",
-      restringirDominio: true,
-      requiereDniEnrolamiento: true,
-    },
-    4,
+    usarOrgPrincipal()
+      ? semillaPrincipal
+      : {
+          nombre: contexto.organizacionNombre || "COLEGIO DE INGENIEROS CUSCO",
+          logo: "/img/LogoColegioING.png",
+          ruc: "20601234567",
+          dominio: "cipcusco.org.pe",
+          zonaHoraria: "America/Lima",
+          restringirDominio: true,
+          requiereDniEnrolamiento: true,
+        },
+    usarOrgPrincipal() ? 30 : 4,
   );
 }
 
 function almacenIntegraciones() {
+  const demos: IntegracionOrganizacion[] = [
+    { id: "tukuy-obra", nombre: "Tukuy Obra", descripcion: "Sincronización de proyectos, equipos y especialidades.", activa: true, endpoint: "https://api.tukuyobra.com/v1" },
+    {
+      id: "google-calendar-meet",
+      nombre: "Google Calendar + Meet",
+      descripcion:
+        "Agenda sesiones en vivo, genera enlace Meet e invita alumnos por correo (attendees).",
+      activa: true,
+      endpoint: "https://www.googleapis.com/calendar/v3",
+    },
+    { id: "siadeg", nombre: "SIADEG", descripcion: "Intercambio de personal y estructura organizacional.", activa: false, endpoint: "" },
+    { id: "api", nombre: "API empresarial", descripcion: "Integración personalizada con sistemas internos.", activa: false, endpoint: "" },
+  ];
   return crearAlmacenDocumento<IntegracionOrganizacion[]>(
     claveContextual("integraciones"),
-    [
-      { id: "tukuy-obra", nombre: "Tukuy Obra", descripcion: "Sincronización de proyectos, equipos y especialidades.", activa: true, endpoint: "https://api.tukuyobra.com/v1" },
-      {
-        id: "google-calendar-meet",
-        nombre: "Google Calendar + Meet",
-        descripcion:
-          "Agenda sesiones en vivo, genera enlace Meet e invita alumnos por correo (attendees).",
-        activa: true,
-        endpoint: "https://www.googleapis.com/calendar/v3",
-      },
-      { id: "siadeg", nombre: "SIADEG", descripcion: "Intercambio de personal y estructura organizacional.", activa: false, endpoint: "" },
-      { id: "api", nombre: "API empresarial", descripcion: "Integración personalizada con sistemas internos.", activa: false, endpoint: "" },
-    ],
-    3,
+    usarOrgPrincipal() ? [] : demos,
+    usarOrgPrincipal() ? 30 : 3,
   );
 }
 
@@ -1740,24 +2002,36 @@ function almacenLicencia() {
 }
 
 function almacenFacturacion() {
+  const vacia: FacturacionOrganizacion = {
+    plan: "Sin plan comercial",
+    periodicidad: "MENSUAL",
+    proximoCobro: "—",
+    importe: 0,
+    moneda: "PEN",
+    tarjetaMarca: "—",
+    tarjetaUltimos4: "—",
+    tarjetaVencimiento: "—",
+  };
   return crearAlmacenDocumento<FacturacionOrganizacion>(
     claveContextual("facturacion"),
-    {
-      plan: "Empresa Pro",
-      periodicidad: "MENSUAL",
-      proximoCobro: "2026-08-01",
-      importe: 2490,
-      moneda: "PEN",
-      tarjetaMarca: "Visa",
-      tarjetaUltimos4: "4821",
-      tarjetaVencimiento: "08/2028",
-    },
-    2,
+    usarOrgPrincipal()
+      ? vacia
+      : {
+          plan: "Empresa Pro",
+          periodicidad: "MENSUAL",
+          proximoCobro: "2026-08-01",
+          importe: 2490,
+          moneda: "PEN",
+          tarjetaMarca: "Visa",
+          tarjetaUltimos4: "4821",
+          tarjetaVencimiento: "08/2028",
+        },
+    usarOrgPrincipal() ? 30 : 2,
   );
 }
 
 async function leerDocumento<T>(ruta: string, almacen: ReturnType<typeof crearAlmacenDocumento<T>>) {
-  if (apiConfig.useMock) return almacen.leer();
+  if (usarOrgPrincipal() || apiConfig.useMock) return almacen.leer();
   const { data } = await api.get<T>(ruta);
   return data;
 }
@@ -1778,8 +2052,32 @@ export const organizacionService = {
   activarIncorporacion,
   registrarSolicitudDesdeComunidad,
   matriculas,
-  certificados,
-  certificadosPendientes,
+  certificados: {
+    listar: async () => {
+      if (apiConfig.secundariaCursos) {
+        const { docenteService } = await import("@/api/services/docente.service");
+        return docenteService.certificados.listar();
+      }
+      return certificados.listar();
+    },
+    obtener: (id: Identificador) => certificados.obtener(id),
+    crear: certificados.crear.bind(certificados),
+    actualizar: certificados.actualizar.bind(certificados),
+    eliminar: certificados.eliminar.bind(certificados),
+  },
+  certificadosPendientes: {
+    listar: async () => {
+      if (apiConfig.secundariaCursos) {
+        const { docenteService } = await import("@/api/services/docente.service");
+        return docenteService.certificadosPendientes.listar();
+      }
+      return certificadosPendientes.listar();
+    },
+    obtener: (id: Identificador) => certificadosPendientes.obtener(id),
+    crear: certificadosPendientes.crear.bind(certificadosPendientes),
+    actualizar: certificadosPendientes.actualizar.bind(certificadosPendientes),
+    eliminar: certificadosPendientes.eliminar.bind(certificadosPendientes),
+  },
   emitirCertificado: emitirCertificadoInstitucional,
   matricularUsuarioEnCurso,
   solicitarMatriculaCurso,
@@ -1839,8 +2137,36 @@ export const organizacionService = {
     leerDocumento(API.organizacion.integraciones, almacenIntegraciones()),
   guardarIntegraciones: (datos: IntegracionOrganizacion[]) =>
     guardarDocumento(API.organizacion.integraciones, almacenIntegraciones(), datos),
-  obtenerLicencia: () =>
-    leerDocumento(API.organizacion.licencia, almacenLicencia()),
+  obtenerLicencia: async () => {
+    if (usarOrgPrincipal()) {
+      const instalacionId = contextoActual().organizacionId;
+      if (!instalacionId) {
+        throw new Error("No hay organización activa en el contexto de sesión");
+      }
+      return organizacionPrincipalService.obtenerLicencia(instalacionId);
+    }
+    return leerDocumento(API.organizacion.licencia, almacenLicencia());
+  },
+  catalogoPerfilesOrg: async () => {
+    if (!usarOrgPrincipal()) return [];
+    const instalacionId = contextoActual().organizacionId;
+    if (!instalacionId) return [];
+    return organizacionPrincipalService.catalogoPerfiles(instalacionId);
+  },
+  asignarAccesoOrg: async (correo: string, perfilCodigo: string) => {
+    if (!usarOrgPrincipal()) {
+      throw new Error("Asignación real solo disponible con Supabase Auth");
+    }
+    const instalacionId = contextoActual().organizacionId;
+    if (!instalacionId) {
+      throw new Error("No hay organización activa en el contexto de sesión");
+    }
+    return organizacionPrincipalService.asignarAcceso(
+      instalacionId,
+      correo,
+      perfilCodigo,
+    );
+  },
   guardarLicencia: (datos: LicenciaOrganizacion) =>
     guardarDocumento(API.organizacion.licencia, almacenLicencia(), datos),
   obtenerFacturacion: () =>

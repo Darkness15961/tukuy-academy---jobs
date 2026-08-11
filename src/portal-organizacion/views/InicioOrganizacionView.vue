@@ -161,7 +161,7 @@ onBeforeUnmount(() =>
 const nombreOrganizacion = computed(
   () =>
     contextoActivo.value?.organizacionNombre ??
-    "COLEGIO DE INGENIEROS CUSCO",
+    "Tu organización",
 );
 
 const primerNombre = computed(

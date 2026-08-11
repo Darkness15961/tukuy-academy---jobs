@@ -1,13 +1,25 @@
 <script setup lang="ts">
-import { watch } from "vue";
+import { onMounted, watch } from "vue";
 import { RouterView, useRoute } from "vue-router";
 
+import { useAuth } from "@/composables/useAuth";
 import { useTema } from "@/composables/useTema";
+import { AUTH_TOKEN_KEY } from "@/lib/constants";
+import { env } from "@/lib/env";
 
 const route = useRoute();
 const { preferencia, esOscuroResuelto, rutaPermiteTemaOscuro } = useTema();
+const { sincronizarSesion, isAuthenticated } = useAuth();
 
-// Re-sincroniza al cambiar de ruta (landing siempre sin .dark).
+onMounted(() => {
+  if (
+    env.authProvider === "supabase" &&
+    (isAuthenticated.value || localStorage.getItem(AUTH_TOKEN_KEY))
+  ) {
+    void sincronizarSesion(undefined, false).catch(() => undefined);
+  }
+});
+
 watch(
   () => [route.path, preferencia.value, esOscuroResuelto.value] as const,
   ([ruta]) => {

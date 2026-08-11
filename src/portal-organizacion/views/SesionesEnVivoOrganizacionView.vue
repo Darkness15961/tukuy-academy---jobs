@@ -68,7 +68,7 @@ async function refrescarSesiones() {
 onMounted(async () => {
   try {
     const cursosCal = contextoActivo.value
-      ? sesionesEnVivoCompartidas.listarCursosParaCalendario(
+      ? await sesionesEnVivoCompartidas.listarCursosParaCalendario(
           contextoActivo.value,
         )
       : [];
@@ -313,11 +313,11 @@ function reemplazar(sesion: SesionEnVivoOrganizacion) {
         <TituloConAyuda
           titulo="Sesiones en vivo"
           clase-titulo="text-2xl font-black"
-          ayuda="Apartado distinto al catálogo asíncrono. Al programar se crea un evento compartido (Calendar + Meet): lo ven administración, el docente del curso y los alumnos matriculados. Classroom no aplica."
+          ayuda="Apartado distinto al catálogo asíncrono. Al programar se crea un evento compartido (Meet simulado): lo ven administración, el docente del curso y los alumnos matriculados. Integración Google pendiente."
         />
         <p class="mt-1 text-sm text-muted-foreground">
           Fuente única sincronizada ·
-          <strong class="text-foreground">Google Calendar + Meet</strong>
+          <strong class="text-foreground">Meet simulado</strong>
           ·
           <RouterLink
             class="font-bold text-primary underline-offset-2 hover:underline"

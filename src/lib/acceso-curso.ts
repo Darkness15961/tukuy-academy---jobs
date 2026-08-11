@@ -1,4 +1,6 @@
+import { apiConfig } from "@/api/config";
 import { aprendizajeService } from "@/api/services/aprendizaje.service";
+import { secundariaGatewayService } from "@/api/services/secundaria-gateway.service";
 import type { Course } from "@/types/academia";
 
 /** El alumno ya tiene acceso al reproductor (comprado, inscrito o en progreso). */
@@ -28,6 +30,20 @@ export async function matricularCurso(
   cursoId: string,
   cursos?: Course[],
 ): Promise<void> {
+  if (apiConfig.secundariaCursos) {
+    await secundariaGatewayService.matricularCurso(cursoId);
+    const curso = cursos?.find((item) => item.id === cursoId);
+    if (curso) {
+      if (!cursoEstaMatriculado(curso)) {
+        curso.status = "En curso";
+        curso.progress = Math.max(curso.progress, 0);
+      } else if (curso.status === "Disponible") {
+        curso.status = "En curso";
+      }
+    }
+    return;
+  }
+
   const curso = cursos?.find((item) => item.id === cursoId);
   if (curso) {
     if (!cursoEstaMatriculado(curso)) {

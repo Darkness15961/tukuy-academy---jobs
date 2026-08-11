@@ -45,10 +45,12 @@ import {
   type NotificacionDocente,
 } from "@/api/services/docente.service";
 import { academicoService } from "@/api/services/academico.service";
+import { apiConfig } from "@/api/config";
+import { secundariaGatewayService } from "@/api/services/secundaria-gateway.service";
 
 const route = useRoute();
 const router = useRouter();
-const { logout, currentUser, restaurarUsuario } = useAuth();
+const { logout, currentUser, restaurarUsuario, sincronizarSesion } = useAuth();
 const {
   contextoActivo,
   funcionesEntidadActiva,
@@ -68,6 +70,9 @@ const nombreUsuario = computed(
 const inicialesUsuario = computed(() => currentUser.value?.initials ?? "DT");
 
 async function cargarIndicadores() {
+  if (apiConfig.secundariaCursos) {
+    await secundariaGatewayService.bootstrapDocente();
+  }
   const [evaluaciones, avisos] = await Promise.all([
     academicoService.listarEntregasDocente(),
     docenteService.notificaciones.listar(),
@@ -81,8 +86,16 @@ async function cargarIndicadores() {
 const alCambiarDatos = () => void cargarIndicadores();
 
 onMounted(() => {
-  void restaurarUsuario();
-  void cargarIndicadores();
+  void (async () => {
+    try {
+      // Refresca permisos desde la principal (evita localStorage obsoleto).
+      await sincronizarSesion(undefined, false);
+    } catch {
+      // Si falla la sync, conserva la sesión local.
+    }
+    await restaurarUsuario();
+    await cargarIndicadores();
+  })();
   window.addEventListener("tukuy:docente-datos", alCambiarDatos);
   window.addEventListener("tukuy:academico-datos", alCambiarDatos);
 });
@@ -265,7 +278,12 @@ async function abrirAviso(aviso: NotificacionDocente) {
           <component :is="item.icono" class="h-[18px] w-[18px]" />
           <span class="flex-1 text-left">{{ item.etiqueta }}</span>
           <span
-            v-if="item.contador"
+            v-if="item.proximamente"
+            class="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold text-amber-800 dark:text-amber-300"
+            >Pronto</span
+          >
+          <span
+            v-else-if="item.contador"
             class="rounded-full px-2 py-0.5 text-[10px]"
             :class="
               estaActiva(item.ruta)

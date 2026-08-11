@@ -228,16 +228,42 @@ export function useContextoSesion() {
     membresias.value = normalizadas;
     localStorage.setItem(MEMBRESIAS_KEY, JSON.stringify(normalizadas));
 
-    if (
-      contextoActivo.value &&
-      !normalizadas.some(
+    if (contextoActivo.value) {
+      const actual = contextoActivo.value;
+      const coincidente = normalizadas.find(
         (membresia) =>
-          (membresia.membresiaOrigenId ?? membresia.id) ===
-            contextoActivo.value?.membresiaId &&
-          (membresia.rolId ?? membresia.rol) === contextoActivo.value?.rolId,
-      )
-    ) {
-      limpiarContexto();
+          (membresia.membresiaOrigenId ?? membresia.id) === actual.membresiaId &&
+          membresia.id === actual.funcionId,
+      ) ?? normalizadas.find(
+        (membresia) =>
+          (membresia.membresiaOrigenId ?? membresia.id) === actual.membresiaId &&
+          (membresia.rolId ?? membresia.rol) === actual.rolId,
+      );
+
+      if (coincidente) {
+        contextoActivo.value = {
+          ...actual,
+          funcionId: coincidente.id,
+          rolId: coincidente.rolId ?? coincidente.rol,
+          rol: coincidente.rol,
+          portal: coincidente.portal,
+          permisos: [...new Set(coincidente.permisos)],
+          alcance: coincidente.alcance,
+          ambitoDocencia: coincidente.ambitoDocencia,
+        };
+        localStorage.setItem(
+          CONTEXTO_SESION_KEY,
+          JSON.stringify(contextoActivo.value),
+        );
+      } else if (
+        !normalizadas.some(
+          (membresia) =>
+            (membresia.membresiaOrigenId ?? membresia.id) === actual.membresiaId &&
+            (membresia.rolId ?? membresia.rol) === actual.rolId,
+        )
+      ) {
+        limpiarContexto();
+      }
     }
   }
 

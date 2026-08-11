@@ -177,6 +177,27 @@ export const accesosPrincipalService = {
     return data as unknown as string;
   },
 
+  async actualizar(entrada: {
+    funcionId: string;
+    perfilCodigo: string;
+    instalacionRef?: string | null;
+    permisosConceder?: string[];
+    permisosDenegar?: string[];
+  }) {
+    const { data, error } = await clientePrincipal().rpc(
+      "admin_actualizar_acceso",
+      {
+        p_funcion_id: entrada.funcionId,
+        p_perfil_codigo: entrada.perfilCodigo,
+        p_instalacion_ref: entrada.instalacionRef ?? null,
+        p_permisos_conceder: entrada.permisosConceder ?? [],
+        p_permisos_denegar: entrada.permisosDenegar ?? [],
+      },
+    );
+    propagarError(error);
+    return data as unknown as string;
+  },
+
   async cambiarEstado(
     funcionId: string,
     estado: Exclude<AccesoPrincipal["estadoFuncion"], "SIN_ACCESO">,

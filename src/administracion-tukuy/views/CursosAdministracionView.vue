@@ -29,6 +29,7 @@ import type { EstadoRevisionCurso } from "../data/administracion.mock";
 type CursoRevision = CursoAdministrado;
 
 const cargando = ref(true);
+const sincronizando = ref(false);
 const cursos = ref<CursoRevision[]>([]);
 const busqueda = ref("");
 const estado = ref("TODOS");
@@ -36,14 +37,42 @@ const cursoSeleccionado = ref<CursoRevision | null>(null);
 const accionPendiente = ref<"OBSERVADO" | "RECHAZADO" | null>(null);
 const comentario = ref("");
 const mensaje = ref("");
+const error = ref("");
 
-onMounted(async () => {
+async function cargar() {
+  cargando.value = true;
+  error.value = "";
   try {
     cursos.value = await administracionService.cursos.listar();
+  } catch (causa) {
+    error.value =
+      causa instanceof Error ? causa.message : "No se pudieron cargar los cursos.";
   } finally {
     cargando.value = false;
   }
-});
+}
+
+onMounted(() => void cargar());
+
+async function sincronizarDesdeSecundaria() {
+  sincronizando.value = true;
+  error.value = "";
+  try {
+    const resultado =
+      await administracionService.sincronizarCatalogoDesdeSecundaria();
+    cursos.value = resultado.catalogo;
+    mensaje.value = resultado.publicadosAhora
+      ? `Se registraron ${resultado.publicadosAhora} curso(s) de la secundaria en el catálogo principal.`
+      : `Catálogo al día (${resultado.totalSecundaria} en secundaria).`;
+  } catch (causa) {
+    error.value =
+      causa instanceof Error
+        ? causa.message
+        : "No se pudo sincronizar el catálogo desde la secundaria.";
+  } finally {
+    sincronizando.value = false;
+  }
+}
 
 const filtrados = computed(() => {
   const termino = busqueda.value.trim().toLowerCase();
@@ -97,11 +126,16 @@ const formatoPrecio = new Intl.NumberFormat("es-PE", {
 });
 
 async function aprobar(curso: CursoRevision) {
-  curso.estado = "APROBADO";
-  await administracionService.cursos.actualizar(curso.id, {
-    estado: "APROBADO",
-  });
-  mensaje.value = `${curso.titulo} fue aprobado y quedó disponible para publicación.`;
+  try {
+    await administracionService.cursos.actualizar(curso.id, {
+      estado: "APROBADO",
+    });
+    await cargar();
+    mensaje.value = `${curso.titulo} fue aprobado y publicado en el catálogo principal.`;
+  } catch (causa) {
+    error.value =
+      causa instanceof Error ? causa.message : "No se pudo aprobar el curso.";
+  }
 }
 
 function solicitarDecision(
@@ -132,20 +166,27 @@ async function confirmarDecision() {
 
 <template>
   <section class="mx-auto grid max-w-400 gap-6">
-    <div>
+    <div class="flex flex-wrap items-end justify-between gap-4">
       <TituloConAyuda
         clase-eyebrow="text-primary"
         eyebrow="Control editorial"
         titulo="Cursos y revisión"
         ayuda="Revisa estructura, modalidad (virtual/mixto/en vivo), calidad académica, precio B2C y certificado antes de publicar."
       />
+      <Button
+        variant="outline"
+        :disabled="sincronizando || cargando"
+        @click="sincronizarDesdeSecundaria"
+      >
+        {{ sincronizando ? "Sincronizando…" : "Traer cursos de secundaria" }}
+      </Button>
     </div>
 
-    <div
-      v-if="mensaje"
-      class="border-l-4 border-l-teal-600 bg-teal-500/10 px-4 py-3 text-sm font-semibold text-teal-900 dark:text-teal-200"
-    >
+    <div v-if="mensaje" class="border-l-4 border-l-amber-500 bg-amber-500/10 px-4 py-3 text-sm font-semibold">
       {{ mensaje }}
+    </div>
+    <div v-if="error" class="border-l-4 border-l-red-500 bg-red-500/10 px-4 py-3 text-sm font-semibold text-red-700 dark:text-red-200">
+      {{ error }}
     </div>
 
     <div class="grid gap-4 sm:grid-cols-3">

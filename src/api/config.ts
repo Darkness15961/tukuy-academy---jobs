@@ -3,5 +3,8 @@ import { env } from "@/lib/env";
 export const apiConfig = {
   baseURL: env.apiUrl,
   useMock: env.useMock,
-  mockDelayMs: env.useMock ? 600 : 0,
+  secundariaCursos: env.secundariaCursos,
+  // Con Supabase el delay artificial solo suma latencia a catálogos locales
+  // (Personas/Alumnos ya esperan RPCs/gateway reales).
+  mockDelayMs: env.useMock && env.authProvider !== "supabase" ? 600 : 0,
 };

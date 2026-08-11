@@ -1,6 +1,8 @@
 export const AUTH_TOKEN_KEY = "auth_token";
+export const INSTALACION_TUKUY_ACADEMY_ID =
+  "30000000-0000-4000-8000-000000000001";
 export const USUARIO_SESION_KEY = "tukuy_usuario_sesion";
-/** Cuentas creadas en la demo (registro / Google simulado). */
+/** Cuentas locales creadas por registro / Google simulado. */
 export const USUARIOS_REGISTRADOS_KEY = "tukuy_usuarios_registrados";
 export const MEMBRESIAS_KEY = "tukuy_membresias";
 export const CONTEXTO_SESION_KEY = "tukuy_contexto_sesion";

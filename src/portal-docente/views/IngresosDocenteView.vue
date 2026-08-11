@@ -24,6 +24,7 @@ const esIndependiente = computed(
     !contextoActivo.value?.organizacionId,
 );
 const cargando = ref(true);
+const error = ref("");
 const movimientos = ref<MovimientoIngresoDocente[]>([]);
 const estado = ref("TODOS");
 const movimientosVisibles = computed(() =>
@@ -49,6 +50,11 @@ const porLiquidar = computed(() =>
 onMounted(async () => {
   try {
     movimientos.value = await docenteService.ingresos.listar();
+  } catch (causa) {
+    error.value =
+      causa instanceof Error
+        ? causa.message
+        : "No se pudieron cargar los ingresos.";
   } finally {
     cargando.value = false;
   }
@@ -117,7 +123,7 @@ function descargarReporte() {
           clase-titulo="text-2xl font-black"
           :ayuda="
             esIndependiente
-              ? 'Ventas directas de tus cursos propios.'
+              ? 'Ventas de tus cursos (órdenes/pagos de la secundaria).'
               : `Honorarios y liquidaciones de ${contextoActivo?.organizacionNombre}.`
           "
         />
@@ -126,6 +132,7 @@ function descargarReporte() {
         ><Download class="h-4 w-4" />Descargar reporte</Button
       >
     </div>
+    <p v-if="error" class="text-sm font-semibold text-red-600">{{ error }}</p>
     <div v-if="cargando" class="grid gap-4 md:grid-cols-3">
       <Skeleton v-for="item in 3" :key="item" class="h-36 w-full" />
     </div>
@@ -171,6 +178,13 @@ function descargarReporte() {
             <option value="PAGADO">Pagado</option>
           </select>
         </div>
+        <p
+          v-if="!cargando && !movimientosVisibles.length"
+          class="mt-8 py-6 text-center text-sm text-muted-foreground"
+        >
+          Todavía no hay movimientos. Aparecerán cuando se registren órdenes o
+          pagos de tus cursos.
+        </p>
         <div class="mt-5 divide-y divide-border">
           <div
             v-for="m in movimientosVisibles"

@@ -9,41 +9,45 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { useAuth } from "@/composables/useAuth";
-import {
-  CLAVE_DEMO_COMUN,
-  RESUMEN_CUENTAS_DEMO,
-} from "@/data/cuentas-demo.mock";
-import { env } from "@/lib/env";
 
 const router = useRouter();
 const route = useRoute();
-const { login, loginConGoogle, loading, error } = useAuth();
+const { login, loginConGoogle, solicitarRecuperacionClave, loading, error } =
+  useAuth();
 
-const dni = ref("");
+const correo = ref("");
 const password = ref("");
 const remember = ref(false);
-const mostrarCuentasDemo = ref(false);
+const mensajeInfo = ref<string | null>(null);
 
 const destinoContinuar = computed(() =>
   typeof route.query.continuar === "string" ? route.query.continuar : undefined,
 );
 
-function usarCuentaDemo(alias: string) {
-  dni.value = alias;
-  password.value = CLAVE_DEMO_COMUN;
-}
-
 async function handleSubmit() {
+  mensajeInfo.value = null;
   try {
-    await login(dni.value, password.value, destinoContinuar.value);
+    await login(correo.value, password.value, destinoContinuar.value);
   } catch {
     // error handled in composable
   }
 }
 
 async function handleGoogle() {
+  mensajeInfo.value = null;
   try {
     await loginConGoogle(destinoContinuar.value);
+  } catch {
+    // error handled in composable
+  }
+}
+
+async function handleOlvidoClave() {
+  mensajeInfo.value = null;
+  try {
+    await solicitarRecuperacionClave(correo.value);
+    mensajeInfo.value =
+      "Si el correo existe, te enviamos un enlace para restablecer tu clave.";
   } catch {
     // error handled in composable
   }
@@ -82,13 +86,16 @@ async function handleGoogle() {
 
           <form class="grid gap-5" @submit.prevent="handleSubmit">
             <div class="grid gap-2">
-              <Label class="text-slate-400" for="dni">Correo</Label>
+              <Label class="text-slate-400" for="correo">Correo</Label>
               <Input
-                id="dni"
-                v-model="dni"
+                id="correo"
+                v-model="correo"
                 class="border-white/15 bg-black/30 text-white placeholder:text-slate-500 focus-visible:ring-blue-500"
-                placeholder="correo o alias (ej. alumno)"
+                placeholder="correo@empresa.com"
+                type="email"
+                inputmode="email"
                 autocomplete="username"
+                required
               />
             </div>
 
@@ -101,6 +108,7 @@ async function handleGoogle() {
                 placeholder="Contraseña"
                 type="password"
                 autocomplete="current-password"
+                required
               />
             </div>
 
@@ -121,12 +129,17 @@ async function handleGoogle() {
                 class="h-auto p-0 text-blue-400 hover:text-blue-300"
                 variant="link"
                 type="button"
+                :disabled="loading"
+                @click="handleOlvidoClave"
               >
                 ¿Olvidaste tu clave?
               </Button>
             </div>
 
             <p v-if="error" class="text-sm text-red-400">{{ error }}</p>
+            <p v-else-if="mensajeInfo" class="text-sm text-emerald-400">
+              {{ mensajeInfo }}
+            </p>
 
             <Button
               class="h-11 bg-blue-600 text-white hover:bg-blue-700"
@@ -143,28 +156,34 @@ async function handleGoogle() {
             </div>
 
             <Button
-              class="border-white/15 bg-transparent text-slate-200 hover:bg-white/8"
+              class="border-white/20 bg-white text-slate-800 hover:bg-slate-100"
               variant="outline"
               type="button"
               :disabled="loading"
               @click="handleGoogle"
             >
-              <svg class="h-4 w-4" viewBox="0 0 24 24" aria-hidden="true">
+              <!-- Logo G oficial Google Identity (viewBox 48×48) -->
+              <svg
+                class="h-5 w-5 shrink-0"
+                viewBox="0 0 48 48"
+                xmlns="http://www.w3.org/2000/svg"
+                aria-hidden="true"
+              >
                 <path
                   fill="#EA4335"
-                  d="M12 10.2v3.6h5.1c-.2 1.2-.9 2.2-1.9 2.9l3.1 2.4c1.8-1.7 2.9-4.1 2.9-7 0-.7-.1-1.3-.2-1.9H12z"
+                  d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"
                 />
                 <path
-                  fill="#34A853"
-                  d="M6.6 14.3l-.7.5-2.4 1.9C5.1 19.5 8.3 21.5 12 21.5c2.7 0 4.9-.9 6.5-2.4l-3.1-2.4c-.9.6-2 1-3.4 1-2.6 0-4.8-1.7-5.6-4.1z"
-                />
-                <path
-                  fill="#4A90E2"
-                  d="M3.5 7.3C2.9 8.5 2.5 9.9 2.5 11.5s.4 3 1 4.2l3.1-2.4c-.2-.6-.3-1.2-.3-1.8 0-.6.1-1.2.3-1.8L3.5 7.3z"
+                  fill="#4285F4"
+                  d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"
                 />
                 <path
                   fill="#FBBC05"
-                  d="M12 5.3c1.5 0 2.8.5 3.8 1.5l2.8-2.8C17 2.4 14.7 1.5 12 1.5 8.3 1.5 5.1 3.5 3.5 7.3l3.1 2.4C7.2 7 9.4 5.3 12 5.3z"
+                  d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"
+                />
+                <path
+                  fill="#34A853"
+                  d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"
                 />
               </svg>
               Iniciar con Google
@@ -188,44 +207,6 @@ async function handleGoogle() {
               Regístrate
             </button>
           </p>
-
-          <div
-            v-if="env.useMock"
-            class="grid gap-2 rounded-lg border border-white/10 bg-black/20 p-3 text-left text-xs text-slate-400"
-          >
-            <div class="flex items-center justify-between gap-2">
-              <p class="font-medium text-slate-300">
-                Cuentas demo · clave {{ CLAVE_DEMO_COMUN }}
-              </p>
-              <button
-                class="shrink-0 text-blue-400 hover:text-blue-300"
-                type="button"
-                @click="mostrarCuentasDemo = !mostrarCuentasDemo"
-              >
-                {{ mostrarCuentasDemo ? "Ocultar" : "Ver lista" }}
-              </button>
-            </div>
-            <ul
-              v-if="mostrarCuentasDemo"
-              class="grid max-h-48 gap-1.5 overflow-y-auto pr-1"
-            >
-              <li v-for="cuenta in RESUMEN_CUENTAS_DEMO" :key="cuenta.alias">
-                <button
-                  class="w-full rounded-md px-2 py-1.5 text-left transition hover:bg-white/8"
-                  type="button"
-                  @click="usarCuentaDemo(cuenta.alias)"
-                >
-                  <span class="font-mono text-blue-300">{{ cuenta.alias }}</span>
-                  <span class="mt-0.5 block text-[11px] leading-snug text-slate-500">
-                    {{ cuenta.etiqueta }}
-                  </span>
-                </button>
-              </li>
-            </ul>
-            <p v-else class="text-[11px] leading-snug text-slate-500">
-              Ej.: admin, tukuy, direccion, docente, alumno, alumnocip…
-            </p>
-          </div>
 
           <div class="grid gap-1 text-center text-xs text-slate-500">
             <span>© Tukuy Academy · Ver. 07.06</span>

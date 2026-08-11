@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { useRoute } from "vue-router";
-import { KeyRound, Plus, Search, ShieldCheck, UserRoundCog } from "lucide-vue-next";
+import { KeyRound, Pencil, Plus, Search, ShieldCheck, UserRoundCog } from "lucide-vue-next";
 import Column from "primevue/column";
 import DataTable from "primevue/datatable";
 import Dialog from "primevue/dialog";
@@ -24,6 +24,8 @@ const cargando = ref(true);
 const route = useRoute();
 const guardando = ref(false);
 const dialogo = ref(false);
+const modoDialogo = ref<"asignar" | "editar">("asignar");
+const funcionEditandoId = ref<string | null>(null);
 const busqueda = ref("");
 const filtroNivel = ref("TODOS");
 const mensaje = ref("");
@@ -42,6 +44,16 @@ const resumen = ref<ResumenAccesosPrincipal>({
 let temporizadorBusqueda: ReturnType<typeof setTimeout> | undefined;
 const catalogo = ref<CatalogoAccesosPrincipal>({ perfiles: [], permisos: [], organizaciones: [] });
 const formulario = reactive({ correo: "", perfilCodigo: "", instalacionRef: null as string | null });
+const correoBloqueado = computed(() => modoDialogo.value === "editar");
+const tituloDialogo = computed(() =>
+  modoDialogo.value === "editar" ? "Editar acceso" : "Asignar acceso",
+);
+const etiquetaGuardar = computed(() => {
+  if (guardando.value) {
+    return modoDialogo.value === "editar" ? "Guardando…" : "Asignando…";
+  }
+  return modoDialogo.value === "editar" ? "Guardar cambios" : "Asignar perfil";
+});
 
 const perfilSeleccionado = computed(() =>
   catalogo.value.perfiles.find((perfil) => perfil.codigo === formulario.perfilCodigo),
@@ -132,6 +144,8 @@ function cambiarPagina(evento: { first: number; rows: number }) {
 }
 
 function abrirAsignacion() {
+  modoDialogo.value = "asignar";
+  funcionEditandoId.value = null;
   Object.assign(formulario, { correo: "", perfilCodigo: "", instalacionRef: null });
   error.value = "";
   dialogo.value = true;
@@ -142,18 +156,46 @@ function asignarA(acceso: AccesoPrincipal) {
   formulario.correo = acceso.correo;
 }
 
-async function asignar() {
+function editarAcceso(acceso: AccesoPrincipal) {
+  if (!acceso.funcionId || acceso.perfilCodigo === "SUPER_ADMIN") return;
+  modoDialogo.value = "editar";
+  funcionEditandoId.value = acceso.funcionId;
+  Object.assign(formulario, {
+    correo: acceso.correo,
+    perfilCodigo: acceso.perfilCodigo ?? "",
+    instalacionRef: acceso.instalacionRef,
+  });
+  error.value = "";
+  dialogo.value = true;
+  sincronizarOrganizacionPredeterminada();
+}
+
+async function guardarAcceso() {
   if (!formularioValido.value) return;
   guardando.value = true;
   error.value = "";
   try {
-    await accesosPrincipalService.asignar(formulario);
+    if (modoDialogo.value === "editar" && funcionEditandoId.value) {
+      await accesosPrincipalService.actualizar({
+        funcionId: funcionEditandoId.value,
+        perfilCodigo: formulario.perfilCodigo,
+        instalacionRef: formulario.instalacionRef,
+      });
+      mensaje.value = `Acceso de ${formulario.correo} actualizado a ${perfilSeleccionado.value?.nombre ?? ""}.`;
+    } else {
+      await accesosPrincipalService.asignar(formulario);
+      mensaje.value = `Acceso ${perfilSeleccionado.value?.nombre ?? ""} asignado correctamente.`;
+      pagina.value = 1;
+    }
     dialogo.value = false;
-    mensaje.value = `Acceso ${perfilSeleccionado.value?.nombre ?? ""} asignado correctamente.`;
-    pagina.value = 1;
     await cargarAccesos();
   } catch (causa) {
-    error.value = causa instanceof Error ? causa.message : "No se pudo asignar el acceso.";
+    error.value =
+      causa instanceof Error
+        ? causa.message
+        : modoDialogo.value === "editar"
+          ? "No se pudo actualizar el acceso."
+          : "No se pudo asignar el acceso.";
   } finally {
     guardando.value = false;
   }
@@ -258,27 +300,106 @@ onBeforeUnmount(() => {
           <Column field="perfilNombre" header="Perfil" style="min-width:14rem"><template #body="{ data }"><strong>{{ data.perfilNombre ?? 'Sin perfil' }}</strong><p class="text-xs text-muted-foreground">{{ data.portal ? `${data.portal} · ${data.permisos.length} permisos` : 'Pendiente de asignación' }}</p></template></Column>
           <Column field="organizacionNombre" header="Espacio" style="min-width:15rem" />
           <Column field="estadoFuncion" header="Estado" style="min-width:9rem"><template #body="{ data }"><Tag :severity="data.estadoFuncion === 'ACTIVA' ? 'success' : data.estadoFuncion === 'SIN_ACCESO' ? 'warn' : 'danger'" :value="data.estadoFuncion === 'SIN_ACCESO' ? 'SIN ACCESO' : data.estadoFuncion" /></template></Column>
-          <Column header="Acciones" style="min-width:12rem"><template #body="{ data }"><Button v-if="data.estadoFuncion === 'SIN_ACCESO'" size="sm" @click="asignarA(data)">Asignar acceso</Button><Button v-else-if="data.perfilCodigo !== 'SUPER_ADMIN'" size="sm" variant="outline" @click="alternarEstado(data)">{{ data.estadoFuncion === 'ACTIVA' ? 'Suspender' : 'Reactivar' }}</Button><span v-else class="text-xs font-bold text-muted-foreground">Acceso raíz protegido</span></template></Column>
+          <Column header="Acciones" style="min-width:14rem">
+            <template #body="{ data }">
+              <div class="flex flex-wrap items-center gap-2">
+                <Button
+                  v-if="data.estadoFuncion === 'SIN_ACCESO'"
+                  size="sm"
+                  @click="asignarA(data)"
+                >
+                  Asignar acceso
+                </Button>
+                <template v-else-if="data.perfilCodigo !== 'SUPER_ADMIN'">
+                  <Button
+                    size="icon"
+                    variant="outline"
+                    :aria-label="`Editar acceso de ${data.nombre}`"
+                    @click="editarAcceso(data)"
+                  >
+                    <Pencil class="h-4 w-4" />
+                  </Button>
+                  <Button size="sm" variant="outline" @click="alternarEstado(data)">
+                    {{ data.estadoFuncion === 'ACTIVA' ? 'Suspender' : 'Reactivar' }}
+                  </Button>
+                </template>
+                <span v-else class="text-xs font-bold text-muted-foreground">
+                  Acceso raíz protegido
+                </span>
+              </div>
+            </template>
+          </Column>
         </DataTable>
       </CardContent>
     </Card>
 
-    <Dialog v-model:visible="dialogo" modal header="Asignar acceso" :style="{ width: 'min(94vw, 46rem)' }">
+    <Dialog v-model:visible="dialogo" modal :header="tituloDialogo" :style="{ width: 'min(94vw, 46rem)' }">
       <div class="grid gap-5">
         <div class="border-l-4 border-l-primary bg-primary/8 p-4 text-sm">
-          La persona debe haber iniciado sesión o haber sido invitada previamente mediante Supabase Auth. Aquí se asigna su función de negocio, no se duplica su identidad.
+          <template v-if="modoDialogo === 'editar'">
+            Cambia el perfil o la organización de este acceso. La identidad Auth no se duplica.
+          </template>
+          <template v-else>
+            La persona debe haber iniciado sesión o haber sido invitada previamente mediante Supabase Auth. Aquí se asigna su función de negocio, no se duplica su identidad.
+          </template>
         </div>
-        <label><span class="filtro-label">Correo de la identidad</span><InputText v-model="formulario.correo" type="email" class="filtro-control w-full" placeholder="persona@organizacion.com" /></label>
-        <label><span class="filtro-label">Perfil a delegar</span><Select v-model="formulario.perfilCodigo" :options="perfilesAsignables" option-label="nombre" option-value="codigo" class="filtro-control w-full" placeholder="Selecciona un perfil" @change="sincronizarOrganizacionPredeterminada" /></label>
-        <label v-if="requiereOrganizacion"><span class="filtro-label">Organización</span><Select v-model="formulario.instalacionRef" :options="catalogo.organizaciones" option-label="nombre" option-value="instalacionId" class="filtro-control w-full" placeholder="Selecciona la organización" /><small class="mt-1 block text-muted-foreground">Tukuy Academy se selecciona por defecto. Podrás cambiarla cuando existan otras organizaciones.</small></label>
+        <label>
+          <span class="filtro-label">Correo de la identidad</span>
+          <InputText
+            v-model="formulario.correo"
+            type="email"
+            class="filtro-control w-full"
+            placeholder="persona@organizacion.com"
+            :disabled="correoBloqueado"
+          />
+        </label>
+        <label>
+          <span class="filtro-label">Perfil a delegar</span>
+          <Select
+            v-model="formulario.perfilCodigo"
+            :options="perfilesAsignables"
+            option-label="nombre"
+            option-value="codigo"
+            class="filtro-control w-full"
+            placeholder="Selecciona un perfil"
+            @change="sincronizarOrganizacionPredeterminada"
+          />
+        </label>
+        <label v-if="requiereOrganizacion">
+          <span class="filtro-label">Organización</span>
+          <Select
+            v-model="formulario.instalacionRef"
+            :options="catalogo.organizaciones"
+            option-label="nombre"
+            option-value="instalacionId"
+            class="filtro-control w-full"
+            placeholder="Selecciona la organización"
+          />
+          <small class="mt-1 block text-muted-foreground">
+            Tukuy Academy se selecciona por defecto. Podrás cambiarla cuando existan otras organizaciones.
+          </small>
+        </label>
         <div v-if="perfilSeleccionado" class="border border-border p-4">
           <p class="font-black">{{ perfilSeleccionado.nombre }}</p>
           <p class="mt-1 text-sm text-muted-foreground">{{ perfilSeleccionado.descripcion }}</p>
-          <div class="mt-3 flex flex-wrap gap-1.5"><Tag v-for="permiso in permisosPlantilla" :key="permiso.id" severity="secondary" :value="permiso.nombre" /></div>
+          <div class="mt-3 flex flex-wrap gap-1.5">
+            <Tag v-for="permiso in permisosPlantilla" :key="permiso.id" severity="secondary" :value="permiso.nombre" />
+          </div>
         </div>
-        <div v-if="error" class="border-l-4 border-l-red-500 bg-red-500/10 p-3 text-sm font-semibold text-red-700 dark:text-red-200">{{ error }}</div>
+        <div v-if="error" class="border-l-4 border-l-red-500 bg-red-500/10 p-3 text-sm font-semibold text-red-700 dark:text-red-200">
+          {{ error }}
+        </div>
       </div>
-      <template #footer><Button variant="outline" @click="dialogo = false">Cancelar</Button><Button :disabled="!formularioValido || guardando" class="bg-primary hover:bg-primary/90" @click="asignar">{{ guardando ? 'Asignando…' : 'Asignar perfil' }}</Button></template>
+      <template #footer>
+        <Button variant="outline" @click="dialogo = false">Cancelar</Button>
+        <Button
+          :disabled="!formularioValido || guardando"
+          class="bg-primary hover:bg-primary/90"
+          @click="guardarAcceso"
+        >
+          {{ etiquetaGuardar }}
+        </Button>
+      </template>
     </Dialog>
   </section>
 </template>

@@ -24,7 +24,12 @@ values
   ('rutas.administrar', 'Administrar rutas', 'Crear y modificar rutas de aprendizaje.', 'APRENDIZAJE'),
   ('reportes.ver', 'Ver reportes', 'Consultar reportes de la organización.', 'REPORTES'),
   ('certificados.ver', 'Ver certificados', 'Consultar certificados emitidos.', 'CERTIFICADOS'),
+  ('certificados.emitir', 'Emitir certificados', 'Emitir certificados académicos a estudiantes.', 'CERTIFICADOS'),
   ('aprendizaje.consumir', 'Consumir aprendizaje', 'Acceder a cursos y progreso personal.', 'APRENDIZAJE'),
+  ('evaluaciones.calificar', 'Calificar evaluaciones', 'Revisar y calificar entregas de estudiantes.', 'APRENDIZAJE'),
+  ('calificaciones.gestionar', 'Gestionar calificaciones', 'Administrar notas y correcciones del curso.', 'APRENDIZAJE'),
+  ('mensajes.enviar', 'Enviar mensajes', 'Comunicarse con estudiantes desde el portal docente.', 'COMUNICACION'),
+  ('analitica.ver', 'Ver analítica', 'Consultar indicadores del portal docente.', 'REPORTES'),
   ('ingresos.ver', 'Ver ingresos', 'Consultar ingresos propios de docencia.', 'FACTURACION')
 on conflict (codigo) do update set
   nombre = excluded.nombre,
@@ -92,7 +97,11 @@ with asignacion(perfil_codigo, permiso_codigo) as (
     ('TRAINING_MANAGER', 'rutas.administrar'), ('TRAINING_MANAGER', 'reportes.ver'),
     ('INSTRUCTOR', 'cursos.ver'), ('INSTRUCTOR', 'cursos.crear'),
     ('INSTRUCTOR', 'cursos.editar'), ('INSTRUCTOR', 'sesiones.gestionar'),
-    ('INSTRUCTOR', 'ingresos.ver'), ('STUDENT', 'cursos.ver'),
+    ('INSTRUCTOR', 'ingresos.ver'), ('INSTRUCTOR', 'estudiantes.ver'),
+    ('INSTRUCTOR', 'evaluaciones.calificar'), ('INSTRUCTOR', 'calificaciones.gestionar'),
+    ('INSTRUCTOR', 'certificados.emitir'), ('INSTRUCTOR', 'certificados.ver'),
+    ('INSTRUCTOR', 'mensajes.enviar'), ('INSTRUCTOR', 'analitica.ver'),
+    ('STUDENT', 'cursos.ver'),
     ('STUDENT', 'aprendizaje.consumir'), ('STUDENT', 'certificados.ver')
 )
 insert into public.perfil_permiso_principal (perfil_principal_id, permiso_principal_id)

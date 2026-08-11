@@ -13,7 +13,6 @@ import {
 import Column from "primevue/column";
 import DataTable from "primevue/datatable";
 import InputText from "primevue/inputtext";
-import ProgressBar from "primevue/progressbar";
 import Select from "primevue/select";
 import Tag from "primevue/tag";
 import Skeleton from "primevue/skeleton";
@@ -216,11 +215,17 @@ const hayFiltros = computed(() => cantidadFiltrosActivos.value > 0);
 
 onMounted(async () => {
   try {
-    [matriculas.value, vinculaciones.value, unidades.value] = await Promise.all([
-      organizacionService.matriculas.listar(),
+    // Matrículas (gateway) primero; catálogos locales después.
+    matriculas.value = await organizacionService.matriculas.listar();
+    cargando.value = false;
+    const [vinculacionesLista, unidadesLista] = await Promise.all([
       organizacionService.estructura.vinculaciones.listar(),
       organizacionService.estructura.unidades.listar(),
     ]);
+    vinculaciones.value = vinculacionesLista;
+    unidades.value = unidadesLista;
+  } catch {
+    // La tabla puede quedar vacía; el empty state lo cubre.
   } finally {
     cargando.value = false;
   }
@@ -244,13 +249,16 @@ function formatoEstado(estado: string) {
   return estado.replace("_", " ");
 }
 
+const formateadorFecha = new Intl.DateTimeFormat("es-PE", {
+  day: "2-digit",
+  month: "short",
+  year: "numeric",
+  timeZone: "UTC",
+});
+
 function formatoFecha(fecha: string) {
-  return new Intl.DateTimeFormat("es-PE", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    timeZone: "UTC",
-  }).format(new Date(`${fecha}T00:00:00Z`));
+  if (!fecha) return "—";
+  return formateadorFecha.format(new Date(`${fecha}T00:00:00Z`));
 }
 
 async function aprobarPendientes(alumno: FilaAlumno) {
@@ -573,11 +581,18 @@ function exportarResultados() {
         <Column field="progreso" header="Progreso" sortable style="min-width: 12rem">
           <template #body="{ data }">
             <div class="flex items-center gap-3">
-              <ProgressBar
-                :value="data.progreso"
-                :show-value="false"
-                class="h-1.5 min-w-28 flex-1"
-              />
+              <div
+                class="h-1.5 min-w-28 flex-1 overflow-hidden bg-muted"
+                role="progressbar"
+                :aria-valuenow="data.progreso"
+                aria-valuemin="0"
+                aria-valuemax="100"
+              >
+                <div
+                  class="h-full bg-primary transition-[width]"
+                  :style="{ width: `${Math.min(100, Math.max(0, data.progreso))}%` }"
+                />
+              </div>
               <strong class="w-9 text-right text-xs">{{ data.progreso }}%</strong>
             </div>
           </template>

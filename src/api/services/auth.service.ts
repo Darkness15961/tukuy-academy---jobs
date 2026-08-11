@@ -4,10 +4,10 @@ import { API } from "@/api/endpoints";
 import { resolveMock } from "@/api/mock";
 import { user as userMock } from "@/data/academia.mock";
 import {
-  buscarCuentaDemo,
-  CUENTAS_DEMO,
-} from "@/data/cuentas-demo.mock";
-import { USUARIO_SESION_KEY, USUARIOS_REGISTRADOS_KEY } from "@/lib/constants";
+  INSTALACION_TUKUY_ACADEMY_ID,
+  USUARIO_SESION_KEY,
+  USUARIOS_REGISTRADOS_KEY,
+} from "@/lib/constants";
 import { env } from "@/lib/env";
 import { supabasePrincipal } from "@/lib/supabase";
 import type { Session, User } from "@supabase/supabase-js";
@@ -95,6 +95,17 @@ type ContextoSupabase = {
 };
 
 async function membresiasDesdeSupabase(): Promise<MembresiaEntrada[]> {
+  // Garantiza portal estudiante en Tukuy Academy (idempotente en principal).
+  const { error: errorAlumno } = await supabasePrincipal().rpc(
+    "asegurar_mi_acceso_alumno_tukuy",
+  );
+  if (errorAlumno) {
+    console.warn(
+      "No se pudo asegurar el acceso de alumno en Tukuy Academy:",
+      errorAlumno.message,
+    );
+  }
+
   const { data, error } = await supabasePrincipal().rpc(
     "obtener_mis_contextos",
   );
@@ -127,12 +138,39 @@ async function respuestaDesdeSesionSupabase(
   sesion: Session,
 ): Promise<LoginResponseDto> {
   const memberships = await membresiasDesdeSupabase();
-  if (memberships.some((membresia) => membresia.organizacion?.id === "30000000-0000-4000-8000-000000000001")) {
-    void supabasePrincipal().functions.invoke("secondary-gateway", {
-      body: { action: "sync-access" },
-    }).then(({ error }) => {
-      if (error) console.warn("No se pudo sincronizar el acceso secundario:", error.message);
-    });
+  const debeSincronizarSecundaria = memberships.some(
+    (membresia) =>
+      membresia.organizacion?.id === INSTALACION_TUKUY_ACADEMY_ID ||
+      membresia.portal === "admin" ||
+      membresia.rol === "SUPER_ADMIN",
+  );
+  if (debeSincronizarSecundaria) {
+    const SYNC_KEY = "tukuy_sync_secundaria_at";
+    const SYNC_TTL_MS = 5 * 60_000;
+    const ultima = Number(
+      typeof localStorage !== "undefined"
+        ? localStorage.getItem(SYNC_KEY) || 0
+        : 0,
+    );
+    if (Date.now() - ultima >= SYNC_TTL_MS) {
+      try {
+        localStorage.setItem(SYNC_KEY, String(Date.now()));
+      } catch {
+        // ignore quota / private mode
+      }
+      void supabasePrincipal()
+        .functions.invoke("secondary-gateway", {
+          body: { action: "sync-access" },
+        })
+        .then(({ error }) => {
+          if (error) {
+            console.warn(
+              "No se pudo sincronizar el acceso secundario:",
+              error.message,
+            );
+          }
+        });
+    }
   }
   return {
     token: sesion.access_token,
@@ -251,6 +289,98 @@ function normalizarCorreo(correo: string) {
   return correo.trim().toLowerCase();
 }
 
+const CORREO_VALIDO = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function esCorreoValido(correo: string) {
+  return CORREO_VALIDO.test(correo);
+}
+
+function validarCredencialesLogin(correoRaw: string, password: string) {
+  const correo = normalizarCorreo(correoRaw);
+  if (!correo || !password.trim()) {
+    throw new Error("Ingresa tu correo y clave");
+  }
+  if (!esCorreoValido(correo)) {
+    throw new Error("Ingresa un correo válido (ejemplo: nombre@empresa.com)");
+  }
+  return { correo, password };
+}
+
+/** Traduce mensajes frecuentes de Supabase Auth al español. */
+function mensajeAuthSupabase(mensaje: string): string {
+  const texto = mensaje.trim();
+  const lower = texto.toLowerCase();
+
+  if (
+    lower.includes("invalid login credentials") ||
+    lower.includes("invalid credentials")
+  ) {
+    return "Correo o clave incorrectos";
+  }
+  if (lower.includes("email not confirmed")) {
+    return "Confirma tu correo antes de iniciar sesión. Revisa tu bandeja de entrada.";
+  }
+  if (lower.includes("user already registered")) {
+    return "Ya existe una cuenta con ese correo";
+  }
+  if (lower.includes("password should be at least")) {
+    return "La clave debe tener al menos 6 caracteres";
+  }
+  if (
+    lower.includes("rate limit") ||
+    lower.includes("too many requests") ||
+    lower.includes("email rate limit")
+  ) {
+    return "Demasiados intentos. Espera un momento e inténtalo de nuevo.";
+  }
+  if (lower.includes("signup is disabled")) {
+    return "El registro está deshabilitado. Contacta al administrador.";
+  }
+  if (
+    lower.includes("unable to validate email") ||
+    lower.includes("invalid email")
+  ) {
+    return "Ingresa un correo válido";
+  }
+  if (lower.includes("network") || lower.includes("failed to fetch")) {
+    return "No se pudo conectar con el servidor de autenticación. Revisa tu conexión.";
+  }
+  return texto;
+}
+
+function errorAuthSupabase(error: { message?: string } | null | undefined): Error {
+  return new Error(
+    mensajeAuthSupabase(error?.message || "No se pudo completar la autenticación"),
+  );
+}
+
+async function esperarSesionSupabase(intentos = 8, esperaMs = 150) {
+  const cliente = supabasePrincipal();
+
+  for (let i = 0; i < intentos; i += 1) {
+    const { data, error } = await cliente.auth.getSession();
+    if (error) throw errorAuthSupabase(error);
+    if (data.session) return data.session;
+
+    // Solo canjea si aún no hay sesión (evita doble exchange con detectSessionInUrl).
+    if (i === 0) {
+      const codigo = new URL(window.location.href).searchParams.get("code");
+      if (codigo) {
+        const { data: canje, error: errorCanje } =
+          await cliente.auth.exchangeCodeForSession(codigo);
+        if (errorCanje) throw errorAuthSupabase(errorCanje);
+        if (canje.session) return canje.session;
+      }
+    }
+
+    await new Promise((r) => setTimeout(r, esperaMs));
+  }
+
+  throw new Error(
+    "No se encontró una sesión activa. Vuelve a iniciar sesión.",
+  );
+}
+
 function validarRegistro(datos: RegistroRequestDto) {
   const nombre = datos.nombre.trim();
   const apellidos = datos.apellidos.trim();
@@ -260,7 +390,7 @@ function validarRegistro(datos: RegistroRequestDto) {
   if (!nombre || !apellidos) {
     throw new Error("Ingresa tu nombre y apellidos");
   }
-  if (!correo || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(correo)) {
+  if (!correo || !esCorreoValido(correo)) {
     throw new Error("Ingresa un correo válido");
   }
   if (password.length < 6) {
@@ -274,26 +404,15 @@ export const authService = {
   listarUsuariosRegistrados: leerUsuariosRegistrados,
 
   async login(credentials: LoginRequestDto): Promise<LoginResponseDto> {
+    const { correo, password } = validarCredencialesLogin(
+      credentials.dni,
+      credentials.password,
+    );
+
     if (usarAuthMock()) {
-      const username = credentials.dni.trim();
-      const password = credentials.password.trim();
-
-      if (!username || !password) {
-        throw new Error("Ingresa tu correo y clave");
-      }
-
-      const cuentaDemo = buscarCuentaDemo(username, password);
-      if (cuentaDemo) {
-        return resolveMock({
-          token: `mock-token-${cuentaDemo.alias}`,
-          user: cuentaDemo.perfil,
-          memberships: cuentaDemo.membresias,
-        });
-      }
-
       const cuenta = leerUsuariosRegistrados().find(
         (item) =>
-          normalizarCorreo(item.correo) === normalizarCorreo(username) &&
+          normalizarCorreo(item.correo) === correo &&
           item.password === password,
       );
 
@@ -306,17 +425,27 @@ export const authService = {
 
     if (env.authProvider === "supabase") {
       const { data, error } = await supabasePrincipal().auth.signInWithPassword({
-        email: credentials.dni.trim().toLowerCase(),
-        password: credentials.password,
+        email: correo,
+        password,
       });
-      if (error) throw new Error(error.message);
-      if (!data.session) throw new Error("Supabase no devolvió una sesión activa");
-      return respuestaDesdeSesionSupabase(data.session);
+      if (error) throw errorAuthSupabase(error);
+      if (!data.session) {
+        throw new Error("No se pudo iniciar sesión. Inténtalo de nuevo.");
+      }
+      try {
+        return await respuestaDesdeSesionSupabase(data.session);
+      } catch (err) {
+        const detalle =
+          err instanceof Error ? err.message : "Error al cargar tus accesos";
+        throw new Error(
+          `Sesión iniciada, pero no se pudieron cargar tus perfiles: ${detalle}`,
+        );
+      }
     }
 
     const { data } = await api.post<RespuestaAuthApi>(API.auth.login, {
-      correo: credentials.dni.trim().toLowerCase(),
-      password: credentials.password,
+      correo,
+      password,
     });
     return normalizarRespuestaAuth(data);
   },
@@ -332,14 +461,6 @@ export const authService = {
         )
       ) {
         throw new Error("Ya existe una cuenta con ese correo");
-      }
-
-      if (
-        CUENTAS_DEMO.some(
-          (cuenta) => normalizarCorreo(cuenta.correo) === validados.correo,
-        )
-      ) {
-        throw new Error("Ese correo está reservado para una cuenta demo");
       }
 
       const cuenta: UsuarioRegistradoDto = {
@@ -372,7 +493,7 @@ export const authService = {
           emailRedirectTo: `${env.appUrl.replace(/\/$/, "")}/auth/callback`,
         },
       });
-      if (error) throw new Error(error.message);
+      if (error) throw errorAuthSupabase(error);
       if (!data.session) {
         throw new Error(
           "Cuenta creada. Revisa tu correo para confirmar el registro antes de iniciar sesión.",
@@ -389,6 +510,36 @@ export const authService = {
       password_confirmation: datos.password,
     });
     return normalizarRespuestaAuth(data);
+  },
+
+  async solicitarRecuperacionClave(correoRaw: string): Promise<void> {
+    const correo = normalizarCorreo(correoRaw);
+    if (!correo || !esCorreoValido(correo)) {
+      throw new Error("Ingresa un correo válido para recuperar tu clave");
+    }
+
+    if (usarAuthMock()) {
+      const existe = leerUsuariosRegistrados().some(
+        (item) => normalizarCorreo(item.correo) === correo,
+      );
+      if (!existe) {
+        throw new Error("No hay una cuenta registrada con ese correo");
+      }
+      return;
+    }
+
+    if (env.authProvider !== "supabase") {
+      throw new Error(
+        "La recuperación de clave solo está disponible con Supabase Auth",
+      );
+    }
+
+    const redirectTo = `${env.appUrl.replace(/\/$/, "")}/auth/callback`;
+    const { error } = await supabasePrincipal().auth.resetPasswordForEmail(
+      correo,
+      { redirectTo },
+    );
+    if (error) throw errorAuthSupabase(error);
   },
 
   async loginConGoogle(destinoDespues?: string): Promise<LoginResponseDto | null> {
@@ -429,7 +580,7 @@ export const authService = {
         provider: "google",
         options: { redirectTo: callback.toString() },
       });
-      if (error) throw new Error(error.message);
+      if (error) throw errorAuthSupabase(error);
       return null;
     }
 
@@ -441,7 +592,7 @@ export const authService = {
     if (usarAuthMock()) return;
     if (env.authProvider === "supabase") {
       const { error } = await supabasePrincipal().auth.signOut();
-      if (error) throw new Error(error.message);
+      if (error) throw errorAuthSupabase(error);
       return;
     }
     await api.post(API.auth.logout);
@@ -451,10 +602,16 @@ export const authService = {
     if (env.authProvider !== "supabase") {
       throw new Error("La recuperación OAuth solo está disponible con Supabase Auth");
     }
-    const { data, error } = await supabasePrincipal().auth.getSession();
-    if (error) throw new Error(error.message);
-    if (!data.session) throw new Error("No se encontró una sesión de Supabase");
-    return respuestaDesdeSesionSupabase(data.session);
+    const sesion = await esperarSesionSupabase();
+    try {
+      return await respuestaDesdeSesionSupabase(sesion);
+    } catch (err) {
+      const detalle =
+        err instanceof Error ? err.message : "Error al cargar tus accesos";
+      throw new Error(
+        `Sesión iniciada, pero no se pudieron cargar tus perfiles: ${detalle}`,
+      );
+    }
   },
 
   async me(): Promise<UserProfileDto> {
@@ -471,7 +628,7 @@ export const authService = {
     }
     if (env.authProvider === "supabase") {
       const { data, error } = await supabasePrincipal().auth.getUser();
-      if (error) throw new Error(error.message);
+      if (error) throw errorAuthSupabase(error);
       return perfilDesdeSupabase(data.user);
     }
     const { data } = await api.get<UsuarioApiDto | { user: UsuarioApiDto }>(

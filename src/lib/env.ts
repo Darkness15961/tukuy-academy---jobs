@@ -5,6 +5,8 @@ type EnvConfig = {
   supabasePrimaryUrl: string;
   supabasePrimaryAnonKey: string;
   useMock: boolean;
+  /** Lee cursos del portal docente desde la secundaria vía gateway. */
+  secundariaCursos: boolean;
   isProduction: boolean;
 };
 
@@ -19,6 +21,8 @@ function readEnv(): EnvConfig {
   const supabasePrimaryAnonKey =
     import.meta.env.VITE_SUPABASE_PRIMARY_ANON_KEY?.trim() || "";
   const useMock = import.meta.env.VITE_USE_MOCK !== "false";
+  const secundariaCursos =
+    import.meta.env.VITE_SECUNDARIA_CURSOS === "true";
 
   if (authProvider === "supabase") {
     if (!supabasePrimaryUrl || !supabasePrimaryAnonKey) {
@@ -55,6 +59,7 @@ function readEnv(): EnvConfig {
     supabasePrimaryUrl,
     supabasePrimaryAnonKey,
     useMock,
+    secundariaCursos,
     isProduction,
   };
 }

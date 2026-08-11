@@ -779,10 +779,11 @@ const router = createRouter({
 
 router.beforeEach(async (to) => {
   let token = localStorage.getItem(AUTH_TOKEN_KEY);
-  if (env.authProvider === "supabase" && !env.useMock) {
+  if (env.authProvider === "supabase") {
     const { data } = await supabasePrincipal().auth.getSession();
     token = data.session?.access_token ?? null;
     if (token) localStorage.setItem(AUTH_TOKEN_KEY, token);
+    else localStorage.removeItem(AUTH_TOKEN_KEY);
   }
   const contextoGuardado = localStorage.getItem(CONTEXTO_SESION_KEY);
   if (to.meta.requiresAuth && !token) {

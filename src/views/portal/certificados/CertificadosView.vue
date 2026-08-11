@@ -12,20 +12,80 @@ import {
   CheckCircle2,
   AlertTriangle,
 } from "lucide-vue-next";
-import { computed, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 
 import PortalSection from "@/components/shared/PortalSection.vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { apiConfig } from "@/api/config";
+import { secundariaGatewayService } from "@/api/services/secundaria-gateway.service";
 import type { Course } from "@/types/academia";
 import { downloadPortfolioPdf } from "@/lib/certificado-pdf";
 import { usePortalContext } from "../composables/usePortalContext";
 
 const portal = usePortalContext();
 
-const simulatedCertificates = computed<Course[]>(() => [
+type MetaCertificado = {
+  codigo: string;
+  fecha: string;
+  horas: number;
+};
+
+const emitidosSecundaria = ref<Course[]>([]);
+const metaPorCursoId = ref<Record<string, MetaCertificado>>({});
+const cargandoCertificados = ref(apiConfig.secundariaCursos);
+
+onMounted(async () => {
+  if (!apiConfig.secundariaCursos) return;
+  try {
+    const data = await secundariaGatewayService.listarMisCertificados();
+    const meta: Record<string, MetaCertificado> = {};
+    emitidosSecundaria.value = (data.emitidos ?? []).map((item) => {
+      const fecha = item.fecha
+        ? new Date(item.fecha).toLocaleDateString("es-PE", {
+            day: "2-digit",
+            month: "short",
+            year: "numeric",
+          })
+        : "—";
+      meta[item.cursoId] = {
+        codigo: item.codigoVerificacion || item.id,
+        fecha,
+        horas: Number(item.horasCertificadas ?? 0),
+      };
+      return {
+        id: item.cursoId,
+        title: item.curso,
+        category: "Academia",
+        duration: `${Number(item.horasCertificadas ?? 0) || 1} h`,
+        level: "Certificado",
+        mode: "Virtual",
+        progress: 100,
+        status: "Completado",
+        pricing: "free",
+        price: 0,
+        imageTone: "from-slate-700 to-slate-900",
+        image:
+          "https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?auto=format&fit=crop&w=900&q=80",
+        origen: "tukuy",
+        alcance: "PUBLICO",
+      } satisfies Course;
+    });
+    metaPorCursoId.value = meta;
+  } catch (error) {
+    console.warn("No se pudieron cargar certificados del alumno", error);
+  } finally {
+    cargandoCertificados.value = false;
+  }
+});
+
+const simulatedCertificates = computed<Course[]>(() => {
+  if (apiConfig.secundariaCursos) {
+    return [...emitidosSecundaria.value];
+  }
+  return [
   ...portal.completedCourses.value,
   {
     id: "c-010",
@@ -69,7 +129,8 @@ const simulatedCertificates = computed<Course[]>(() => [
     image:
       "https://images.unsplash.com/photo-1551836022-d5d88e9218df?auto=format&fit=crop&w=900&q=80",
   },
-]);
+];
+});
 
 const featuredCertificate = computed(() => simulatedCertificates.value[0]);
 
@@ -84,7 +145,11 @@ const metrics = computed(() => [
   },
   {
     label: "Horas certificadas",
-    value: `${simulatedCertificates.value.reduce((total, course) => total + Number.parseInt(course.duration, 10), 0)}`,
+    value: `${simulatedCertificates.value.reduce((total, course) => {
+      const meta = metaPorCursoId.value[course.id];
+      if (meta) return total + meta.horas;
+      return total + Number.parseInt(course.duration, 10);
+    }, 0)}`,
     detail: "horas acumuladas",
     icon: CalendarCheck,
     image:
@@ -109,10 +174,14 @@ const metrics = computed(() => [
 ]);
 
 function certificateCode(course: Course) {
+  const meta = metaPorCursoId.value[course.id];
+  if (meta?.codigo) return meta.codigo;
   return `TA-2026-${course.id.replace("c-", "").padStart(4, "0")}`;
 }
 
 function issuedDate(course: Course, index: number) {
+  const meta = metaPorCursoId.value[course.id];
+  if (meta?.fecha) return meta.fecha;
   const dates: Record<string, string> = {
     "c-001": "15 jun 2026",
     "c-003": "28 may 2026",
@@ -160,8 +229,10 @@ function handleVerifyCode() {
     isVerifying.value = false;
     const code = verificationCode.value.trim().toUpperCase();
     const found = simulatedCertificates.value.find((c) => {
+      const codeMeta = metaPorCursoId.value[c.id]?.codigo?.toUpperCase();
       const suffix = c.id.replace("c-", "").padStart(4, "0");
       return (
+        code === codeMeta ||
         code === `TA-2026-${suffix}` ||
         code === c.id.toUpperCase() ||
         code === `TA-2026-${c.id.replace("c-", "")}`
@@ -175,8 +246,8 @@ function handleVerifyCode() {
         certificate: {
           title: found.title,
           category: found.category,
-          code: `TA-2026-${found.id.replace("c-", "").padStart(4, "0")}`,
-          issuedAt: "07 jul 2026",
+          code: certificateCode(found),
+          issuedAt: issuedDate(found, 0),
           duration: found.duration,
           mode: found.mode,
         },

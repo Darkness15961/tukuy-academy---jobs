@@ -18,9 +18,18 @@ import {
   usuariosAdministracion,
 } from "@/administracion-tukuy/data/administracion.mock";
 import type { OrganizacionAdministrada } from "@/administracion-tukuy/data/administracion.mock";
+import type { ModalidadCursoAdmin } from "@/administracion-tukuy/data/administracion.mock";
+import type { EstadoRevisionCurso } from "@/administracion-tukuy/data/administracion.mock";
+import { INSTALACION_TUKUY_ACADEMY_ID } from "@/lib/constants";
+import type { CursoCatalogoPrincipal } from "@/lib/contrato-secundaria";
+import { supabasePrincipal } from "@/lib/supabase";
+import { secundariaGatewayService } from "@/api/services/secundaria-gateway.service";
 
 export type UsuarioAdministrado = (typeof usuariosAdministracion)[number];
-export type CursoAdministrado = (typeof cursosRevisionAdministracion)[number];
+export type CursoAdministrado = (typeof cursosRevisionAdministracion)[number] & {
+  cursoSecundarioRef?: string;
+  estadoPublicacion?: string;
+};
 export type FacturaAdministrada = (typeof facturasAdministracion)[number];
 export type PlanAdministrado = (typeof planesAdministracion)[number];
 export type EventoAuditoria = (typeof eventosAuditoria)[number];
@@ -42,11 +51,87 @@ const usuarios = crearRepositorioLocal({
   semilla: usuariosAdministracion,
 });
 
-const cursos = crearRepositorioLocal({
+const cursosRepositorio = crearRepositorioLocal({
   clave: "tukuy_demo_admin_cursos_v2",
   ruta: API.administracion.cursos,
   semilla: cursosRevisionAdministracion,
 });
+
+function mapearEstadoCatalogo(estadoPublicacion: string): EstadoRevisionCurso {
+  const valor = estadoPublicacion.toUpperCase();
+  if (valor === "PUBLICADO" || valor === "APROBADO") return "APROBADO";
+  if (valor === "RETIRADO" || valor === "OBSERVADO") return "OBSERVADO";
+  return "EN_REVISION";
+}
+
+function mapearModalidadCatalogo(modalidad: string): ModalidadCursoAdmin {
+  const valor = modalidad.toUpperCase();
+  if (valor === "EN_VIVO" || valor === "PRESENCIAL") return "EN_VIVO";
+  if (valor === "HIBRIDA" || valor === "HIBRIDO") return "HIBRIDA";
+  if (valor === "MIXTO") return "MIXTO";
+  return "VIRTUAL";
+}
+
+function mapearCursoCatalogo(item: CursoCatalogoPrincipal): CursoAdministrado {
+  const historicos = item.datosHistoricos ?? {};
+  const minutos = item.duracionMinutos ?? 60;
+  const horas = Math.max(1, Math.round(minutos / 60));
+  return {
+    id: item.id,
+    titulo: item.titulo,
+    docente: String(historicos.docente ?? historicos.autorNombre ?? "—"),
+    organizacion: "Tukuy Academy",
+    organizacionId: item.instalacionId,
+    categoria: String(historicos.categoria ?? "Catálogo"),
+    enviado: (item.publicadoEn ?? item.creadoEn ?? "").slice(0, 10),
+    lecciones: Number(historicos.totalModulos ?? historicos.lecciones ?? 0),
+    duracion: `${horas} h`,
+    version: String(item.versionPublicada),
+    modalidad: mapearModalidadCatalogo(item.modalidad),
+    precio: Number(historicos.precio ?? 0),
+    certificado: true,
+    estado: mapearEstadoCatalogo(item.estadoPublicacion),
+    cursoSecundarioRef: item.cursoSecundarioRef,
+    estadoPublicacion: item.estadoPublicacion,
+  };
+}
+
+const cursos = {
+  ...cursosRepositorio,
+  async listar(): Promise<CursoAdministrado[]> {
+    if (apiConfig.secundariaCursos) {
+      const { data, error } = await supabasePrincipal().rpc(
+        "admin_listar_cursos_catalogo",
+        { p_instalacion_id: INSTALACION_TUKUY_ACADEMY_ID },
+      );
+      if (error) throw new Error(error.message);
+      const cursosCatalogo = (data?.cursos ?? []) as CursoCatalogoPrincipal[];
+      return cursosCatalogo.map(mapearCursoCatalogo);
+    }
+    return cursosRepositorio.listar();
+  },
+  async actualizar(id: string, cambios: Partial<CursoAdministrado>) {
+    if (apiConfig.secundariaCursos) {
+      const lista = await this.listar();
+      const actual = lista.find((curso) => curso.id === id);
+      if (!actual?.cursoSecundarioRef) {
+        throw new Error("El curso de catálogo no tiene referencia secundaria");
+      }
+      if (cambios.estado === "APROBADO") {
+        await secundariaGatewayService.publicarCurso({
+          cursoId: actual.cursoSecundarioRef,
+          estadoPublicacion: "PUBLICADO",
+        });
+      }
+      const refresco = await this.listar();
+      return refresco.find((curso) => curso.id === id) ?? {
+        ...actual,
+        ...cambios,
+      };
+    }
+    return cursosRepositorio.actualizar(id, cambios);
+  },
+};
 
 const planes = crearRepositorioLocal({
   clave: "tukuy_demo_admin_planes",
@@ -216,6 +301,42 @@ export const administracionService = {
   sesiones,
 
   registrarOrganizacionConResponsables,
+
+  async publicarCursoSecundario(
+    cursoSecundarioId: string,
+    estadoPublicacion: "PUBLICADO" | "EN_REVISION" = "PUBLICADO",
+  ) {
+    return secundariaGatewayService.publicarCurso({
+      cursoId: cursoSecundarioId,
+      estadoPublicacion,
+    });
+  },
+
+  async sincronizarCatalogoDesdeSecundaria() {
+    const listado = await secundariaGatewayService.listarCursos();
+    const existentes = await this.cursos.listar();
+    const refs = new Set(
+      existentes
+        .map((curso) => curso.cursoSecundarioRef)
+        .filter((ref): ref is string => Boolean(ref)),
+    );
+    const resultados = [];
+    for (const curso of listado.cursos) {
+      if (refs.has(curso.id)) continue;
+      const estado =
+        curso.estado.toUpperCase() === "PUBLICADO"
+          ? "PUBLICADO"
+          : "EN_REVISION";
+      resultados.push(
+        await this.publicarCursoSecundario(curso.id, estado),
+      );
+    }
+    return {
+      totalSecundaria: listado.total,
+      publicadosAhora: resultados.length,
+      catalogo: await this.cursos.listar(),
+    };
+  },
 
   async obtenerConfiguracion() {
     if (apiConfig.useMock) return configuracionLocal.leer();

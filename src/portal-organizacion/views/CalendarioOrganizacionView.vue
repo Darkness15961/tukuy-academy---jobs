@@ -37,11 +37,7 @@ async function cargar() {
   if (!contextoActivo.value) return;
   const [lista, cursosCal] = await Promise.all([
     organizacionService.sesionesEnVivo.listar(),
-    Promise.resolve(
-      sesionesEnVivoCompartidas.listarCursosParaCalendario(
-        contextoActivo.value,
-      ),
-    ),
+    sesionesEnVivoCompartidas.listarCursosParaCalendario(contextoActivo.value),
   ]);
   sesiones.value = lista;
   cursos.value = cursosCal.map((c) => ({ id: c.id, titulo: c.titulo }));
@@ -141,7 +137,7 @@ function etiquetaEstado(estado: SesionEnVivoOrganizacion["estado"]) {
 
     <CalendarioSesionesEnVivo
       :titulo="`Clases en vivo · ${contextoActivo?.organizacionNombre ?? 'Organización'}`"
-      descripcion="Calendario exclusivo de sesiones sincrónicas (Meet). Separado del catálogo de cursos virtuales asíncronos; misma lógica de vínculo por curso."
+      descripcion="Calendario exclusivo de sesiones sincrónicas (Meet simulado). Separado del catálogo de cursos virtuales asíncronos; misma lógica de vínculo por curso."
       :cargando="cargando"
       :sesiones="sesiones"
       :cursos="cursos"

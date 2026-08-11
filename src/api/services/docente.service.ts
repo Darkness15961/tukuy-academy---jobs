@@ -7,6 +7,8 @@ import {
   crearRepositorioLocal,
 } from "@/api/repositorio-local";
 import { CONTEXTO_SESION_KEY } from "@/lib/constants";
+import { mapearCursoSecundariaADocente, mapearDocumentoABorrador, mapearSesionSecundariaADocente } from "@/api/services/mapper-curso-secundaria";
+import { secundariaGatewayService } from "@/api/services/secundaria-gateway.service";
 import { sesionesEnVivoCompartidas } from "@/api/services/sesiones-en-vivo-compartidas.service";
 import {
   actividadRecienteDocente,
@@ -349,6 +351,14 @@ const cursosRepositorio = crearRepositorioDocente(
 const cursos = {
   ...cursosRepositorio,
   async listar() {
+    if (apiConfig.secundariaCursos) {
+      const contexto = obtenerContextoActual();
+      const listado = await secundariaGatewayService.listarCursos();
+      return listado.cursos.map((curso) =>
+        mapearCursoSecundariaADocente(curso, contexto),
+      );
+    }
+
     const registros = await cursosRepositorio.listar();
     if (!apiConfig.useMock) return registros;
     const actualizados = registros.map((curso) => ({
@@ -379,6 +389,16 @@ const cursos = {
     }
     return actualizados;
   },
+  async obtener(id: string) {
+    if (apiConfig.secundariaCursos) {
+      if (esCursoTemporal(id)) {
+        throw new Error("Curso no encontrado");
+      }
+      const curso = await secundariaGatewayService.obtenerCurso(id);
+      return mapearCursoSecundariaADocente(curso, obtenerContextoActual());
+    }
+    return cursosRepositorio.obtener(id);
+  },
 };
 const estudiantesRepositorio = crearRepositorioDocente(
   "estudiantes",
@@ -388,6 +408,25 @@ const estudiantesRepositorio = crearRepositorioDocente(
 const estudiantes = {
   ...estudiantesRepositorio,
   async listar() {
+    if (apiConfig.secundariaCursos) {
+      const listado = await secundariaGatewayService.listarEstudiantes();
+      return listado.estudiantes.map(
+        (item): EstudianteDocente => ({
+          id: item.id,
+          alumnoId: item.alumnoId,
+          cursoId: item.cursoId,
+          nombre: item.nombre,
+          iniciales: item.iniciales,
+          curso: item.curso,
+          organizacion: item.organizacion,
+          progreso: Number(item.progreso ?? 0),
+          ultimoAcceso: item.ultimoAcceso,
+          ultimoAccesoFecha: item.ultimoAccesoFecha,
+          fechaInscripcion: item.fechaInscripcion,
+          estado: item.estado,
+        }),
+      );
+    }
     const registros = await estudiantesRepositorio.listar();
     if (!apiConfig.useMock) return registros;
     const cursosInstitucionales = new Set(["doc-1", "doc-3", "doc-5"]);
@@ -424,6 +463,10 @@ const sesionesRepositorio = crearRepositorioDocente(
 
 const sesiones = {
   async listar(): Promise<SesionDocente[]> {
+    if (apiConfig.secundariaCursos) {
+      const listado = await secundariaGatewayService.listarSesiones();
+      return listado.sesiones.map(mapearSesionSecundariaADocente);
+    }
     const contexto = obtenerContextoActual();
     const lista = await sesionesEnVivoCompartidas.listarParaContexto(contexto);
     return lista.map(sesionesEnVivoCompartidas.aSesionDocente);
@@ -433,6 +476,21 @@ const sesiones = {
     return lista.find((item) => item.id === id) ?? null;
   },
   async crear(sesion: SesionDocente) {
+    if (apiConfig.secundariaCursos) {
+      const inicio = new Date(sesion.fechaHoraIso ?? Date.now());
+      const minutos = Number.parseInt(sesion.duracion, 10) || 60;
+      const fin = new Date(inicio.getTime() + minutos * 60_000);
+      const creada = await secundariaGatewayService.crearSesion({
+        cursoId: sesion.cursoId,
+        titulo: sesion.titulo,
+        iniciaEn: inicio.toISOString(),
+        terminaEn: fin.toISOString(),
+        urlAcceso:
+          sesion.enlace ??
+          `https://meet.google.com/tuk-${Math.random().toString(36).slice(2, 6)}`,
+      });
+      return mapearSesionSecundariaADocente(creada.sesion);
+    }
     const contexto = obtenerContextoActual();
     const creada = await sesionesEnVivoCompartidas.programar({
       organizacionId: sesionesEnVivoCompartidas.claveSesionesContexto(contexto),
@@ -451,47 +509,410 @@ const sesiones = {
     });
     return sesionesEnVivoCompartidas.aSesionDocente(creada);
   },
-  actualizar: (id: string, cambios: Partial<SesionDocente>) =>
-    sesionesRepositorio.actualizar(id, cambios),
-  eliminar: (id: string) => sesionesRepositorio.eliminar(id),
+  async actualizar(id: string, cambios: Partial<SesionDocente>) {
+    if (apiConfig.secundariaCursos) {
+      const actual = await this.obtener(id);
+      if (!actual) throw new Error("Sesión no encontrada");
+      const inicio = cambios.fechaHoraIso
+        ? new Date(cambios.fechaHoraIso)
+        : new Date(actual.fechaHoraIso ?? Date.now());
+      const minutos =
+        Number.parseInt(cambios.duracion ?? actual.duracion, 10) || 60;
+      const fin = new Date(inicio.getTime() + minutos * 60_000);
+      let resultado = await secundariaGatewayService.actualizarSesion({
+        sesionId: id,
+        titulo: cambios.titulo ?? actual.titulo,
+        iniciaEn: inicio.toISOString(),
+        terminaEn: fin.toISOString(),
+        urlAcceso: cambios.enlace ?? actual.enlace ?? null,
+      });
+      if (cambios.estado && cambios.estado !== actual.estado) {
+        resultado = await secundariaGatewayService.actualizarEstadoSesion(
+          id,
+          cambios.estado,
+        );
+      }
+      return mapearSesionSecundariaADocente(resultado.sesion);
+    }
+    return sesionesRepositorio.actualizar(id, cambios);
+  },
+  async eliminar(id: string) {
+    if (apiConfig.secundariaCursos) {
+      await secundariaGatewayService.eliminarSesion(id);
+      return;
+    }
+    return sesionesRepositorio.eliminar(id);
+  },
   reemplazar: (regs: SesionDocente[]) => sesionesRepositorio.reemplazar(regs),
   reiniciar: () => sesionesRepositorio.reiniciar(),
 };
-const conversaciones = crearRepositorioDocente(
+const conversacionesRepositorio = crearRepositorioDocente(
   "conversaciones",
   API.docente.conversaciones,
   conversacionesDelContexto,
 );
+const conversaciones = {
+  ...conversacionesRepositorio,
+  async listar() {
+    if (apiConfig.secundariaCursos) {
+      const data = await secundariaGatewayService.listarConversaciones();
+      return (data.conversaciones ?? []).map(
+        (item): ConversacionDocente => ({
+          id: item.id,
+          nombre: item.nombre,
+          iniciales: item.iniciales,
+          mensaje: item.mensaje,
+          hora: item.hora,
+          noLeidos: Number(item.noLeidos ?? 0),
+          mensajes: [],
+        }),
+      );
+    }
+    return conversacionesRepositorio.listar();
+  },
+  async obtener(id: string) {
+    if (apiConfig.secundariaCursos) {
+      const lista = await this.listar();
+      const base = lista.find((item) => item.id === id);
+      if (!base) return null;
+      const mensajes = await secundariaGatewayService.obtenerMensajes(id);
+      return {
+        ...base,
+        mensajes: (mensajes.mensajes ?? []).map((mensaje) => ({
+          id: mensaje.id,
+          contenido: mensaje.contenido,
+          hora: mensaje.hora,
+          autor: mensaje.autor,
+          adjunto: mensaje.adjunto ?? undefined,
+        })),
+        noLeidos: 0,
+      };
+    }
+    return conversacionesRepositorio.obtener(id);
+  },
+};
 const calificaciones = crearRepositorioDocente(
   "calificaciones",
   API.docente.calificaciones,
   calificacionesDelContexto,
 );
-const certificados = crearRepositorioDocente(
+const certificadosRepositorio = crearRepositorioDocente(
   "certificados",
   API.docente.certificados,
   certificadosDelContexto,
 );
-const certificadosPendientes = crearRepositorioDocente(
+const certificadosPendientesRepositorio = crearRepositorioDocente(
   "certificados_pendientes",
   API.docente.certificadosPendientes,
   pendientesDelContexto,
 );
-const ingresos = crearRepositorioDocente(
+
+function mapearCertificadoEmitidoSecundaria(
+  item: import("@/lib/contrato-secundaria").CertificadoEmitidoSecundaria,
+): CertificadoEmitidoDocente {
+  const fecha = item.emitidoEn || item.fecha;
+  return {
+    id: item.codigoVerificacion || item.id,
+    nombre: item.nombre,
+    curso: item.curso,
+    fecha: fecha
+      ? new Intl.DateTimeFormat("es-PE", {
+          day: "2-digit",
+          month: "short",
+          year: "numeric",
+        }).format(new Date(fecha))
+      : "—",
+    estado: "EMITIDO",
+    cursoId: item.cursoId,
+    estudianteId: item.estudianteId,
+    notaFinal: item.notaFinal ?? undefined,
+    horasCertificadas: item.horasCertificadas,
+    modulosCompletados: item.modulosCompletados,
+    versionPrograma: item.versionPrograma,
+    organizacionEmisora: item.organizacionEmisora,
+  };
+}
+
+function mapearCertificadoPendienteSecundaria(
+  item: import("@/lib/contrato-secundaria").CertificadoPendienteSecundaria,
+): CertificadoPendienteDocente {
+  return {
+    id: item.id,
+    nombre: item.nombre,
+    curso: item.curso,
+    nota: Number(item.nota ?? 0),
+    cursoId: item.cursoId,
+    estudianteId: item.estudianteId,
+    horasCumplidas: item.horasCumplidas,
+    horasRequeridas: item.horasRequeridas,
+    modulosCompletados: item.modulosCompletados,
+    modulosTotales: item.modulosTotales,
+  };
+}
+
+const certificados = {
+  ...certificadosRepositorio,
+  async listar() {
+    if (apiConfig.secundariaCursos) {
+      const data = await secundariaGatewayService.listarCertificadosEmitidos();
+      return data.emitidos.map(mapearCertificadoEmitidoSecundaria);
+    }
+    return certificadosRepositorio.listar();
+  },
+};
+
+const certificadosPendientes = {
+  ...certificadosPendientesRepositorio,
+  async listar() {
+    if (apiConfig.secundariaCursos) {
+      const data =
+        await secundariaGatewayService.listarCertificadosPendientes(100);
+      return data.pendientes.map(mapearCertificadoPendienteSecundaria);
+    }
+    return certificadosPendientesRepositorio.listar();
+  },
+  async obtener(id: string) {
+    if (apiConfig.secundariaCursos) {
+      const lista = await this.listar();
+      return lista.find((item) => item.id === id) ?? null;
+    }
+    return certificadosPendientesRepositorio.obtener(id);
+  },
+  async eliminar(id: string) {
+    if (apiConfig.secundariaCursos) return;
+    return certificadosPendientesRepositorio.eliminar(id);
+  },
+};
+const ingresosRepositorio = crearRepositorioDocente(
   "ingresos",
   API.docente.ingresos,
   ingresosDelContexto,
 );
-const notificaciones = crearRepositorioDocente(
+const ingresos = {
+  ...ingresosRepositorio,
+  async listar() {
+    if (apiConfig.secundariaCursos) {
+      const data = await secundariaGatewayService.listarIngresos();
+      return (data.movimientos ?? []).map(
+        (item): MovimientoIngresoDocente => ({
+          id: item.id,
+          curso: item.curso,
+          fecha: item.fecha,
+          concepto: item.concepto,
+          importe: Number(item.importe ?? 0),
+          estado: item.estado,
+        }),
+      );
+    }
+    return ingresosRepositorio.listar();
+  },
+};
+const notificacionesRepositorio = crearRepositorioDocente(
   "notificaciones",
   API.docente.notificaciones,
   notificacionesDelContexto,
 );
-const actividades = crearRepositorioDocente(
+const actividadesRepositorio = crearRepositorioDocente(
   "actividades",
   API.docente.actividades,
   actividadesDelContexto,
 );
+
+const NOTIF_LEIDAS_KEY = "tukuy_docente_notif_leidas";
+const ACTIVIDADES_LOCAL_KEY = "tukuy_docente_actividades_local";
+
+function leerIdsNotificacionesLeidas(): Set<string> {
+  if (typeof localStorage === "undefined") return new Set();
+  try {
+    const raw = JSON.parse(localStorage.getItem(NOTIF_LEIDAS_KEY) || "[]");
+    return new Set(Array.isArray(raw) ? raw.map(String) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function guardarIdsNotificacionesLeidas(ids: Set<string>) {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(NOTIF_LEIDAS_KEY, JSON.stringify([...ids]));
+  } catch {
+    // ignore
+  }
+}
+
+function leerActividadesLocales(): ActividadDocente[] {
+  if (typeof sessionStorage === "undefined") return [];
+  try {
+    const raw = JSON.parse(sessionStorage.getItem(ACTIVIDADES_LOCAL_KEY) || "[]");
+    return Array.isArray(raw) ? (raw as ActividadDocente[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function guardarActividadLocal(item: ActividadDocente) {
+  if (typeof sessionStorage === "undefined") return;
+  try {
+    const lista = [item, ...leerActividadesLocales()].slice(0, 40);
+    sessionStorage.setItem(ACTIVIDADES_LOCAL_KEY, JSON.stringify(lista));
+  } catch {
+    // ignore
+  }
+}
+
+async function sintetizarNotificacionesSecundaria(): Promise<
+  NotificacionDocente[]
+> {
+  const leidas = leerIdsNotificacionesLeidas();
+  const [entregas, sesiones, pendientes] = await Promise.all([
+    academicoService.listarEntregasDocente().catch(() => []),
+    secundariaGatewayService.listarSesiones().catch(() => ({
+      ok: true as const,
+      total: 0,
+      sesiones: [],
+    })),
+    secundariaGatewayService.listarCertificadosPendientes(100).catch(() => ({
+      ok: true as const,
+      total: 0,
+      pendientes: [],
+    })),
+  ]);
+
+  const items: NotificacionDocente[] = [];
+  for (const entrega of entregas) {
+    if (!["ENTREGADA", "EN_REVISION", "OBSERVADA"].includes(entrega.estado)) {
+      continue;
+    }
+    const id = `not-ent-${entrega.id}`;
+    items.push({
+      id,
+      titulo: "Entrega por revisar",
+      detalle: `${entrega.estudianteNombre} · ${entrega.actividadTitulo}`,
+      fecha: entrega.entregadaEn ?? new Date().toISOString(),
+      leida: leidas.has(id),
+      ruta: "/docente/evaluaciones",
+      tipo: "EVALUACION",
+    });
+  }
+
+  const ahora = Date.now();
+  for (const sesion of sesiones.sesiones) {
+    const inicio = new Date(sesion.iniciaEn).getTime();
+    if (
+      !Number.isFinite(inicio) ||
+      inicio < ahora - 2 * 60 * 60_000 ||
+      inicio > ahora + 48 * 60 * 60_000
+    ) {
+      continue;
+    }
+    if (["CANCELADA", "FINALIZADA"].includes(String(sesion.estado ?? ""))) {
+      continue;
+    }
+    const id = `not-ses-${sesion.id}`;
+    items.push({
+      id,
+      titulo: "Sesión próxima",
+      detalle: `${sesion.titulo} · ${sesion.cursoTitulo}`,
+      fecha: sesion.iniciaEn,
+      leida: leidas.has(id),
+      ruta: "/docente/sesiones",
+      tipo: "SESION",
+    });
+  }
+
+  for (const pendiente of pendientes.pendientes.slice(0, 8)) {
+    const id = `not-cert-${pendiente.id}`;
+    items.push({
+      id,
+      titulo: "Certificado pendiente",
+      detalle: `${pendiente.nombre} · ${pendiente.curso}`,
+      fecha: new Date().toISOString(),
+      leida: leidas.has(id),
+      ruta: "/docente/certificados",
+      tipo: "CERTIFICADO",
+    });
+  }
+
+  return items
+    .sort((a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime())
+    .slice(0, 25);
+}
+
+async function sintetizarActividadesSecundaria(): Promise<ActividadDocente[]> {
+  const [entregas, sesiones, locales] = await Promise.all([
+    academicoService.listarEntregasDocente().catch(() => []),
+    secundariaGatewayService.listarSesiones().catch(() => ({
+      ok: true as const,
+      total: 0,
+      sesiones: [],
+    })),
+    Promise.resolve(leerActividadesLocales()),
+  ]);
+
+  const sintetizadas: ActividadDocente[] = [];
+  for (const entrega of entregas.slice(0, 12)) {
+    sintetizadas.push({
+      id: `act-ent-${entrega.id}`,
+      titulo:
+        entrega.estado === "CALIFICADA"
+          ? "Entrega calificada"
+          : "Nueva entrega recibida",
+      detalle: `${entrega.estudianteNombre} · ${entrega.actividadTitulo}`,
+      fecha:
+        entrega.calificadaEn ??
+        entrega.entregadaEn ??
+        new Date().toISOString(),
+    });
+  }
+  for (const sesion of sesiones.sesiones.slice(0, 8)) {
+    sintetizadas.push({
+      id: `act-ses-${sesion.id}`,
+      titulo: "Sesión en vivo",
+      detalle: `${sesion.titulo} · ${sesion.cursoTitulo}`,
+      fecha: sesion.iniciaEn,
+    });
+  }
+
+  return [...locales, ...sintetizadas]
+    .sort((a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime())
+    .slice(0, 30);
+}
+
+const notificaciones = {
+  ...notificacionesRepositorio,
+  async listar() {
+    if (apiConfig.secundariaCursos) {
+      return sintetizarNotificacionesSecundaria();
+    }
+    return notificacionesRepositorio.listar();
+  },
+  async reemplazar(regs: NotificacionDocente[]) {
+    if (apiConfig.secundariaCursos) {
+      guardarIdsNotificacionesLeidas(
+        new Set(regs.filter((item) => item.leida).map((item) => item.id)),
+      );
+      return regs;
+    }
+    return notificacionesRepositorio.reemplazar(regs);
+  },
+};
+
+const actividades = {
+  ...actividadesRepositorio,
+  async listar() {
+    if (apiConfig.secundariaCursos) {
+      return sintetizarActividadesSecundaria();
+    }
+    return actividadesRepositorio.listar();
+  },
+  async crear(item: ActividadDocente) {
+    if (apiConfig.secundariaCursos) {
+      guardarActividadLocal(item);
+      return item;
+    }
+    return actividadesRepositorio.crear(item);
+  },
+};
 
 const configuracionSemilla: ConfiguracionDocente = {
   nombre: "Carlos Alberto",
@@ -530,6 +951,14 @@ function almacenBorrador(
 
 function idCursoPersistente(membresiaId: string, cursoId: string) {
   return cursoId === "nuevo" ? `borrador-${membresiaId}` : cursoId;
+}
+
+function esCursoTemporal(cursoId: string) {
+  return (
+    cursoId === "nuevo" ||
+    cursoId.startsWith("borrador-") ||
+    cursoId.startsWith("curso-institucional-")
+  );
 }
 
 function progresoBorrador(borrador: BorradorCursoDocente) {
@@ -608,6 +1037,25 @@ export const docenteService = {
     cursoId: string,
     semilla: BorradorCursoDocente,
   ): Promise<BorradorCursoDocente> {
+    if (apiConfig.secundariaCursos) {
+      if (esCursoTemporal(cursoId)) return semilla;
+      try {
+        const resultado =
+          await secundariaGatewayService.obtenerBorrador(cursoId);
+        return mapearDocumentoABorrador(
+          resultado.borrador as Record<string, unknown>,
+          {
+            ...semilla,
+            titulo: resultado.curso.titulo || semilla.titulo,
+            descripcion: resultado.curso.resumen || semilla.descripcion,
+            categoria: resultado.curso.categoria || semilla.categoria,
+            imagen: semilla.imagen,
+          },
+        );
+      } catch {
+        return semilla;
+      }
+    }
     if (apiConfig.useMock) {
       return almacenBorrador(membresiaId, cursoId, semilla).leer();
     }
@@ -622,6 +1070,16 @@ export const docenteService = {
     cursoId: string,
     borrador: BorradorCursoDocente,
   ): Promise<BorradorCursoDocente> {
+    if (apiConfig.secundariaCursos) {
+      const resultado = await secundariaGatewayService.guardarCurso({
+        cursoId: esCursoTemporal(cursoId) ? null : cursoId,
+        borrador,
+      });
+      return mapearDocumentoABorrador(
+        resultado.borrador as Record<string, unknown>,
+        borrador,
+      );
+    }
     if (apiConfig.useMock) {
       const guardado = almacenBorrador(membresiaId, cursoId, borrador).guardar(
         borrador,
@@ -641,6 +1099,26 @@ export const docenteService = {
     cursoId: string,
     borrador: BorradorCursoDocente,
   ): Promise<CursoDocente> {
+    if (apiConfig.secundariaCursos) {
+      const contexto = obtenerContextoActual();
+      const resultado = await secundariaGatewayService.guardarCurso({
+        cursoId: esCursoTemporal(cursoId) ? null : cursoId,
+        borrador,
+      });
+      const mapeado = mapearCursoSecundariaADocente(resultado.curso, contexto);
+      return {
+        ...mapeado,
+        titulo: borrador.titulo || mapeado.titulo,
+        imagen: borrador.imagen || mapeado.imagen,
+        progreso: progresoBorrador(borrador),
+        docenteResponsableId: borrador.docenteResponsableId,
+        docenteResponsableNombre: borrador.docenteResponsableNombre,
+        cargadoPorNombre: borrador.cargadoPorNombre,
+        origenCarga: borrador.origenCarga,
+        actualizado: "Ahora",
+      };
+    }
+
     await this.guardarBorrador(membresiaId, cursoId, borrador);
     const id = idCursoPersistente(membresiaId, cursoId);
     const existente = await cursos.obtener(id);
@@ -686,6 +1164,22 @@ export const docenteService = {
     cursoId: string,
     borrador: BorradorCursoDocente,
   ): Promise<CursoDocente> {
+    if (apiConfig.secundariaCursos) {
+      const contexto = obtenerContextoActual();
+      const resultado = await secundariaGatewayService.guardarCurso({
+        cursoId: esCursoTemporal(cursoId) ? null : cursoId,
+        borrador,
+        estado: "EN_REVISION",
+      });
+      return {
+        ...mapearCursoSecundariaADocente(resultado.curso, contexto),
+        estado: "EN_REVISION",
+        progreso: 100,
+        actualizado: "Enviado ahora",
+        imagen: borrador.imagen,
+      };
+    }
+
     if (!apiConfig.useMock) {
       const { data } = await api.post<CursoDocente>(
         API.docente.enviarCursoARevision(cursoId),
@@ -756,6 +1250,16 @@ export const docenteService = {
   },
 
   async archivarCurso(id: string) {
+    if (apiConfig.secundariaCursos) {
+      const resultado = await secundariaGatewayService.actualizarEstadoCurso(
+        id,
+        "ARCHIVADO",
+      );
+      return mapearCursoSecundariaADocente(
+        resultado.curso,
+        obtenerContextoActual(),
+      );
+    }
     return cursos.actualizar(id, { estado: "ARCHIVADO", actualizado: "Ahora" });
   },
 
@@ -776,6 +1280,27 @@ export const docenteService = {
         ? { observacion: extras?.observacion }
         : { observacion: undefined }),
     };
+
+    if (apiConfig.secundariaCursos) {
+      const contexto = obtenerContextoActual();
+      if (estado === "PUBLICADO" || estado === "APROBADO") {
+        const publicado = await secundariaGatewayService.publicarCurso({
+          cursoId: id,
+          estadoPublicacion: "PUBLICADO",
+        });
+        return mapearCursoSecundariaADocente(publicado.curso, contexto);
+      }
+      const resultado = await secundariaGatewayService.actualizarEstadoCurso(
+        id,
+        estado,
+      );
+      const mapeado = mapearCursoSecundariaADocente(resultado.curso, contexto);
+      return {
+        ...mapeado,
+        ...cambiosEstado,
+        estado: mapeado.estado,
+      };
+    }
 
     if (!apiConfig.useMock) {
       const { data } = await api.patch<CursoDocente>(
@@ -905,6 +1430,34 @@ export const docenteService = {
   async emitirCertificado(
     pendienteId: string,
   ): Promise<CertificadoEmitidoDocente> {
+    if (apiConfig.secundariaCursos) {
+      const matriculaId = pendienteId.startsWith("pend-")
+        ? pendienteId.slice(5)
+        : pendienteId;
+      const resultado =
+        await secundariaGatewayService.emitirCertificado(matriculaId);
+      const emitido = resultado.emitidos.find(
+        (item) =>
+          item.id === resultado.certificadoId ||
+          item.codigoVerificacion === resultado.codigoVerificacion ||
+          item.matriculaId === matriculaId,
+      );
+      if (!emitido) {
+        const lista =
+          await secundariaGatewayService.listarCertificadosEmitidos();
+        const encontrado = lista.emitidos.find(
+          (item) => item.matriculaId === matriculaId,
+        );
+        if (!encontrado) throw new Error("No se pudo emitir el certificado");
+        return mapearCertificadoEmitidoSecundaria(encontrado);
+      }
+      await registrarActividad(
+        "Certificado emitido",
+        `${emitido.nombre} · ${emitido.curso}`,
+      );
+      return mapearCertificadoEmitidoSecundaria(emitido);
+    }
+
     if (!apiConfig.useMock) {
       const { data } = await api.post<CertificadoEmitidoDocente>(
         API.docente.emitirCertificado(pendienteId),
@@ -928,7 +1481,7 @@ export const docenteService = {
       );
     }
     const contexto = obtenerContextoActual();
-    const emitido = await certificados.crear({
+    const emitido = await certificadosRepositorio.crear({
       id: `TA-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`,
       nombre: pendiente.nombre,
       curso: pendiente.curso,
@@ -969,11 +1522,26 @@ export const docenteService = {
   },
 
   async sincronizarCertificadosElegibles(cursoId?: string) {
+    if (apiConfig.secundariaCursos) {
+      const [pendientesData, emitidosData] = await Promise.all([
+        secundariaGatewayService.listarCertificadosPendientes(100),
+        secundariaGatewayService.listarCertificadosEmitidos(),
+      ]);
+      return {
+        pendientes: pendientesData.pendientes
+          .filter((item) => !cursoId || item.cursoId === cursoId)
+          .map(mapearCertificadoPendienteSecundaria),
+        emitidos: emitidosData.emitidos
+          .filter((item) => !cursoId || item.cursoId === cursoId)
+          .map(mapearCertificadoEmitidoSecundaria),
+      };
+    }
+
     const [elegibilidades, pendientesActuales, emitidosActuales] =
       await Promise.all([
         academicoService.listarElegibilidades(cursoId),
-        certificadosPendientes.listar(),
-        certificados.listar(),
+        certificadosPendientesRepositorio.listar(),
+        certificadosRepositorio.listar(),
       ]);
     const elegibles = elegibilidades.filter((item) => item.elegible);
     const contexto = obtenerContextoActual();
@@ -1173,6 +1741,17 @@ export const docenteService = {
     contenido: string,
     adjunto?: MensajeDocente["adjunto"],
   ): Promise<ConversacionDocente> {
+    if (apiConfig.secundariaCursos) {
+      await secundariaGatewayService.enviarMensaje(
+        conversacionId,
+        contenido,
+        adjunto,
+      );
+      const actualizada = await conversaciones.obtener(conversacionId);
+      if (!actualizada) throw new Error("No se encontró la conversación");
+      await registrarActividad("Mensaje enviado", actualizada.nombre);
+      return actualizada;
+    }
     if (!apiConfig.useMock) {
       const { data } = await api.post<ConversacionDocente>(
         API.docente.mensajesConversacion(conversacionId),
@@ -1203,6 +1782,12 @@ export const docenteService = {
   },
 
   async marcarConversacionLeida(conversacionId: string) {
+    if (apiConfig.secundariaCursos) {
+      await secundariaGatewayService.marcarConversacionLeida(conversacionId);
+      const actualizada = await conversaciones.obtener(conversacionId);
+      if (!actualizada) throw new Error("No se encontró la conversación");
+      return { ...actualizada, noLeidos: 0 };
+    }
     if (!apiConfig.useMock) {
       const { data } = await api.post<ConversacionDocente>(
         API.docente.leerConversacion(conversacionId),
@@ -1213,6 +1798,15 @@ export const docenteService = {
   },
 
   async iniciarSesion(sesionId: string) {
+    if (apiConfig.secundariaCursos) {
+      const actualizada =
+        await secundariaGatewayService.actualizarEstadoSesion(
+          sesionId,
+          "EN_VIVO",
+        );
+      await registrarActividad("Sesión iniciada", actualizada.sesion.titulo);
+      return mapearSesionSecundariaADocente(actualizada.sesion);
+    }
     if (!apiConfig.useMock) {
       const { data } = await api.post<SesionDocente>(
         API.docente.iniciarSesion(sesionId),
@@ -1230,6 +1824,14 @@ export const docenteService = {
   },
 
   async cancelarSesion(sesionId: string) {
+    if (apiConfig.secundariaCursos) {
+      const actualizada =
+        await secundariaGatewayService.actualizarEstadoSesion(
+          sesionId,
+          "CANCELADA",
+        );
+      return mapearSesionSecundariaADocente(actualizada.sesion);
+    }
     if (!apiConfig.useMock) {
       const { data } = await api.post<SesionDocente>(
         API.docente.cancelarSesion(sesionId),
@@ -1246,6 +1848,11 @@ export const docenteService = {
   },
 
   async marcarNotificacionesLeidas() {
+    if (apiConfig.secundariaCursos) {
+      const lista = await notificaciones.listar();
+      guardarIdsNotificacionesLeidas(new Set(lista.map((item) => item.id)));
+      return;
+    }
     if (!apiConfig.useMock) {
       await api.post(API.docente.leerNotificaciones);
       return;
@@ -1257,12 +1864,16 @@ export const docenteService = {
   },
 
   async obtenerAnalitica(periodo = "30d"): Promise<AnaliticaDocente> {
-    if (!apiConfig.useMock) {
+    if (!apiConfig.secundariaCursos && !apiConfig.useMock) {
       const { data } = await api.get<AnaliticaDocente>(
         API.docente.analitica,
         { params: { periodo } },
       );
       return data;
+    }
+
+    if (apiConfig.secundariaCursos) {
+      await secundariaGatewayService.bootstrapDocente();
     }
 
     const [listaCursos, listaEstudiantes, emitidos] = await Promise.all([
@@ -1284,7 +1895,9 @@ export const docenteService = {
       (estudiante) => estudiante.estado === "COMPLETADO",
     ).length;
     const enRiesgo = listaEstudiantes.filter(
-      (estudiante) => estudiante.estado === "EN_RIESGO",
+      (estudiante) =>
+        estudiante.estado === "EN_RIESGO" ||
+        (estudiante.progreso < 40 && estudiante.estado !== "COMPLETADO"),
     );
     const promedioProgreso = listaEstudiantes.length
       ? Math.round(
@@ -1346,8 +1959,12 @@ export const docenteService = {
     resultado.distribucionEstados = [
       {
         estado: "ACTIVO",
-        cantidad: listaEstudiantes.filter((item) => item.estado === "ACTIVO")
-          .length,
+        cantidad: listaEstudiantes.filter(
+          (item) =>
+            item.estado === "ACTIVO" ||
+            item.estado === "MATRICULADO" ||
+            item.estado === "EN_CURSO",
+        ).length,
         color: "#0B3A78",
       },
       { estado: "COMPLETADO", cantidad: completados, color: "#16A34A" },
@@ -1407,6 +2024,11 @@ export const docenteService = {
   },
 
   async obtenerPanel() {
+    // Un viaje gateway rellena caché; listar()* reutiliza fragmentos ~45s.
+    if (apiConfig.secundariaCursos) {
+      await secundariaGatewayService.bootstrapDocente();
+    }
+
     const [
       listaCursos,
       listaEstudiantes,

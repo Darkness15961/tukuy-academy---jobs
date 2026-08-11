@@ -76,7 +76,7 @@ const logoEntidad = computed(
 const nombreEntidad = computed(
   () =>
     contextoActivo.value?.organizacionNombre ??
-    "COLEGIO DE INGENIEROS CUSCO",
+    "Tu organización",
 );
 const guardando = ref(false);
 const eliminando = ref(false);
@@ -112,6 +112,18 @@ const reglasAccesoCursos = ref<ReglaAccesoCursoEntidad[]>([]);
 const cursosDisponibles = ref<Course[]>([]);
 const requiereDniEnrolamiento = ref(true);
 
+/** Sentinel: PrimeVue Select trata "" como “sin valor” ($filled=false → label invisible). */
+const OPCION_NODO_RAIZ = "__NODO_RAIZ__";
+
+function padreIdParaFormulario(padreId: string | null | undefined) {
+  return padreId ? String(padreId) : OPCION_NODO_RAIZ;
+}
+
+function padreIdDesdeFormulario(valor: string | null | undefined) {
+  if (!valor || valor === OPCION_NODO_RAIZ) return null;
+  return valor;
+}
+
 const formularioUnidad = reactive({
   nombre: "",
   descripcion: "",
@@ -119,7 +131,7 @@ const formularioUnidad = reactive({
   tipoUnidadId: "",
   estructuraId: "",
   nivelId: "",
-  unidadPadreId: "",
+  unidadPadreId: OPCION_NODO_RAIZ,
   responsableUsuarioId: "",
   politicaIncorporacionId: "",
   permiteSubunidades: true,
@@ -133,13 +145,16 @@ const busquedaResultados = computed(() => {
     .filter(
       (u) =>
         u.dni?.toLowerCase().includes(q) ||
-        u.nombre?.toLowerCase().includes(q),
+        u.nombre?.toLowerCase().includes(q) ||
+        u.correo?.toLowerCase().includes(q),
     )
     .slice(0, 8);
 });
-const responsableSeleccionado = computed(() =>
-  usuariosPorId.value.get(formularioUnidad.responsableUsuarioId),
-);
+const responsableSeleccionado = computed(() => {
+  const id = String(formularioUnidad.responsableUsuarioId ?? "").trim();
+  if (!id) return undefined;
+  return usuariosPorId.value.get(id);
+});
 function seleccionarResponsable(usuario: UsuarioOrganizacion) {
   formularioUnidad.responsableUsuarioId = String(usuario.id);
   busquedaDni.value = "";
@@ -328,11 +343,31 @@ const unidadesPadreDisponibles = computed(() => {
       !excluidas.has(unidad.id) && puedeCrearEnUnidad(unidad.id),
   );
 });
+/** Opciones del Select “Depende de”: raíz + candidatos, e incluye el padre actual si el filtro lo omitió. */
+const opcionesUnidadPadre = computed(() => {
+  const opciones: { id: string; nombre: string }[] = [
+    { id: OPCION_NODO_RAIZ, nombre: "Nodo raíz" },
+  ];
+  const vistos = new Set<string>([OPCION_NODO_RAIZ]);
+  for (const unidad of unidadesPadreDisponibles.value) {
+    opciones.push({ id: unidad.id, nombre: unidad.nombre });
+    vistos.add(unidad.id);
+  }
+  const padreActualId = padreIdDesdeFormulario(formularioUnidad.unidadPadreId);
+  if (padreActualId && !vistos.has(padreActualId)) {
+    const padre = unidadesPorId.value.get(padreActualId);
+    if (padre) {
+      opciones.push({ id: padre.id, nombre: padre.nombre });
+    }
+  }
+  return opciones;
+});
 const tituloModalUnidad = computed(() => {
   if (unidadEditandoId.value) {
     return `Editar ${unidadEditando.value?.nombre ?? "nodo"}`;
   }
-  const padre = unidadesPorId.value.get(formularioUnidad.unidadPadreId);
+  const padreId = padreIdDesdeFormulario(formularioUnidad.unidadPadreId);
+  const padre = padreId ? unidadesPorId.value.get(padreId) : undefined;
   const referencia = unidadReferenciaId.value
     ? unidadesPorId.value.get(unidadReferenciaId.value)
     : undefined;
@@ -364,7 +399,7 @@ const opcionesTipoUnidadFormulario = computed(() => {
   const unidadActual = unidadEditando.value;
   if (unidadActual) idsPermitidos.add(unidadActual.tipoUnidadId);
 
-  const padreId = formularioUnidad.unidadPadreId || null;
+  const padreId = padreIdDesdeFormulario(formularioUnidad.unidadPadreId);
   const padre = padreId ? unidadesPorId.value.get(padreId) : undefined;
   if (padre && !esUnidadGobiernoPorId(padre.id)) {
     idsPermitidos.add(padre.tipoUnidadId);
@@ -431,7 +466,12 @@ const esPerfilAdministracion = computed(
     tienePermiso("equipos.administrar"),
 );
 const puedeGestionarEstructura = computed(
-  () => esPerfilDireccion.value || esPerfilAdministracion.value,
+  () =>
+    esPerfilDireccion.value ||
+    esPerfilAdministracion.value ||
+    esSuperAdministracion.value ||
+    tienePermiso("equipos.administrar") ||
+    tienePermiso("usuarios.administrar"),
 );
 
 function idsUnidadYDescendientes(unidadId: string) {
@@ -574,7 +614,13 @@ async function obtenerOAsegurarNivel(estructuraId: string, ordenDeseado: number)
 }
 
 async function abrirUnidad() {
-  if (!puedeGestionarEstructura.value || !estructuraSeleccionadaId.value) return;
+  if (!puedeGestionarEstructura.value) return;
+  if (!estructuraSeleccionadaId.value) {
+    abrirEstructura();
+    mensaje.value =
+      "Primero crea una estructura operativa; luego podrás agregar nodos.";
+    return;
+  }
   unidadEditandoId.value = null;
   tipoCreacionUnidad.value = "LIBRE";
   unidadReferenciaId.value = null;
@@ -585,10 +631,10 @@ async function abrirUnidad() {
     nombre: "",
     descripcion: "",
     codigo: "",
-    tipoUnidadId: "",
+    tipoUnidadId: tiposUnidadPersonalizables.value[0]?.id ?? tiposUnidad.value[0]?.id ?? "",
     estructuraId: estructuraSeleccionadaId.value,
     nivelId: nivel1Id,
-    unidadPadreId: "",
+    unidadPadreId: OPCION_NODO_RAIZ,
     responsableUsuarioId: "",
     politicaIncorporacionId: politicas.value[0]?.id ?? "",
     permiteSubunidades: true,
@@ -611,7 +657,7 @@ function abrirEditarUnidad(nodo: NodoOrganigramaEntidad) {
     tipoUnidadId: unidad.tipoUnidadId,
     estructuraId: unidad.estructuraId ?? "",
     nivelId: unidad.nivelId ?? "",
-    unidadPadreId: unidad.unidadPadreId ?? "",
+    unidadPadreId: padreIdParaFormulario(unidad.unidadPadreId),
     responsableUsuarioId: unidad.responsableUsuarioId ?? "",
     politicaIncorporacionId: unidad.politicaIncorporacionId ?? "",
     permiteSubunidades: unidadPermiteSubunidades(unidad),
@@ -714,7 +760,7 @@ async function abrirCrearMismoNivel(
     tipoUnidadId: tipoHeredadoDelPadre(referencia.unidadPadreId),
     estructuraId: estId,
     nivelId: nivelId,
-    unidadPadreId: referencia.unidadPadreId ?? "",
+    unidadPadreId: padreIdParaFormulario(referencia.unidadPadreId),
     responsableUsuarioId: "",
     politicaIncorporacionId: politicas.value[0]?.id ?? "",
     permiteSubunidades: true,
@@ -729,8 +775,9 @@ async function guardarUnidad() {
   }
   if (!formularioUnidad.nivelId && formularioUnidad.estructuraId) {
     let ordenDeseado = 1;
-    if (formularioUnidad.unidadPadreId) {
-      const p = unidadesPorId.value.get(formularioUnidad.unidadPadreId);
+    const padreIdForm = padreIdDesdeFormulario(formularioUnidad.unidadPadreId);
+    if (padreIdForm) {
+      const p = unidadesPorId.value.get(padreIdForm);
       const pOrden = niveles.value.find((n) => n.id === p?.nivelId)?.orden ?? 1;
       ordenDeseado = pOrden + 1;
     }
@@ -764,7 +811,7 @@ async function guardarUnidad() {
         cambios.tipoUnidadId = formularioUnidad.tipoUnidadId;
         cambios.estructuraId = formularioUnidad.estructuraId;
         cambios.nivelId = formularioUnidad.nivelId;
-        cambios.unidadPadreId = formularioUnidad.unidadPadreId || null;
+        cambios.unidadPadreId = padreIdDesdeFormulario(formularioUnidad.unidadPadreId);
       }
       const actualizada = await organizacionService.estructura.unidades.actualizar(
         unidadEditandoId.value,
@@ -785,7 +832,7 @@ async function guardarUnidad() {
         ? referenciaCreacion?.id
         : tipoCreacionUnidad.value === "MISMO_NIVEL"
           ? referenciaCreacion?.unidadPadreId
-          : formularioUnidad.unidadPadreId;
+          : padreIdDesdeFormulario(formularioUnidad.unidadPadreId);
 
     if (unidadPadreIdDestino && !puedeCrearEnUnidad(unidadPadreIdDestino)) {
       mensaje.value = "No puedes crear nodos dentro de una función protegida.";
@@ -858,41 +905,52 @@ function abrirEstructura() {
 }
 
 async function crearEstructura() {
-  if (!formularioEstructura.nombre.trim()) return;
-  const id = `estructura-${Date.now()}`;
-  const nombreEst = formularioEstructura.nombre.trim();
-  const creada = await organizacionService.estructura.estructuras.crear({
-    id,
-    nombre: nombreEst,
-    descripcion: formularioEstructura.descripcion.trim() || undefined,
-    tipo: formularioEstructura.tipo,
-    modoJerarquia: formularioEstructura.modoJerarquia,
-    esSistema: false,
-    estado: "ACTIVA",
-  });
-  estructuras.value.push(creada);
-  estructuraSeleccionadaId.value = creada.id;
-  const nivel1Id = await obtenerOAsegurarNivel(creada.id, 1);
+  if (!formularioEstructura.nombre.trim() || guardando.value) return;
+  guardando.value = true;
+  mensaje.value = "";
+  try {
+    const id = `estructura-${Date.now()}`;
+    const nombreEst = formularioEstructura.nombre.trim();
+    const creada = await organizacionService.estructura.estructuras.crear({
+      id,
+      nombre: nombreEst,
+      descripcion: formularioEstructura.descripcion.trim() || undefined,
+      tipo: formularioEstructura.tipo,
+      modoJerarquia: formularioEstructura.modoJerarquia,
+      esSistema: false,
+      estado: "ACTIVA",
+    });
+    estructuras.value.push(creada);
+    estructuraSeleccionadaId.value = creada.id;
+    const nivel1Id = await obtenerOAsegurarNivel(creada.id, 1);
 
-  // Crear automáticamente el nodo raíz inicial de la nueva estructura
-  const tipoDefectoId = tiposUnidadPersonalizables.value[0]?.id ?? tiposUnidad.value[0]?.id ?? "";
-  const nodoRaiz = await organizacionService.estructura.unidades.crear({
-    id: `unidad-${Date.now()}`,
-    nombre: nombreEst,
-    codigo: nombreEst.slice(0, 6).toUpperCase().replace(/\s+/g, ""),
-    estructuraId: creada.id,
-    nivelId: nivel1Id,
-    tipoUnidadId: tipoDefectoId,
-    unidadPadreId: null,
-    politicaIncorporacionId: politicas.value[0]?.id ?? "",
-    orden: 1,
-    estado: "ACTIVA",
-    permiteSubunidades: true,
-  });
-  unidades.value.push(nodoRaiz);
+    const tipoDefectoId =
+      tiposUnidadPersonalizables.value[0]?.id ?? tiposUnidad.value[0]?.id ?? "";
+    const nodoRaiz = await organizacionService.estructura.unidades.crear({
+      id: `unidad-${Date.now()}`,
+      nombre: nombreEst,
+      codigo: nombreEst.slice(0, 6).toUpperCase().replace(/\s+/g, ""),
+      estructuraId: creada.id,
+      nivelId: nivel1Id,
+      tipoUnidadId: tipoDefectoId,
+      unidadPadreId: null,
+      politicaIncorporacionId: politicas.value[0]?.id ?? "",
+      orden: 1,
+      estado: "ACTIVA",
+      permiteSubunidades: true,
+    });
+    unidades.value.push(nodoRaiz);
 
-  modalEstructura.value = false;
-  mensaje.value = `Estructura "${creada.nombre}" creada exitosamente con su nodo principal.`;
+    modalEstructura.value = false;
+    mensaje.value = `Estructura "${creada.nombre}" creada con su nodo principal.`;
+  } catch (error) {
+    mensaje.value =
+      error instanceof Error
+        ? error.message
+        : "No se pudo crear la estructura";
+  } finally {
+    guardando.value = false;
+  }
 }
 
 function abrirNivel() {
@@ -1106,7 +1164,18 @@ function etiquetaEstado(estado: VinculacionUnidad["estado"]) {
         />
       </div>
       <div class="flex flex-wrap gap-2">
-        <Button v-if="puedeGestionarEstructura" @click="abrirUnidad"><Plus class="h-4 w-4" />Nuevo nodo</Button>
+        <Button
+          v-if="puedeGestionarEstructura"
+          variant="outline"
+          @click="abrirEstructura"
+        >
+          <Plus class="h-4 w-4" />
+          Nueva estructura
+        </Button>
+        <Button v-if="puedeGestionarEstructura" @click="abrirUnidad">
+          <Plus class="h-4 w-4" />
+          Nuevo nodo
+        </Button>
       </div>
     </header>
 
@@ -1139,7 +1208,7 @@ function etiquetaEstado(estado: VinculacionUnidad["estado"]) {
       <div class="border-b border-border bg-muted/20 p-5">
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div><p class="text-xs font-black uppercase tracking-[.16em] text-primary">Gobierno protegido</p><p class="mt-1 text-xs text-muted-foreground">Estas funciones son obligatorias, independientes y no forman la rama operativa.</p></div>
-          <Tag value="3 funciones del sistema" severity="warn" />
+          <Tag :value="`${unidadesGobierno.length} funciones del sistema`" severity="warn" />
         </div>
         <div class="mt-4 grid gap-3 md:grid-cols-3">
           <button v-for="unidad in unidadesGobierno" :key="unidad.id" type="button" class="flex items-start gap-3 border border-border bg-card p-4 text-left transition hover:border-primary" @click="abrirEditarUnidadPorId(unidad.id)">
@@ -1178,7 +1247,17 @@ function etiquetaEstado(estado: VinculacionUnidad["estado"]) {
         <Tag v-for="nivel in nivelesEstructura" :key="nivel.id" :value="`${nivel.orden}. ${nivel.nombre}`" severity="info" />
         <span v-if="!nivelesEstructura.length" class="text-xs text-amber-700">Define al menos un nivel antes de crear nodos.</span>
       </div>
-      <div v-if="!estructuraSeleccionada" class="p-10 text-center text-sm text-muted-foreground">Crea o selecciona una estructura para organizar al personal.</div>
+      <div v-if="!estructuraSeleccionada" class="grid gap-4 p-10 text-center">
+        <p class="text-sm text-muted-foreground">
+          Crea una estructura operativa para organizar al personal (áreas, equipos, etc.).
+        </p>
+        <div class="flex flex-wrap justify-center gap-2">
+          <Button v-if="puedeGestionarEstructura" @click="abrirEstructura">
+            <Plus class="h-4 w-4" />
+            Nueva estructura
+          </Button>
+        </div>
+      </div>
       <OrganigramaOrganizacion
         v-else-if="vistaEstructura === 'ORGANIGRAMA'"
         :nombre-entidad="nombreEntidad"
@@ -1386,7 +1465,16 @@ function etiquetaEstado(estado: VinculacionUnidad["estado"]) {
         </label>
         <label>
           <span class="filtro-label">Depende de</span>
-          <Select v-model="formularioUnidad.unidadPadreId" :disabled="esUnidadGobierno || tipoCreacionUnidad !== 'LIBRE'" :options="[{ id: '', nombre: 'Nodo raíz' }, ...unidadesPadreDisponibles]" option-label="nombre" option-value="id" class="filtro-control w-full" />
+          <Select
+            :key="`depende-${unidadEditandoId ?? 'nueva'}-${tipoCreacionUnidad}`"
+            v-model="formularioUnidad.unidadPadreId"
+            :disabled="esUnidadGobierno || tipoCreacionUnidad !== 'LIBRE'"
+            :options="opcionesUnidadPadre"
+            option-label="nombre"
+            option-value="id"
+            class="filtro-control w-full"
+            placeholder="Selecciona el nodo padre"
+          />
         </label>
         <label>
           <span class="filtro-label">Responsable</span>
@@ -1401,35 +1489,39 @@ function etiquetaEstado(estado: VinculacionUnidad["estado"]) {
               </span>
               <div>
                 <p class="text-sm font-bold leading-none">{{ responsableSeleccionado.nombre }}</p>
-                <p class="mt-0.5 text-[11px] text-muted-foreground">DNI: {{ responsableSeleccionado.dni || '—' }}</p>
+                <p class="mt-0.5 text-[11px] text-muted-foreground">
+                  {{ responsableSeleccionado.correo || (responsableSeleccionado.dni ? `DNI: ${responsableSeleccionado.dni}` : "Sin correo") }}
+                </p>
               </div>
             </div>
             <button type="button" class="text-xs font-bold text-red-500 hover:text-red-700" @click="limpiarResponsable">Quitar</button>
           </div>
-          <!-- Buscador por DNI o nombre -->
+          <!-- Buscador por correo, DNI o nombre -->
           <div v-else class="relative">
             <InputText
               v-model="busquedaDni"
               class="filtro-control w-full"
-              placeholder="Buscar por DNI o nombre..."
+              placeholder="Buscar por nombre o correo..."
               autocomplete="off"
             />
             <ul
               v-if="busquedaResultados.length"
-              class="absolute z-50 mt-1 w-full border border-border bg-card shadow-xl"
+              class="absolute z-50 mt-1 max-h-60 w-full overflow-auto border border-border bg-card shadow-xl"
             >
               <li
                 v-for="u in busquedaResultados"
-                :key="u.id"
+                :key="String(u.id)"
                 class="flex cursor-pointer items-center gap-3 px-3 py-2 hover:bg-primary/8"
-                @click="seleccionarResponsable(u)"
+                @mousedown.prevent="seleccionarResponsable(u)"
               >
                 <span class="grid h-8 w-8 shrink-0 place-items-center bg-primary/15 text-[0.6rem] font-black text-primary">
                   {{ u.iniciales?.slice(0, 3) || u.nombre?.slice(0, 2).toUpperCase() }}
                 </span>
                 <div>
                   <p class="text-sm font-bold leading-none">{{ u.nombre }}</p>
-                  <p class="mt-0.5 text-[11px] text-muted-foreground">DNI: {{ u.dni || '—' }}</p>
+                  <p class="mt-0.5 text-[11px] text-muted-foreground">
+                    {{ u.correo || (u.dni ? `DNI: ${u.dni}` : "—") }}
+                  </p>
                 </div>
               </li>
             </ul>
@@ -1477,6 +1569,62 @@ function etiquetaEstado(estado: VinculacionUnidad["estado"]) {
     </Dialog>
 
 
+
+    <Dialog
+      v-model:visible="modalEstructura"
+      modal
+      header="Nueva estructura organizacional"
+      :style="{ width: 'min(36rem, calc(100vw - 2rem))' }"
+    >
+      <div class="grid gap-4">
+        <p class="text-sm text-muted-foreground">
+          Define una estructura operativa (áreas, equipos, sedes internas). El
+          gobierno protegido (Dirección / Administración) se mantiene aparte.
+        </p>
+        <label>
+          <span class="filtro-label">Nombre</span>
+          <InputText
+            v-model="formularioEstructura.nombre"
+            class="filtro-control w-full"
+            placeholder="Ej. Estructura operativa"
+            autofocus
+          />
+        </label>
+        <label>
+          <span class="filtro-label">Descripción (opcional)</span>
+          <Textarea
+            v-model="formularioEstructura.descripcion"
+            class="filtro-control w-full"
+            rows="3"
+            placeholder="Para qué se usará esta estructura"
+          />
+        </label>
+        <label>
+          <span class="filtro-label">Tipo</span>
+          <Select
+            v-model="formularioEstructura.tipo"
+            :options="[
+              { label: 'Funcional', value: 'FUNCIONAL' },
+              { label: 'Territorial', value: 'TERRITORIAL' },
+              { label: 'Por proyectos', value: 'PROYECTOS' },
+              { label: 'Personalizada', value: 'PERSONALIZADA' },
+            ]"
+            option-label="label"
+            option-value="value"
+            class="filtro-control w-full"
+          />
+        </label>
+      </div>
+      <template #footer>
+        <Button variant="outline" @click="modalEstructura = false">Cancelar</Button>
+        <Button
+          :disabled="!formularioEstructura.nombre.trim() || guardando"
+          @click="crearEstructura"
+        >
+          Crear estructura
+        </Button>
+      </template>
+    </Dialog>
 
     <Dialog v-model:visible="modalNivel" modal header="Agregar nivel" :style="{ width: 'min(34rem, calc(100vw - 2rem))' }">
       <div class="grid gap-4">

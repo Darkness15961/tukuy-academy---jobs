@@ -17,6 +17,7 @@ import {
   docenteService,
   type CursoDocente,
 } from "@/api/services/docente.service";
+import { apiConfig } from "@/api/config";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
@@ -79,6 +80,20 @@ const ambitoActivo = computed(() =>
 const cursosDelContexto = computed(() => {
   const idsAlcance = contextoActivo.value?.alcance?.cursoIds;
   return cursos.value.filter((curso) => {
+    if (apiConfig.secundariaCursos) {
+      // La secundaria ya es el límite de la org; el alcance mock no aplica.
+      if (ambitoActivo.value === "INDEPENDIENTE") {
+        return (
+          curso.ambito === "INDEPENDIENTE" ||
+          curso.organizacionId === contextoActivo.value?.organizacionId
+        );
+      }
+      return (
+        !contextoActivo.value?.organizacionId ||
+        curso.organizacionId === contextoActivo.value.organizacionId
+      );
+    }
+
     if (ambitoActivo.value === "INDEPENDIENTE") {
       return curso.ambito === "INDEPENDIENTE";
     }

@@ -2,7 +2,12 @@ import { api } from "@/api/client";
 import { apiConfig } from "@/api/config";
 import { API } from "@/api/endpoints";
 import { crearRepositorioLocal } from "@/api/repositorio-local";
+import { mapearCursoSecundariaADocente } from "@/api/services/mapper-curso-secundaria";
+import { secundariaGatewayService } from "@/api/services/secundaria-gateway.service";
 import { CONTEXTO_SESION_KEY } from "@/lib/constants";
+import { storageAcademia } from "@/lib/storage-academia";
+import { supabasePrincipal } from "@/lib/supabase";
+import type { EntregaActividadSecundaria } from "@/lib/contrato-secundaria";
 import {
   cursosDocente,
   estudiantesDocente,
@@ -11,6 +16,7 @@ import type {
   ActividadCursoAcademico,
   ElegibilidadCertificadoAcademico,
   EntregaActividadAcademica,
+  EstadoEntregaAcademica,
   ModuloCursoAcademico,
   ResumenCursoCalificaciones,
   ResumenEstudianteCurso,
@@ -99,6 +105,13 @@ function cursosSemillaPermitidos(): CursoDocente[] {
 }
 
 async function listarCursosPermitidos(): Promise<CursoDocente[]> {
+  if (apiConfig.secundariaCursos) {
+    const contexto = contextoActual();
+    const listado = await secundariaGatewayService.listarCursos();
+    return listado.cursos.map((curso) =>
+      mapearCursoSecundariaADocente(curso, contexto),
+    );
+  }
   const contexto = contextoActual();
   if (
     !contexto ||
@@ -113,6 +126,98 @@ async function listarCursosPermitidos(): Promise<CursoDocente[]> {
     version: 2,
   });
   return repo.listar();
+}
+
+function mapearEntregaSecundaria(
+  item: EntregaActividadSecundaria,
+): EntregaActividadAcademica {
+  const estados: EstadoEntregaAcademica[] = [
+    "SIN_ENTREGAR",
+    "ENTREGADA",
+    "EN_REVISION",
+    "CALIFICADA",
+    "OBSERVADA",
+    "ATRASADA",
+  ];
+  const estado = estados.includes(item.estado as EstadoEntregaAcademica)
+    ? (item.estado as EstadoEntregaAcademica)
+    : "EN_REVISION";
+
+  return {
+    id: item.id,
+    organizacionId: item.organizacionId ?? null,
+    cursoId: item.cursoId,
+    cursoTitulo: item.cursoTitulo,
+    moduloId: item.moduloId,
+    moduloTitulo: item.moduloTitulo,
+    actividadId: item.actividadId,
+    actividadTitulo: item.actividadTitulo,
+    estudianteId: item.estudianteId,
+    estudianteNombre: item.estudianteNombre,
+    estudianteIniciales: item.estudianteIniciales,
+    intento: Number(item.intento ?? 1),
+    entregadaEn: item.entregadaEn,
+    estado,
+    archivo: item.archivo
+      ? {
+          id: item.archivo.id,
+          nombre: item.archivo.nombre,
+          tipo: item.archivo.tipo,
+          tamanio: Number(item.archivo.tamanio ?? 0),
+          referencia: item.archivo.referencia,
+          contenidoBase64: item.archivo.contenidoBase64 ?? undefined,
+        }
+      : undefined,
+    nota: item.nota == null ? undefined : Number(item.nota),
+    retroalimentacion: item.retroalimentacion ?? undefined,
+    calificadaEn: item.calificadaEn ?? undefined,
+    horasReconocidas: Number(item.horasReconocidas ?? 0),
+  };
+}
+
+async function archivoABase64(archivo: File): Promise<string> {
+  const buffer = await archivo.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  let binario = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binario += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return `data:${archivo.type || "application/pdf"};base64,${btoa(binario)}`;
+}
+
+/** data: o base64 crudo → Blob (para vista previa; data: URLs largas fallan en window.open). */
+function base64ABlob(
+  contenido: string,
+  tipo = "application/pdf",
+): Blob {
+  const dataUrl = contenido.includes(",")
+    ? contenido
+    : `data:${tipo};base64,${contenido}`;
+  const [meta, payload] = dataUrl.split(",", 2);
+  const mime =
+    meta?.match(/data:([^;]+)/)?.[1]?.trim() || tipo || "application/pdf";
+  const binario = atob(payload ?? "");
+  const bytes = new Uint8Array(binario.length);
+  for (let i = 0; i < binario.length; i += 1) {
+    bytes[i] = binario.charCodeAt(i);
+  }
+  return new Blob([bytes], { type: mime });
+}
+
+function abrirBlobEnPestana(blob: Blob, ventana?: Window | null) {
+  const url = URL.createObjectURL(blob);
+  const destino = ventana ?? window.open(url, "_blank", "noopener,noreferrer");
+  if (!destino) {
+    URL.revokeObjectURL(url);
+    throw new Error(
+      "El navegador bloqueó la vista previa. Permite ventanas emergentes o usa Descargar.",
+    );
+  }
+  if (ventana) {
+    destino.location.href = url;
+  }
+  window.setTimeout(() => URL.revokeObjectURL(url), 120_000);
 }
 
 function crearModulosCurso(cursoId: string): ModuloCursoAcademico[] {
@@ -424,6 +529,31 @@ export const academicoService = {
 
   async listarModulos(cursoId: string): Promise<ModuloCursoAcademico[]> {
     const id = resolverCursoAcademicoId(cursoId);
+    if (apiConfig.secundariaCursos) {
+      const listado = await secundariaGatewayService.listarModulosCurso(id);
+      return (listado.modulos ?? []).map((modulo) => ({
+        id: modulo.id,
+        cursoId: modulo.cursoId,
+        titulo: modulo.titulo,
+        orden: Number(modulo.orden ?? 0),
+        ponderacion: Number(modulo.ponderacion ?? 20),
+        horasRequeridas: Number(modulo.horasRequeridas ?? 4),
+        actividades: (modulo.actividades ?? []).map((actividad) => ({
+          id: actividad.id,
+          cursoId: actividad.cursoId,
+          moduloId: actividad.moduloId,
+          titulo: actividad.titulo,
+          tipo: (actividad.tipo as ActividadCursoAcademico["tipo"]) ||
+            "ENTREGA_PDF",
+          orden: Number(actividad.orden ?? 0),
+          ponderacion: Number(actividad.ponderacion ?? 100),
+          notaMaxima: Number(actividad.notaMaxima ?? 20),
+          horasReconocidas: Number(actividad.horasReconocidas ?? 4),
+          obligatoria: actividad.obligatoria !== false,
+          intentosPermitidos: Number(actividad.intentosPermitidos ?? 3),
+        })),
+      }));
+    }
     let modulos = await modulosRepo.listar();
     if (!modulos.some((modulo) => modulo.cursoId === id) && apiConfig.useMock) {
       const nuevos = crearModulosCurso(id);
@@ -439,11 +569,21 @@ export const academicoService = {
     cursoId: string,
   ): Promise<EntregaActividadAcademica[]> {
     const id = resolverCursoAcademicoId(cursoId);
+    if (apiConfig.secundariaCursos) {
+      const listado = await secundariaGatewayService.listarEntregas({
+        cursoId: id,
+      });
+      return listado.entregas.map(mapearEntregaSecundaria);
+    }
     const entregas = await entregasRepo.listar();
     return entregas.filter((entrega) => entrega.cursoId === id);
   },
 
   async listarEntregasDocente(): Promise<EntregaActividadAcademica[]> {
+    if (apiConfig.secundariaCursos) {
+      const listado = await secundariaGatewayService.listarEntregas();
+      return listado.entregas.map(mapearEntregaSecundaria);
+    }
     const ids = new Set(
       (await listarCursosPermitidos()).map((curso) => curso.id),
     );
@@ -454,10 +594,65 @@ export const academicoService = {
   async obtenerEntrega(
     entregaId: string,
   ): Promise<EntregaActividadAcademica | null> {
+    if (apiConfig.secundariaCursos) {
+      const detalle = await secundariaGatewayService.obtenerEntrega(
+        entregaId,
+        true,
+      );
+      return mapearEntregaSecundaria(detalle.entrega);
+    }
     return entregasRepo.obtener(entregaId);
   },
 
   async listarResumenCursos(): Promise<ResumenCursoCalificaciones[]> {
+    if (apiConfig.secundariaCursos) {
+      const [entregas, cursos] = await Promise.all([
+        this.listarEntregasDocente(),
+        listarCursosPermitidos(),
+      ]);
+      const modulosPorCurso = await Promise.all(
+        cursos.map((curso) => this.listarModulos(curso.id)),
+      );
+      return cursos.map((curso, indiceCurso) => {
+        const modulosCurso = modulosPorCurso[indiceCurso] ?? [];
+        const entregasCurso = entregas.filter(
+          (entrega) => entrega.cursoId === curso.id,
+        );
+        const estudiantes = new Set(
+          entregasCurso.map((entrega) => entrega.estudianteId),
+        );
+        const resumenEstudiantes = this.resumirEstudiantes(
+          entregasCurso,
+          modulosCurso,
+        );
+        return {
+          cursoId: curso.id,
+          titulo: curso.titulo,
+          imagen: curso.imagen,
+          estadoCurso: curso.estado,
+          modulos: modulosCurso.length,
+          actividades: modulosCurso.reduce(
+            (total, modulo) => total + modulo.actividades.length,
+            0,
+          ),
+          estudiantes: estudiantes.size,
+          entregasPendientes: entregasCurso.filter((entrega) =>
+            ["ENTREGADA", "EN_REVISION"].includes(entrega.estado),
+          ).length,
+          entregasCalificadas: entregasCurso.filter(
+            (entrega) => entrega.estado === "CALIFICADA",
+          ).length,
+          promedio: promedioNotas(entregasCurso),
+          aprobados: resumenEstudiantes.filter(
+            (estudiante) => estudiante.estado === "APROBADO",
+          ).length,
+          contexto:
+            curso.ambito === "INDEPENDIENTE"
+              ? "Docencia independiente"
+              : curso.organizacionNombre,
+        };
+      });
+    }
     if (!apiConfig.useMock) {
       const { data } = await api.get<ResumenCursoCalificaciones[]>(
         API.academico.resumenCalificaciones,
@@ -576,6 +771,15 @@ export const academicoService = {
     if (nota < 0 || nota > 20) {
       throw new Error("La nota debe estar entre 0 y 20");
     }
+    if (apiConfig.secundariaCursos) {
+      const resultado = await secundariaGatewayService.calificarEntrega(
+        entregaId,
+        nota,
+        retroalimentacion,
+      );
+      emitirCambio();
+      return mapearEntregaSecundaria(resultado.entrega);
+    }
     if (!apiConfig.useMock) {
       const { data } = await api.post<EntregaActividadAcademica>(
         API.academico.calificarEntrega(entregaId),
@@ -605,6 +809,15 @@ export const academicoService = {
     entregaId: string,
     retroalimentacion: string,
   ): Promise<EntregaActividadAcademica> {
+    if (apiConfig.secundariaCursos) {
+      const resultado =
+        await secundariaGatewayService.solicitarCorreccionEntrega(
+          entregaId,
+          retroalimentacion,
+        );
+      emitirCambio();
+      return mapearEntregaSecundaria(resultado.entrega);
+    }
     if (!apiConfig.useMock) {
       const { data } = await api.post<EntregaActividadAcademica>(
         API.academico.solicitarCorreccion(entregaId),
@@ -635,6 +848,20 @@ export const academicoService = {
       throw new Error("El PDF debe pesar menos de 8 MB en la demostración");
     }
     const cursoId = resolverCursoAcademicoId(cursoPortalId);
+    if (apiConfig.secundariaCursos) {
+      const subida = await storageAcademia.subirEntrega(archivo);
+      const resultado = await secundariaGatewayService.enviarEntrega({
+        cursoId,
+        actividadId: itemId,
+        archivoNombre: archivo.name,
+        archivoTipo: archivo.type,
+        archivoTamanio: archivo.size,
+        archivoReferencia: subida.objectKey,
+        archivoContenido: null,
+      });
+      emitirCambio();
+      return mapearEntregaSecundaria(resultado.entrega);
+    }
     if (!apiConfig.useMock) {
       const formulario = new FormData();
       formulario.append("archivo", archivo);
@@ -700,6 +927,26 @@ export const academicoService = {
   },
 
   async descargarArchivo(entrega: EntregaActividadAcademica) {
+    if (apiConfig.secundariaCursos) {
+      const detalle =
+        entrega.archivo?.contenidoBase64
+          ? entrega
+          : await this.obtenerEntrega(entrega.id);
+      if (detalle?.archivo?.contenidoBase64) {
+        const blob = base64ABlob(
+          detalle.archivo.contenidoBase64,
+          detalle.archivo.tipo || "application/pdf",
+        );
+        const url = URL.createObjectURL(blob);
+        const enlace = document.createElement("a");
+        enlace.href = url;
+        enlace.download = detalle.archivo.nombre || "entrega.pdf";
+        enlace.click();
+        window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+        return;
+      }
+      throw new Error("No se encontró el archivo de la entrega");
+    }
     if (!apiConfig.useMock) {
       const { data } = await api.get<{ url: string }>(
         API.academico.archivoEntrega(entrega.id),
@@ -732,6 +979,31 @@ export const academicoService = {
   },
 
   async abrirArchivo(entrega: EntregaActividadAcademica) {
+    if (apiConfig.secundariaCursos) {
+      // Abrir en el gesto del clic; si esperamos el fetch, el popup se bloquea.
+      const vistaPrevia = window.open("about:blank", "_blank");
+      try {
+        const detalle =
+          entrega.archivo?.contenidoBase64
+            ? entrega
+            : await this.obtenerEntrega(entrega.id);
+        if (!detalle?.archivo?.contenidoBase64) {
+          vistaPrevia?.close();
+          throw new Error("No se encontró el archivo de la entrega");
+        }
+        abrirBlobEnPestana(
+          base64ABlob(
+            detalle.archivo.contenidoBase64,
+            detalle.archivo.tipo || "application/pdf",
+          ),
+          vistaPrevia,
+        );
+        return;
+      } catch (error) {
+        vistaPrevia?.close();
+        throw error;
+      }
+    }
     if (!apiConfig.useMock && entrega.archivo) {
       const { data } = await api.get<{ url: string }>(
         API.academico.archivoEntrega(entrega.id),
@@ -746,14 +1018,23 @@ export const academicoService = {
       ? null
       : await crearPdfDemostracion(entrega);
     const url = entrega.archivo?.contenidoBase64
-      ? entrega.archivo.contenidoBase64
+      ? URL.createObjectURL(
+          base64ABlob(
+            entrega.archivo.contenidoBase64,
+            entrega.archivo.tipo || "application/pdf",
+          ),
+        )
       : URL.createObjectURL(
           archivoLocal ?? pdfDemostracion!.output("blob"),
         );
-    window.open(url, "_blank", "noopener,noreferrer");
-    if (url.startsWith("blob:")) {
-      window.setTimeout(() => URL.revokeObjectURL(url), 120_000);
+    const ventana = window.open(url, "_blank", "noopener,noreferrer");
+    if (!ventana) {
+      URL.revokeObjectURL(url);
+      throw new Error(
+        "El navegador bloqueó la vista previa. Permite ventanas emergentes o usa Descargar.",
+      );
     }
+    window.setTimeout(() => URL.revokeObjectURL(url), 120_000);
   },
 
   async obtenerElegibilidad(
@@ -821,6 +1102,73 @@ export const academicoService = {
   async listarElegibilidades(
     cursoId?: string,
   ): Promise<ElegibilidadCertificadoAcademico[]> {
+    if (apiConfig.secundariaCursos) {
+      const cursosDisponibles = await listarCursosPermitidos();
+      const cursos = cursoId
+        ? cursosDisponibles.filter(
+            (curso) => curso.id === resolverCursoAcademicoId(cursoId),
+          )
+        : cursosDisponibles;
+      const [todasLasEntregas, ...modulosPorCurso] = await Promise.all([
+        this.listarEntregasDocente(),
+        ...cursos.map((curso) => this.listarModulos(curso.id)),
+      ]);
+      const resultado: ElegibilidadCertificadoAcademico[] = [];
+      cursos.forEach((curso, indice) => {
+        const entregas = todasLasEntregas.filter(
+          (entrega) => entrega.cursoId === curso.id,
+        );
+        const modulos = (modulosPorCurso[indice] ?? []).sort(
+          (primero, segundo) => primero.orden - segundo.orden,
+        );
+        const resumenes = this.resumirEstudiantes(entregas, modulos);
+        for (const resumen of resumenes) {
+          const entregasEstudiante = entregas.filter(
+            (entrega) => entrega.estudianteId === resumen.estudianteId,
+          );
+          const modulosCompletados = modulos.filter((modulo) =>
+            modulo.actividades
+              .filter((actividad) => actividad.obligatoria)
+              .every((actividad) =>
+                entregasEstudiante.some(
+                  (entrega) =>
+                    entrega.actividadId === actividad.id &&
+                    entrega.estado === "CALIFICADA",
+                ),
+              ),
+          ).length;
+          const motivos: string[] = [];
+          if (resumen.actividadesCalificadas < resumen.actividadesRequeridas) {
+            motivos.push(
+              "Tiene actividades obligatorias pendientes de calificación",
+            );
+          }
+          if (resumen.notaFinal < 14) {
+            motivos.push("La nota final todavía no alcanza 14 sobre 20");
+          }
+          if (resumen.horasCumplidas < resumen.horasRequeridas) {
+            motivos.push("Aún no cumple las horas académicas requeridas");
+          }
+          resultado.push({
+            cursoId: curso.id,
+            cursoTitulo: curso.titulo,
+            estudianteId: resumen.estudianteId,
+            estudianteNombre: resumen.estudianteNombre,
+            notaFinal: resumen.notaFinal,
+            horasCumplidas: resumen.horasCumplidas,
+            horasRequeridas: resumen.horasRequeridas,
+            modulosCompletados,
+            modulosTotales: modulos.length,
+            actividadesCalificadas: resumen.actividadesCalificadas,
+            actividadesRequeridas: resumen.actividadesRequeridas,
+            elegible: motivos.length === 0,
+            motivos,
+          });
+        }
+      });
+      return resultado;
+    }
+
     const [cursosDisponibles, todasLasEntregas, modulosGuardados] =
       await Promise.all([
         listarCursosPermitidos(),
@@ -952,6 +1300,28 @@ export const academicoService = {
   async verificarCertificado(
     codigo: string,
   ): Promise<VerificacionCertificadoAcademico | null> {
+    if (apiConfig.secundariaCursos) {
+      const { data, error } = await supabasePrincipal().rpc(
+        "verificar_certificado_publico",
+        { p_codigo: codigo },
+      );
+      if (error) throw new Error(error.message);
+      if (!data) return null;
+      return {
+        codigo: String(data.codigo ?? codigo),
+        estado: (data.estado as VerificacionCertificadoAcademico["estado"]) ||
+          "VIGENTE",
+        estudiante: String(data.estudiante ?? ""),
+        curso: String(data.curso ?? ""),
+        horasCertificadas: Number(data.horasCertificadas ?? 0),
+        notaFinal: Number(data.notaFinal ?? 0),
+        emitidoEn: String(data.emitidoEn ?? ""),
+        organizacion: String(data.organizacion ?? "Tukuy Academy"),
+        modulosCompletados: Number(data.modulosCompletados ?? 0),
+        versionPrograma: String(data.versionPrograma ?? "1"),
+      };
+    }
+
     if (!apiConfig.useMock) {
       const { data } = await api.get<VerificacionCertificadoAcademico>(
         API.academico.verificarCertificado(codigo),

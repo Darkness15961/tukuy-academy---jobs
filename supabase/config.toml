@@ -385,6 +385,10 @@ deno_version = 2
 [functions.secondary-gateway]
 verify_jwt = false
 
+# Requiere sesión (Authorization). Valida usuario y emite pre-signed S3.
+[functions.media-presign]
+verify_jwt = true
+
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 

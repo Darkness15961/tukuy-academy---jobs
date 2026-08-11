@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Paperclip, Search, Send } from "lucide-vue-next";
+import { MessageSquare, Paperclip, Search, Send } from "lucide-vue-next";
 import { computed, onMounted, ref } from "vue";
 import {
   docenteService,
@@ -11,7 +11,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import Skeleton from "primevue/skeleton";
+
 const cargando = ref(true);
+const error = ref("");
 const conversaciones = ref<ConversacionDocente[]>([]);
 const activa = ref<ConversacionDocente>();
 const texto = ref("");
@@ -27,10 +29,18 @@ const conversacionesVisibles = computed(() => {
       item.mensaje.toLowerCase().includes(termino),
   );
 });
+
 onMounted(async () => {
   try {
     conversaciones.value = await docenteService.conversaciones.listar();
-    activa.value = conversaciones.value[0];
+    if (conversaciones.value[0]) {
+      await seleccionarConversacion(conversaciones.value[0]);
+    }
+  } catch (causa) {
+    error.value =
+      causa instanceof Error
+        ? causa.message
+        : "No se pudieron cargar las conversaciones.";
   } finally {
     cargando.value = false;
   }
@@ -54,16 +64,36 @@ async function enviar() {
 }
 
 async function seleccionarConversacion(conversacion: ConversacionDocente) {
-  activa.value = conversacion;
-  if (conversacion.noLeidos > 0) {
+  const detalle =
+    (await docenteService.conversaciones.obtener(conversacion.id)) ??
+    conversacion;
+  activa.value = detalle;
+  if (detalle.noLeidos > 0 || conversacion.noLeidos > 0) {
     const actualizada = await docenteService.marcarConversacionLeida(
-      conversacion.id,
+      detalle.id,
     );
     const indice = conversaciones.value.findIndex(
       (item) => item.id === actualizada.id,
     );
-    if (indice >= 0) conversaciones.value[indice] = actualizada;
-    activa.value = actualizada;
+    if (indice >= 0) {
+      conversaciones.value[indice] = {
+        ...conversaciones.value[indice]!,
+        ...actualizada,
+        noLeidos: 0,
+      };
+    }
+    activa.value = { ...actualizada, noLeidos: 0 };
+  } else {
+    const indice = conversaciones.value.findIndex(
+      (item) => item.id === detalle.id,
+    );
+    if (indice >= 0) {
+      conversaciones.value[indice] = {
+        ...conversaciones.value[indice]!,
+        mensaje: detalle.mensaje,
+        hora: detalle.hora,
+      };
+    }
   }
 }
 
@@ -81,14 +111,16 @@ function adjuntarArchivo(evento: Event) {
   <section class="mx-auto max-w-375">
     <Card
       class="h-[calc(100vh-150px)] min-h-[600px] overflow-hidden border-border bg-card"
-      ><CardContent class="grid h-full p-0 md:grid-cols-[340px_1fr]"
-        ><aside class="border-r border-border">
+    >
+      <CardContent class="grid h-full p-0 md:grid-cols-[340px_1fr]">
+        <aside class="border-r border-border">
           <div class="border-b border-border p-4">
             <h1 class="text-xl font-black">Mensajes</h1>
             <div class="relative mt-3">
               <Search
                 class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
-              /><Input
+              />
+              <Input
                 v-model="busqueda"
                 class="pl-10"
                 placeholder="Buscar conversación..."
@@ -98,6 +130,19 @@ function adjuntarArchivo(evento: Event) {
           <div v-if="cargando" class="space-y-2 p-4">
             <Skeleton v-for="item in 5" :key="item" class="h-16 w-full" />
           </div>
+          <p
+            v-else-if="error"
+            class="p-4 text-sm font-semibold text-red-600"
+          >
+            {{ error }}
+          </p>
+          <p
+            v-else-if="!conversacionesVisibles.length"
+            class="p-6 text-center text-sm text-muted-foreground"
+          >
+            Aún no hay conversaciones. Aparecerán cuando tengas alumnos
+            matriculados en tus cursos.
+          </p>
           <button
             v-for="c in conversacionesVisibles"
             :key="c.id"
@@ -105,15 +150,15 @@ function adjuntarArchivo(evento: Event) {
             :class="activa?.id === c.id ? 'bg-primary/10' : 'hover:bg-muted'"
             @click="seleccionarConversacion(c)"
           >
-            <Avatar
-              ><AvatarFallback class="bg-primary/10 text-xs text-primary">{{
+            <Avatar>
+              <AvatarFallback class="bg-primary/10 text-xs text-primary">{{
                 c.iniciales
-              }}</AvatarFallback></Avatar
-            >
+              }}</AvatarFallback>
+            </Avatar>
             <div class="min-w-0 flex-1">
               <div class="flex justify-between">
-                <strong class="truncate text-sm">{{ c.nombre }}</strong
-                ><span class="text-[10px] text-muted-foreground">{{
+                <strong class="truncate text-sm">{{ c.nombre }}</strong>
+                <span class="text-[10px] text-muted-foreground">{{
                   c.hora
                 }}</span>
               </div>
@@ -129,22 +174,39 @@ function adjuntarArchivo(evento: Event) {
           </button>
         </aside>
         <div class="flex min-w-0 flex-col">
-          <div class="flex items-center gap-3 border-b border-border p-4">
-            <Avatar
-              ><AvatarFallback class="bg-primary text-xs text-white">{{
-                activa?.iniciales
-              }}</AvatarFallback></Avatar
-            >
+          <div
+            v-if="activa"
+            class="flex items-center gap-3 border-b border-border p-4"
+          >
+            <Avatar>
+              <AvatarFallback class="bg-primary text-xs text-white">{{
+                activa.iniciales
+              }}</AvatarFallback>
+            </Avatar>
             <div>
-              <strong>{{ activa?.nombre }}</strong>
-              <p class="text-xs text-emerald-600 dark:text-emerald-400">
-                Activo recientemente
-              </p>
+              <strong>{{ activa.nombre }}</strong>
+              <p class="text-xs text-muted-foreground">Conversación del curso</p>
             </div>
           </div>
-          <div class="flex-1 space-y-3 overflow-y-auto bg-muted p-5">
+          <div
+            v-else
+            class="flex flex-1 flex-col items-center justify-center gap-2 bg-muted p-8 text-center text-muted-foreground"
+          >
+            <MessageSquare class="h-8 w-8 opacity-40" />
+            <p class="text-sm">Selecciona una conversación</p>
+          </div>
+          <div
+            v-if="activa"
+            class="flex-1 space-y-3 overflow-y-auto bg-muted p-5"
+          >
+            <p
+              v-if="!(activa.mensajes ?? []).length"
+              class="py-10 text-center text-sm text-muted-foreground"
+            >
+              Escribe el primer mensaje.
+            </p>
             <div
-              v-for="mensaje in activa?.mensajes ?? []"
+              v-for="mensaje in activa.mensajes ?? []"
               :key="mensaje.id"
               class="max-w-md p-3 text-sm shadow-sm"
               :class="
@@ -167,7 +229,11 @@ function adjuntarArchivo(evento: Event) {
               </p>
             </div>
           </div>
-          <form class="border-t border-border p-4" @submit.prevent="enviar">
+          <form
+            v-if="activa"
+            class="border-t border-border p-4"
+            @submit.prevent="enviar"
+          >
             <div
               v-if="adjunto"
               class="mb-2 flex items-center justify-between bg-muted px-3 py-2 text-xs"
@@ -194,17 +260,22 @@ function adjuntarArchivo(evento: Event) {
               />
               <Button
                 type="button"
-                variant="ghost"
                 size="icon"
+                variant="outline"
                 @click="selectorArchivo?.click()"
-                ><Paperclip class="h-5 w-5" /></Button
-              ><Input
+              >
+                <Paperclip class="h-4 w-4" />
+              </Button>
+              <Input
                 v-model="texto"
                 class="flex-1"
                 placeholder="Escribe un mensaje..."
-              /><Button size="icon"><Send class="h-4 w-4" /></Button>
+              />
+              <Button type="submit"><Send class="h-4 w-4" /></Button>
             </div>
-          </form></div></CardContent
-    ></Card>
+          </form>
+        </div>
+      </CardContent>
+    </Card>
   </section>
 </template>

@@ -85,7 +85,7 @@ async function programar() {
     invitadosEmails: emails,
   };
   await docenteService.sesiones.crear(sesion);
-  sesiones.value.push(sesion);
+  sesiones.value = await docenteService.sesiones.listar();
   Object.assign(nuevaSesion, {
     titulo: "",
     cursoId: cursos.value[0]?.id ?? "",
@@ -122,7 +122,7 @@ function accionSesion(sesion: SesionDocente) {
         <TituloConAyuda
           titulo="Sesiones en vivo"
           clase-titulo="text-2xl font-black"
-          ayuda="Programa encuentros sincronizados con la organización y los alumnos del curso. Se genera Meet y se invita por correo (matrículas + extras)."
+          ayuda="Programa encuentros sincronizados con la organización y los alumnos del curso. Meet es simulado por ahora (integración Google pendiente)."
         />
         <p class="mt-2 text-sm text-muted-foreground">
           Para la vista mes a pantalla completa con filtros por curso, abre
@@ -234,11 +234,11 @@ function accionSesion(sesion: SesionDocente) {
             <textarea
               v-model="nuevaSesion.emailsInvitados"
               class="min-h-20 rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground"
-              placeholder="Correos a invitar (Meet vía Calendar, separados por coma)"
+              placeholder="Correos a invitar (Meet simulado, separados por coma)"
             />
             <div class="flex justify-end gap-2">
               <Button variant="outline" @click="modal = false">Cancelar</Button
-              ><Button @click="programar">Crear Meet e invitar</Button>
+              ><Button @click="programar">Crear Meet simulado e invitar</Button>
             </div>
           </div></CardContent
         ></Card

@@ -24,6 +24,7 @@ import InputText from "primevue/inputtext";
 import Select from "primevue/select";
 import { useContextoSesion } from "@/composables/useContextoSesion";
 import { organizacionService } from "@/api/services/organizacion.service";
+import { apiConfig } from "@/api/config";
 
 const props = withDefaults(
   defineProps<{
@@ -119,7 +120,9 @@ const tasaAprobacion = computed(() => {
   return total ? Math.round((emitidosVisibles.value.length / total) * 100) : 0;
 });
 onMounted(async () => {
-  if (props.alcance === "ORGANIZACION") {
+  const usarOrgMock =
+    props.alcance === "ORGANIZACION" && !apiConfig.secundariaCursos;
+  if (usarOrgMock) {
     try {
       [emitidos.value, pendientes.value] = await Promise.all([
         organizacionService.certificados.listar(),
@@ -132,25 +135,23 @@ onMounted(async () => {
   }
 
   sincronizando.value = true;
-  const sincronizacion = docenteService.sincronizarCertificadosElegibles();
+  error.value = "";
   try {
+    if (!apiConfig.secundariaCursos) {
+      // Mock/API: recalcula elegibilidad local antes de leer repos.
+      await docenteService.sincronizarCertificadosElegibles();
+    }
     [emitidos.value, pendientes.value] = await Promise.all([
       docenteService.certificados.listar(),
       docenteService.certificadosPendientes.listar(),
     ]);
+  } catch (causa) {
+    error.value =
+      causa instanceof Error
+        ? causa.message
+        : "No se pudieron cargar los certificados.";
   } finally {
     cargando.value = false;
-  }
-  try {
-    await sincronizacion;
-    [emitidos.value, pendientes.value] = await Promise.all([
-      docenteService.certificados.listar(),
-      docenteService.certificadosPendientes.listar(),
-    ]);
-  } catch {
-    error.value =
-      "Los certificados se mostraron, pero no se pudo actualizar la elegibilidad.";
-  } finally {
     sincronizando.value = false;
   }
 });
@@ -160,10 +161,11 @@ async function emitir(pendienteId: string) {
   if (!p) return;
   error.value = "";
   try {
-    const emitido =
-      props.alcance === "ORGANIZACION"
-        ? await organizacionService.emitirCertificado(pendienteId)
-        : await docenteService.emitirCertificado(pendienteId);
+    const usarOrgMock =
+      props.alcance === "ORGANIZACION" && !apiConfig.secundariaCursos;
+    const emitido = usarOrgMock
+      ? await organizacionService.emitirCertificado(pendienteId)
+      : await docenteService.emitirCertificado(pendienteId);
     emitidos.value.unshift(emitido);
     pendientes.value = pendientes.value.filter((x) => x.id !== pendienteId);
     mensaje.value = "Certificado emitido y enviado al estudiante.";
@@ -176,43 +178,43 @@ async function emitir(pendienteId: string) {
   }
 }
 
-function exportar() {
-  const exportEmitidos =
-    tipoFiltro.value === "AMBOS" || tipoFiltro.value === "EMITIDOS";
-  const exportPendientes =
-    tipoFiltro.value === "AMBOS" || tipoFiltro.value === "PENDIENTES";
+async function exportar() {
+  error.value = "";
+  const listaPdf = emitidosVisibles.value;
+  if (listaPdf.length) {
+    try {
+      const { downloadCertificatePdf } = await import("@/lib/certificado-pdf");
+      for (const certificado of listaPdf) {
+        await downloadCertificatePdf(datosCertificado(certificado));
+        // Evita que el navegador bloquee descargas en ráfaga.
+        await new Promise((r) => setTimeout(r, 250));
+      }
+      mensaje.value =
+        listaPdf.length === 1
+          ? "PDF del certificado descargado."
+          : `${listaPdf.length} PDFs de certificados descargados.`;
+      setTimeout(() => (mensaje.value = ""), 2500);
+    } catch {
+      error.value = "No se pudieron generar los PDF de certificados.";
+    }
+    return;
+  }
 
+  // Sin emitidos visibles: listado CSV de pendientes (no es un certificado PDF).
   const filas: Array<Array<string | number>> = [
     ["Código", "Estudiante", "Curso", "Fecha", "Estado", "Nota"],
   ];
-
-  if (exportEmitidos) {
-    filas.push(
-      ...emitidosVisibles.value.map((item) => [
-        item.id,
-        item.nombre,
-        item.curso,
-        item.fecha,
-        item.estado,
-        "-",
-      ]),
-    );
-  }
-
-  if (exportPendientes) {
-    filas.push(
-      ...pendientesVisibles.value.map((item) => [
-        item.id,
-        item.nombre,
-        item.curso,
-        "-",
-        "PENDIENTE",
-        item.nota,
-      ]),
-    );
-  }
-
-  const csv = filas
+  filas.push(
+    ...pendientesVisibles.value.map((item) => [
+      item.id,
+      item.nombre,
+      item.curso,
+      "-",
+      "PENDIENTE",
+      item.nota,
+    ]),
+  );
+  const csv = "\uFEFF" + filas
     .map((fila) =>
       fila.map((dato) => `"${String(dato).replaceAll('"', '""')}"`).join(","),
     )
@@ -221,7 +223,8 @@ function exportar() {
   enlace.href = URL.createObjectURL(
     new Blob([csv], { type: "text/csv;charset=utf-8" }),
   );
-  enlace.download = props.nombreArchivo;
+  const base = props.nombreArchivo.replace(/\.(csv|txt)$/i, "");
+  enlace.download = `${base || "certificados"}-pendientes.csv`;
   enlace.click();
   URL.revokeObjectURL(enlace.href);
 }
@@ -434,7 +437,9 @@ async function descargarCertificado(certificado: CertificadoEmitidoDocente) {
             variant="outline"
             class="md:col-span-2 xl:col-span-5"
             @click="exportar"
-            ><Download class="h-4 w-4" />Exportar</Button
+            ><Download class="h-4 w-4" />{{
+              emitidosVisibles.length ? "Exportar PDF" : "Exportar CSV"
+            }}</Button
           >
         </div>
         <div class="divide-y">

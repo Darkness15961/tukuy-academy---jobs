@@ -92,18 +92,19 @@ const nombreFuncionActiva = computed(() =>
 const logoEntidad = computed(
   () =>
     funcionesEntidadActiva.value.find((item) => item.organizacion?.logo)
-      ?.organizacion?.logo ?? "/img/LogoColegioING.png",
+      ?.organizacion?.logo ?? "/img/iconoTukuyAcademy.png",
 );
-onMounted(() => {
-  void restaurarUsuario();
-  void cargarAvisos();
-});
 const avisosPendientes = computed(
   () => avisos.value.filter((aviso) => !aviso.leida).length,
 );
 async function cargarAvisos() {
   avisos.value = await organizacionService.notificaciones.listar();
 }
+
+onMounted(() => {
+  void restaurarUsuario();
+  void cargarAvisos();
+});
 async function abrirAviso(aviso: NotificacionOrganizacion) {
   if (!aviso.leida) {
     await organizacionService.notificaciones.actualizar(aviso.id, { leida: true });
@@ -417,7 +418,7 @@ async function activarFuncion(membresiaId: string) {
         </span>
         <div class="min-w-0">
           <p class="text-[11px] font-black uppercase leading-4 text-primary">
-            {{ contextoActivo?.organizacionNombre ?? "COLEGIO DE INGENIEROS CUSCO" }}
+            {{ contextoActivo?.organizacionNombre ?? "Tu organización" }}
           </p>
           <p class="mt-1 text-xs text-muted-foreground">
             {{ nombreFuncionActiva }} · Contexto activo
@@ -603,7 +604,7 @@ async function activarFuncion(membresiaId: string) {
           >
             <DropdownMenuLabel class="px-3 py-2.5">
               <p class="text-sm font-bold text-foreground">
-                {{ contextoActivo?.organizacionNombre ?? "COLEGIO DE INGENIEROS CUSCO" }}
+                {{ contextoActivo?.organizacionNombre ?? "Tu organización" }}
               </p>
               <p class="mt-0.5 text-xs font-normal text-muted-foreground">
                 {{ nombreFuncionActiva }} de organización

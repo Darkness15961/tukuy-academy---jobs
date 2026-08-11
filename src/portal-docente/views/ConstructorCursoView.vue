@@ -22,8 +22,10 @@ import {
   Upload,
   UserRoundCheck,
   Video,
+  HelpCircle,
+  ClipboardCheck,
 } from "lucide-vue-next";
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref, toRaw } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -43,6 +45,9 @@ import type {
 } from "@/portal-docente/types/docente.types";
 import { useContextoSesion } from "@/composables/useContextoSesion";
 import { useAuth } from "@/composables/useAuth";
+import { apiConfig } from "@/api/config";
+import { storageAcademia } from "@/lib/storage-academia";
+import PersonalizarPortadaModal from "@/components/shared/PersonalizarPortadaModal.vue";
 import {
   organizacionService,
   type UsuarioOrganizacion,
@@ -56,10 +61,16 @@ const { currentUser, restaurarUsuario } = useAuth();
 const paso = ref(1);
 const cargando = ref(true);
 const guardado = ref(false);
+const guardando = ref(false);
+const errorGuardado = ref("");
 const enviado = ref(false);
 const mostrandoVistaPrevia = ref(false);
 const errorImagen = ref("");
 const selectorImagen = ref<HTMLInputElement | null>(null);
+const modalPortadaAbierto = ref(false);
+const fuentePortadaTemp = ref("");
+const archivoPortadaTemp = ref<File | null>(null);
+const subiendoPortada = ref(false);
 const selectorMaterial = ref<HTMLInputElement | null>(null);
 const seccionMaterial = ref<number | null>(null);
 const docentesEntidad = ref<UsuarioOrganizacion[]>([]);
@@ -82,6 +93,9 @@ const unidadesEntidad = ref<UnidadOrganizacional[]>([]);
 const errorMaterial = ref("");
 const modalFirmas = ref(false);
 const busquedaFirma = ref("");
+const errorFirmaPropia = ref("");
+const subiendoFirmaPropia = ref(false);
+const selectorFirmaPropia = ref<HTMLInputElement | null>(null);
 const modalCategorias = ref(false);
 const nuevaCategoria = ref("");
 const categoriaPendienteEliminar = ref("");
@@ -126,6 +140,7 @@ const valoresIniciales = {
   categoria: "Gestión de obras",
   nivel: "Básico",
   imagen: "",
+  imagenPosicion: "50% 50%",
   ambito: esIndependiente.value ? "INDEPENDIENTE" : "ORGANIZACION",
   organizacionId: contextoActivo.value?.organizacionId ?? null,
   acceso: esIndependiente.value ? "PAGO" : "ORGANIZACION",
@@ -146,18 +161,127 @@ const valoresIniciales = {
     : ("DOCENTE" as const),
 };
 const curso = reactive({ ...valoresIniciales });
+type ItemSeccion = NonNullable<
+  BorradorCursoDocente["secciones"][number]["items"]
+>[number];
+type SeccionBorrador = BorradorCursoDocente["secciones"][number];
+
+const TIPOS_ITEM: Array<{ value: ItemSeccion["tipo"]; label: string }> = [
+  { value: "video", label: "Video" },
+  { value: "lectura", label: "Lectura" },
+  { value: "quiz", label: "Cuestionario" },
+  { value: "assignment", label: "Entrega PDF" },
+];
+
+function preguntasSemilla(): NonNullable<ItemSeccion["preguntas"]> {
+  return [
+    {
+      question: "Nueva pregunta del cuestionario",
+      options: ["Opción A", "Opción B", "Opción C", "Opción D"],
+      correctIndex: 0,
+    },
+  ];
+}
+
+function sincronizarClases(seccion: SeccionBorrador) {
+  seccion.items ??= [];
+  seccion.clases = seccion.items.map((item) => item.titulo);
+}
+
+function asegurarItems(seccion: SeccionBorrador) {
+  if (seccion.items?.length) {
+    sincronizarClases(seccion);
+    return;
+  }
+  seccion.items = (seccion.clases ?? []).map((titulo, indice) => ({
+    titulo,
+    tipo: (indice === 0 ? "video" : "lectura") as ItemSeccion["tipo"],
+  }));
+  sincronizarClases(seccion);
+}
+
 const secciones = ref<BorradorCursoDocente["secciones"]>([
   {
     titulo: "Introducción y fundamentos",
     clases: ["Bienvenida al curso", "Conceptos principales"],
+    items: [
+      { titulo: "Bienvenida al curso", tipo: "video", urlYoutube: "" },
+      { titulo: "Conceptos principales", tipo: "lectura" },
+    ],
     recursos: [],
   },
   {
     titulo: "Aplicación práctica",
-    clases: ["Caso de estudio en obra"],
+    clases: ["Caso de estudio en obra", "Cuestionario práctico", "Evidencia PDF"],
+    items: [
+      { titulo: "Caso de estudio en obra", tipo: "lectura" },
+      {
+        titulo: "Cuestionario práctico",
+        tipo: "quiz",
+        preguntas: preguntasSemilla(),
+      },
+      { titulo: "Evidencia PDF", tipo: "assignment" },
+    ],
     recursos: [],
   },
 ]);
+function iconoTipo(tipo: ItemSeccion["tipo"]) {
+  if (tipo === "video") return Video;
+  if (tipo === "quiz") return HelpCircle;
+  if (tipo === "assignment") return ClipboardCheck;
+  return FileText;
+}
+
+function agregarItem(seccion: SeccionBorrador, tipo: ItemSeccion["tipo"] = "lectura") {
+  asegurarItems(seccion);
+  seccion.items!.push({
+    titulo:
+      tipo === "quiz"
+        ? "Nuevo cuestionario"
+        : tipo === "assignment"
+          ? "Nueva entrega PDF"
+          : tipo === "video"
+            ? "Nueva clase en video"
+            : "Nueva clase",
+    tipo,
+    ...(tipo === "quiz" ? { preguntas: preguntasSemilla() } : {}),
+    ...(tipo === "video" ? { urlYoutube: "" } : {}),
+  });
+  sincronizarClases(seccion);
+}
+
+function eliminarItem(seccion: SeccionBorrador, indice: number) {
+  asegurarItems(seccion);
+  seccion.items!.splice(indice, 1);
+  sincronizarClases(seccion);
+}
+
+function alCambiarTipo(item: ItemSeccion) {
+  if (item.tipo === "quiz" && !item.preguntas?.length) {
+    item.preguntas = preguntasSemilla();
+  }
+  if (item.tipo !== "quiz") {
+    delete item.preguntas;
+  }
+  if (item.tipo === "video") {
+    item.urlYoutube ??= "";
+  } else {
+    delete item.urlYoutube;
+  }
+}
+
+function agregarPregunta(item: ItemSeccion) {
+  item.preguntas ??= [];
+  item.preguntas.push({
+    question: `Pregunta ${(item.preguntas.length + 1).toString()}`,
+    options: ["Opción A", "Opción B", "Opción C", "Opción D"],
+    correctIndex: 0,
+  });
+}
+
+function eliminarPregunta(item: ItemSeccion, indice: number) {
+  item.preguntas?.splice(indice, 1);
+}
 onMounted(async () => {
   try {
     await restaurarUsuario();
@@ -183,13 +307,17 @@ onMounted(async () => {
       );
     }
     const cursoExistente =
-      cursoId.value === "nuevo"
+      cursoId.value === "nuevo" ||
+      cursoId.value.startsWith("borrador-") ||
+      cursoId.value.startsWith("curso-institucional-")
         ? null
-        : await docenteService.cursos.obtener(cursoId.value);
+        : await docenteService.cursos.obtener(cursoId.value).catch(() => null);
     const semilla = {
       ...valoresIniciales,
       titulo: cursoExistente?.titulo ?? valoresIniciales.titulo,
       imagen: cursoExistente?.imagen ?? valoresIniciales.imagen,
+      imagenPosicion:
+        cursoExistente?.imagenPosicion ?? valoresIniciales.imagenPosicion,
       ambito: cursoExistente?.ambito ?? valoresIniciales.ambito,
       organizacionId:
         cursoExistente?.organizacionId ?? valoresIniciales.organizacionId,
@@ -213,7 +341,7 @@ onMounted(async () => {
       )
     ) {
       docentesManuales.value.push(
-        structuredClone(curso.docenteResponsablePerfil),
+        clonPlano(curso.docenteResponsablePerfil),
       );
     }
     if (
@@ -227,13 +355,33 @@ onMounted(async () => {
       categoriasCurso.value.sort((a, b) => a.localeCompare(b, "es"));
     }
     curso.firmasCertificado ??= [];
+    // Firmas legacy sin origen ni imagen = selección múltiple antigua del docente → se descartan.
+    curso.firmasCertificado = curso.firmasCertificado
+      .map((firma) => {
+        if (firma.origen === "PROPIA" || firma.origen === "INSTITUCIONAL") {
+          return firma;
+        }
+        if (firma.imagen || String(firma.id).startsWith("propia-")) {
+          return { ...firma, origen: "PROPIA" as const };
+        }
+        if (esGestionOrganizacion.value) {
+          return { ...firma, origen: "INSTITUCIONAL" as const };
+        }
+        return null;
+      })
+      .filter((firma): firma is FirmaCertificadoCurso => firma != null);
     curso.alcanceDirigido ??= "UNIDADES";
     curso.unidadesDestinoIds ??= [];
     curso.unidadesDestinoNombres ??= [];
-    secciones.value = seccionesGuardadas.map((seccion) => ({
-      ...seccion,
-      recursos: seccion.recursos ?? [],
-    }));
+    curso.imagenPosicion ??= "50% 50%";
+    secciones.value = seccionesGuardadas.map((seccion) => {
+      const normalizada: SeccionBorrador = {
+        ...seccion,
+        recursos: seccion.recursos ?? [],
+      };
+      asegurarItems(normalizada);
+      return normalizada;
+    });
     curso.cargadoPorNombre ||= currentUser.value?.name ?? "Carlos Alberto";
     if (!esGestionOrganizacion.value) {
       curso.docenteResponsableNombre ||= curso.cargadoPorNombre;
@@ -289,9 +437,16 @@ const firmasDisponibles = computed(() => {
         nombre: persona.nombre,
         cargo: persona.rol || persona.area || "Representante institucional",
         tipo,
+        origen: "INSTITUCIONAL" as const,
       })),
     );
 });
+const firmaPropiaDocente = computed(() =>
+  curso.firmasCertificado.find((firma) => firma.origen === "PROPIA"),
+);
+const firmasInstitucionales = computed(() =>
+  curso.firmasCertificado.filter((firma) => firma.origen !== "PROPIA"),
+);
 const opcionesDocenteResponsable = computed<DocenteResponsableCurso[]>(() => [
   ...docentesEntidad.value.map((docente) => ({
     id: String(docente.id),
@@ -406,21 +561,69 @@ const listoParaEnviar = computed(() =>
   requisitosRevision.value.every((r) => r.listo),
 );
 
+/** Vue reactive/ref proxies no son clonables con structuredClone. */
+function clonPlano<T>(valor: T): T {
+  return structuredClone(toRaw(valor as object)) as T;
+}
+
 function construirBorrador(): BorradorCursoDocente {
+  const seccionesNormalizadas = clonPlano(secciones.value).map((seccion) => {
+    asegurarItems(seccion);
+    // Conservar URLs http(s)/s3; no reenviar dataURL enormes.
+    return {
+      ...seccion,
+      recursos: (seccion.recursos ?? []).map((recurso) => {
+        const contenido = String(recurso.contenido ?? "");
+        const esUrl =
+          /^https?:\/\//i.test(contenido) || contenido.startsWith("s3://");
+        return {
+          ...recurso,
+          contenido:
+            esUrl || contenido.length <= 20_000 ? contenido : "",
+        };
+      }),
+    };
+  });
   return {
-    ...structuredClone(curso),
-    secciones: structuredClone(secciones.value),
+    ...clonPlano(curso),
+    secciones: seccionesNormalizadas,
   };
 }
 
 async function guardar() {
-  await docenteService.guardarCursoDesdeBorrador(
-    membresiaId,
-    cursoId.value,
-    construirBorrador(),
-  );
-  guardado.value = true;
-  setTimeout(() => (guardado.value = false), 2000);
+  if (guardando.value) return false;
+  guardando.value = true;
+  errorGuardado.value = "";
+  try {
+    const guardadoCurso = await docenteService.guardarCursoDesdeBorrador(
+      membresiaId,
+      cursoId.value,
+      construirBorrador(),
+    );
+    if (
+      cursoId.value === "nuevo" ||
+      cursoId.value.startsWith("borrador-") ||
+      cursoId.value.startsWith("curso-institucional-")
+    ) {
+      await router.replace({
+        path: esGestionOrganizacion.value
+          ? `/organizacion/cursos/${guardadoCurso.id}/constructor`
+          : `/docente/cursos/${guardadoCurso.id}/constructor`,
+        query: { ...route.query, borrador: undefined },
+      });
+    }
+    guardado.value = true;
+    setTimeout(() => (guardado.value = false), 2000);
+    return true;
+  } catch (causa) {
+    errorGuardado.value =
+      causa instanceof Error
+        ? causa.message
+        : "No se pudo guardar el borrador del curso.";
+    return false;
+  } finally {
+    guardando.value = false;
+  }
 }
 function agregarObjetivo() {
   curso.objetivos.push("Nuevo objetivo de aprendizaje");
@@ -429,11 +632,13 @@ function agregarRequisito() {
   curso.requisitos.push("Nuevo requisito");
 }
 function agregarSeccion() {
-  secciones.value.push({
+  const seccion: SeccionBorrador = {
     titulo: "Nueva sección",
     clases: ["Nueva clase"],
+    items: [{ titulo: "Nueva clase", tipo: "lectura" }],
     recursos: [],
-  });
+  };
+  secciones.value.push(seccion);
 }
 
 function asignarDocente() {
@@ -516,7 +721,7 @@ function guardarDocenteManual() {
     !docenteManual.biografia.trim()
   ) return;
   const docente: DocenteResponsableCurso = {
-    ...structuredClone(docenteManual),
+    ...clonPlano(docenteManual),
     id: `docente-manual-${Date.now()}`,
     nombre: docenteManual.nombre.trim(),
     correo: docenteManual.correo.trim(),
@@ -530,7 +735,7 @@ function guardarDocenteManual() {
   localStorage.setItem(claveDocentesManuales(), JSON.stringify(docentesManuales.value));
   curso.docenteResponsableId = docente.id;
   curso.docenteResponsableNombre = docente.nombre;
-  curso.docenteResponsablePerfil = structuredClone(docente);
+  curso.docenteResponsablePerfil = clonPlano(docente);
   modalDocente.value = false;
 }
 
@@ -620,7 +825,7 @@ function abrirSelectorMaterial(indice: number) {
   selectorMaterial.value?.click();
 }
 
-function seleccionarMaterial(evento: Event) {
+async function seleccionarMaterial(evento: Event) {
   const entrada = evento.target as HTMLInputElement;
   const archivo = entrada.files?.[0];
   const indice = seccionMaterial.value;
@@ -633,20 +838,32 @@ function seleccionarMaterial(evento: Event) {
     "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     "image/png",
     "image/jpeg",
-    "video/mp4",
   ];
   if (!formatos.includes(archivo.type)) {
-    errorMaterial.value = "Formato no permitido. Usa PDF, Word, PowerPoint, PNG, JPG o MP4.";
+    errorMaterial.value =
+      "Formato no permitido. Usa PDF, Word, PowerPoint, PNG o JPG.";
     entrada.value = "";
     return;
   }
-  if (archivo.size > 1_500_000) {
-    errorMaterial.value = "En la simulación cada archivo debe pesar menos de 1.5 MB.";
+  if (archivo.size > 12_000_000) {
+    errorMaterial.value = "Cada archivo debe pesar menos de 12 MB.";
     entrada.value = "";
     return;
   }
-  const lector = new FileReader();
-  lector.onload = () => {
+  errorMaterial.value = "";
+  try {
+    let contenido = "";
+    if (apiConfig.secundariaCursos) {
+      const subida = await storageAcademia.subirMaterial(archivo);
+      contenido = subida.publicUrl ?? subida.url;
+    } else {
+      contenido = await new Promise<string>((resolve, reject) => {
+        const lector = new FileReader();
+        lector.onload = () => resolve(String(lector.result ?? ""));
+        lector.onerror = () => reject(new Error("No se pudo leer el archivo"));
+        lector.readAsDataURL(archivo);
+      });
+    }
     const seccion = secciones.value[indice];
     if (!seccion) return;
     seccion.recursos ??= [];
@@ -655,10 +872,14 @@ function seleccionarMaterial(evento: Event) {
       nombre: archivo.name,
       tipo: archivo.type,
       tamanio: archivo.size,
-      contenido: String(lector.result ?? ""),
+      contenido,
     });
-  };
-  lector.readAsDataURL(archivo);
+  } catch (causa) {
+    errorMaterial.value =
+      causa instanceof Error
+        ? causa.message
+        : "No se pudo subir el material.";
+  }
   entrada.value = "";
 }
 
@@ -668,14 +889,86 @@ function eliminarMaterial(indiceSeccion: number, recursoId: string) {
   seccion.recursos = seccion.recursos.filter((item) => item.id !== recursoId);
 }
 function agregarFirma(firma: FirmaCertificadoCurso) {
+  if (!esGestionOrganizacion.value) return;
   if (curso.firmasCertificado.some((item) => item.id === firma.id)) return;
-  curso.firmasCertificado.push({ ...firma });
+  curso.firmasCertificado.push({
+    ...firma,
+    origen: firma.origen ?? "INSTITUCIONAL",
+  });
 }
 
 function quitarFirma(id: string) {
+  const firma = curso.firmasCertificado.find((item) => item.id === id);
+  if (!firma) return;
+  // El docente solo puede quitar su propia firma; el admin puede quitar institucionales.
+  if (!esGestionOrganizacion.value && firma.origen !== "PROPIA") return;
+  if (esGestionOrganizacion.value && firma.origen === "PROPIA") return;
   curso.firmasCertificado = curso.firmasCertificado.filter(
-    (firma) => firma.id !== id,
+    (item) => item.id !== id,
   );
+}
+
+async function seleccionarFirmaPropia(evento: Event) {
+  const entrada = evento.target as HTMLInputElement;
+  const archivo = entrada.files?.[0];
+  if (!archivo) return;
+  errorFirmaPropia.value = "";
+  if (!archivo.type.startsWith("image/")) {
+    errorFirmaPropia.value = "Sube una imagen PNG, JPG o WebP de tu firma.";
+    entrada.value = "";
+    return;
+  }
+  if (archivo.size > 2_000_000) {
+    errorFirmaPropia.value = "La firma debe pesar menos de 2 MB.";
+    entrada.value = "";
+    return;
+  }
+
+  subiendoFirmaPropia.value = true;
+  try {
+    let urlImagen = "";
+    if (apiConfig.secundariaCursos) {
+      const subida = await storageAcademia.subirMaterial(archivo);
+      urlImagen = subida.publicUrl ?? subida.url;
+    } else {
+      urlImagen = await new Promise<string>((resolve, reject) => {
+        const lector = new FileReader();
+        lector.onload = () => resolve(String(lector.result ?? ""));
+        lector.onerror = () => reject(new Error("No se pudo leer la firma"));
+        lector.readAsDataURL(archivo);
+      });
+    }
+
+    const nombre =
+      currentUser.value?.name?.trim() ||
+      curso.docenteResponsableNombre ||
+      curso.cargadoPorNombre ||
+      "Docente";
+    const personaId = String(
+      contextoActivo.value?.usuarioId ??
+        contextoActivo.value?.membresiaId ??
+        nombre,
+    );
+    const propia: FirmaCertificadoCurso = {
+      id: `propia-${personaId}`,
+      personaId,
+      nombre,
+      cargo: "Docente del curso",
+      tipo: "DIGITAL",
+      imagen: urlImagen,
+      origen: "PROPIA",
+    };
+    curso.firmasCertificado = [
+      ...curso.firmasCertificado.filter((firma) => firma.origen !== "PROPIA"),
+      propia,
+    ];
+  } catch (causa) {
+    errorFirmaPropia.value =
+      causa instanceof Error ? causa.message : "No se pudo subir tu firma.";
+  } finally {
+    subiendoFirmaPropia.value = false;
+    entrada.value = "";
+  }
 }
 
 async function enviarRevision() {
@@ -720,7 +1013,8 @@ async function enviarRevision() {
   enviado.value = true;
 }
 async function siguiente() {
-  await guardar();
+  const ok = await guardar();
+  if (!ok) return;
   const siguientePaso = pasosVisibles.value[indicePasoVisible.value + 1];
   if (siguientePaso) paso.value = siguientePaso.pasoOriginal;
 }
@@ -730,24 +1024,73 @@ function anterior() {
   if (pasoAnterior) paso.value = pasoAnterior.pasoOriginal;
 }
 
-function seleccionarImagen(evento: Event) {
-  const archivo = (evento.target as HTMLInputElement).files?.[0];
+async function seleccionarImagen(evento: Event) {
+  const entrada = evento.target as HTMLInputElement;
+  const archivo = entrada.files?.[0];
   if (!archivo) return;
   errorImagen.value = "";
   if (!archivo.type.startsWith("image/")) {
     errorImagen.value = "Selecciona una imagen JPG, PNG o WebP.";
     return;
   }
-  if (archivo.size > 1_500_000) {
-    errorImagen.value =
-      "La imagen debe pesar menos de 1.5 MB para esta demostración.";
+  if (archivo.size > 8_000_000) {
+    errorImagen.value = "La imagen debe pesar menos de 8 MB.";
     return;
   }
-  const lector = new FileReader();
-  lector.onload = () => {
-    curso.imagen = String(lector.result ?? "");
-  };
-  lector.readAsDataURL(archivo);
+  if (fuentePortadaTemp.value.startsWith("blob:")) {
+    URL.revokeObjectURL(fuentePortadaTemp.value);
+  }
+  archivoPortadaTemp.value = archivo;
+  fuentePortadaTemp.value = URL.createObjectURL(archivo);
+  modalPortadaAbierto.value = true;
+  entrada.value = "";
+}
+
+function cancelarPersonalizarPortada() {
+  modalPortadaAbierto.value = false;
+  if (fuentePortadaTemp.value.startsWith("blob:")) {
+    URL.revokeObjectURL(fuentePortadaTemp.value);
+  }
+  fuentePortadaTemp.value = "";
+  archivoPortadaTemp.value = null;
+}
+
+async function confirmarPortadaRecortada(archivo: File) {
+  modalPortadaAbierto.value = false;
+  if (fuentePortadaTemp.value.startsWith("blob:")) {
+    URL.revokeObjectURL(fuentePortadaTemp.value);
+  }
+  fuentePortadaTemp.value = "";
+  archivoPortadaTemp.value = null;
+
+  errorImagen.value = "";
+  subiendoPortada.value = true;
+  const previewLocal = URL.createObjectURL(archivo);
+  curso.imagen = previewLocal;
+  curso.imagenPosicion = "50% 50%";
+  try {
+    if (apiConfig.secundariaCursos) {
+      const subida = await storageAcademia.subirPortada(archivo);
+      const urlPublica = subida.publicUrl ?? subida.url;
+      curso.imagen = urlPublica;
+      URL.revokeObjectURL(previewLocal);
+    } else {
+      curso.imagen = await new Promise<string>((resolve, reject) => {
+        const lector = new FileReader();
+        lector.onload = () => resolve(String(lector.result ?? ""));
+        lector.onerror = () => reject(new Error("No se pudo leer la imagen"));
+        lector.readAsDataURL(archivo);
+      });
+      URL.revokeObjectURL(previewLocal);
+    }
+  } catch (causa) {
+    errorImagen.value =
+      causa instanceof Error
+        ? causa.message
+        : "No se pudo subir la portada.";
+  } finally {
+    subiendoPortada.value = false;
+  }
 }
 </script>
 
@@ -776,16 +1119,32 @@ function seleccionarImagen(evento: Event) {
             </p>
           </div>
         </div>
-        <div class="flex items-center gap-2">
-          <span
-            v-if="guardado"
-            class="text-xs text-emerald-700 dark:text-emerald-400"
-            >Cambios guardados</span
-          ><Button variant="outline" @click="guardar"
-            ><Save class="h-4 w-4" />Guardar borrador</Button
-          ><Button class="bg-primary" @click="mostrandoVistaPrevia = true"
-            ><Eye class="h-4 w-4" />Vista previa</Button
+        <div class="flex flex-col items-end gap-1">
+          <div class="flex items-center gap-2">
+            <span
+              v-if="guardando"
+              class="text-xs text-muted-foreground"
+              >Guardando…</span
+            >
+            <span
+              v-else-if="guardado"
+              class="text-xs text-emerald-700 dark:text-emerald-400"
+              >Cambios guardados</span
+            ><Button
+              variant="outline"
+              :disabled="guardando"
+              @click="guardar()"
+              ><Save class="h-4 w-4" />Guardar borrador</Button
+            ><Button class="bg-primary" @click="mostrandoVistaPrevia = true"
+              ><Eye class="h-4 w-4" />Vista previa</Button
+            >
+          </div>
+          <p
+            v-if="errorGuardado"
+            class="max-w-md text-right text-xs text-red-600 dark:text-red-400"
           >
+            {{ errorGuardado }}
+          </p>
         </div>
       </div>
 
@@ -972,7 +1331,7 @@ function seleccionarImagen(evento: Event) {
               <input
                 ref="selectorMaterial"
                 type="file"
-                accept=".pdf,.doc,.docx,.ppt,.pptx,.png,.jpg,.jpeg,.mp4"
+                accept=".pdf,.doc,.docx,.ppt,.pptx,.png,.jpg,.jpeg"
                 class="sr-only"
                 @change="seleccionarMaterial"
               />
@@ -995,26 +1354,133 @@ function seleccionarImagen(evento: Event) {
                 </div>
                 <div class="divide-y">
                   <div
-                    v-for="(clase, ci) in seccion.clases"
+                    v-for="(item, ci) in seccion.items ?? []"
                     :key="ci"
-                    class="flex items-center gap-3 p-4"
+                    class="grid gap-3 p-4"
                   >
-                    <component
-                      :is="ci === 0 ? Video : FileText"
-                      class="h-4 w-4 text-primary"
-                    /><Input
-                      v-model="seccion.clases[ci]"
-                      class="flex-1 border-0 shadow-none"
-                    /><Badge variant="outline">{{
-                      ci === 0 ? "Video" : "Lectura"
-                    }}</Badge>
+                    <div class="flex flex-wrap items-center gap-3">
+                      <component
+                        :is="iconoTipo(item.tipo)"
+                        class="h-4 w-4 shrink-0 text-primary"
+                      />
+                      <Input
+                        v-model="item.titulo"
+                        class="min-w-40 flex-1 border-0 shadow-none"
+                        @update:model-value="sincronizarClases(seccion)"
+                      />
+                      <select
+                        v-model="item.tipo"
+                        class="rounded-md border border-border bg-background px-2 py-1.5 text-xs font-semibold"
+                        @change="alCambiarTipo(item)"
+                      >
+                        <option
+                          v-for="tipo in TIPOS_ITEM"
+                          :key="tipo.value"
+                          :value="tipo.value"
+                        >
+                          {{ tipo.label }}
+                        </option>
+                      </select>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        aria-label="Eliminar actividad"
+                        @click="eliminarItem(seccion, ci)"
+                      >
+                        <Trash2 class="h-4 w-4 text-red-600" />
+                      </Button>
+                    </div>
+                    <div
+                      v-if="item.tipo === 'video'"
+                      class="ml-7 grid gap-2 rounded-lg border border-border bg-muted/40 p-3"
+                    >
+                      <label
+                        class="text-xs font-bold uppercase tracking-wide text-muted-foreground"
+                        >Enlace de YouTube</label
+                      >
+                      <Input
+                        v-model="item.urlYoutube"
+                        placeholder="https://www.youtube.com/watch?v=… o youtu.be/…"
+                      />
+                      <p class="text-xs text-muted-foreground">
+                        Solo se usan enlaces anclados de YouTube; no se sube el
+                        archivo de video.
+                      </p>
+                    </div>
+                    <div
+                      v-if="item.tipo === 'quiz'"
+                      class="ml-7 grid gap-3 rounded-lg border border-border bg-muted/40 p-3"
+                    >
+                      <p class="text-xs font-bold uppercase tracking-wide text-muted-foreground">
+                        Preguntas del cuestionario
+                      </p>
+                      <div
+                        v-for="(pregunta, pi) in item.preguntas ?? []"
+                        :key="pi"
+                        class="grid gap-2 rounded-md border border-border bg-card p-3"
+                      >
+                        <div class="flex items-start gap-2">
+                          <Input
+                            v-model="pregunta.question"
+                            class="flex-1"
+                            :placeholder="`Pregunta ${pi + 1}`"
+                          />
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            @click="eliminarPregunta(item, pi)"
+                          >
+                            <Trash2 class="h-4 w-4 text-red-600" />
+                          </Button>
+                        </div>
+                        <div
+                          v-for="(opcion, oi) in pregunta.options"
+                          :key="oi"
+                          class="flex items-center gap-2"
+                        >
+                          <input
+                            type="radio"
+                            class="accent-primary"
+                            :name="`correcta-${si}-${ci}-${pi}`"
+                            :checked="pregunta.correctIndex === oi"
+                            @change="pregunta.correctIndex = oi"
+                          />
+                          <Input
+                            v-model="pregunta.options[oi]"
+                            class="flex-1"
+                            :placeholder="`Opción ${oi + 1}`"
+                          />
+                        </div>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        @click="agregarPregunta(item)"
+                      >
+                        <Plus class="h-4 w-4" />Agregar pregunta
+                      </Button>
+                    </div>
                   </div>
-                  <Button
-                    class="m-3"
-                    variant="ghost"
-                    @click="seccion.clases.push('Nueva clase')"
-                    ><Plus class="h-4 w-4" />Agregar clase</Button
-                  >
+                  <div class="m-3 flex flex-wrap gap-2">
+                    <Button
+                      variant="ghost"
+                      @click="agregarItem(seccion, 'lectura')"
+                    >
+                      <Plus class="h-4 w-4" />Clase / lectura
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      @click="agregarItem(seccion, 'quiz')"
+                    >
+                      <Plus class="h-4 w-4" />Cuestionario
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      @click="agregarItem(seccion, 'assignment')"
+                    >
+                      <Plus class="h-4 w-4" />Entrega PDF
+                    </Button>
+                  </div>
                   <div
                     class="m-3 grid gap-3 border border-amber-300 bg-amber-50 p-4 text-slate-900 sm:grid-cols-[auto_1fr_auto] sm:items-center dark:border-amber-400/30 dark:bg-amber-400/10 dark:text-white"
                   >
@@ -1027,22 +1493,29 @@ function seleccionarImagen(evento: Event) {
                       <p
                         class="text-[10px] font-black uppercase tracking-[.16em] text-[#B87A00] dark:text-amber-300"
                       >
-                        Actividad calificable obligatoria
+                        Tip académico
                       </p>
                       <strong class="mt-1 block text-sm">
-                        Evidencia aplicada · {{ seccion.titulo }}
+                        Incluye un cuestionario y/o entrega PDF por módulo
                       </strong>
                       <p
                         class="mt-1 text-xs text-slate-600 dark:text-slate-300"
                       >
-                        El estudiante entregará un PDF. La nota y las horas
-                        aprobadas alimentarán el certificado.
+                        Los cuestionarios se guardan en secundaria y alimentan
+                        notas del reproductor. Las entregas PDF siguen el flujo
+                        de calificaciones.
                       </p>
                     </div>
                     <div class="text-left text-xs sm:text-right">
                       <strong class="block">Nota máxima 20</strong>
                       <span class="text-slate-500 dark:text-slate-300">
-                        {{ Math.max(2, seccion.clases.length * 2) }} horas
+                        {{
+                          Math.max(
+                            2,
+                            (seccion.items?.length || seccion.clases.length) * 2,
+                          )
+                        }}
+                        horas
                       </span>
                     </div>
                   </div>
@@ -1137,12 +1610,12 @@ function seleccionarImagen(evento: Event) {
                   v-if="curso.imagen"
                   :src="curso.imagen"
                   alt="Vista previa de la portada"
-                  class="mx-auto mb-4 aspect-video max-h-56 w-full object-cover"
+                  class="mx-auto mb-4 aspect-video max-h-56 w-full rounded-lg object-cover"
                 />
                 <Image v-else class="mx-auto h-8 w-8 text-primary" />
                 <p class="mt-2 font-bold">Imagen de portada</p>
                 <p class="text-xs text-muted-foreground">
-                  JPG o PNG · proporción 16:9
+                  JPG o PNG · después de elegirla podrás recortar en 16:9
                 </p>
                 <input
                   ref="selectorImagen"
@@ -1155,9 +1628,17 @@ function seleccionarImagen(evento: Event) {
                   class="mt-3"
                   size="sm"
                   variant="outline"
+                  :disabled="subiendoPortada"
                   @click="selectorImagen?.click()"
-                  >Seleccionar imagen</Button
                 >
+                  {{
+                    subiendoPortada
+                      ? "Subiendo…"
+                      : curso.imagen
+                        ? "Cambiar imagen"
+                        : "Seleccionar imagen"
+                  }}
+                </Button>
                 <p
                   v-if="errorImagen"
                   class="mt-2 text-xs font-semibold text-red-600"
@@ -1256,30 +1737,170 @@ function seleccionarImagen(evento: Event) {
                       <div>
                         <p class="text-sm font-black">Firmas del certificado</p>
                         <p class="mt-1 text-xs text-muted-foreground">
-                          {{ curso.firmasCertificado.length }}
-                          {{ curso.firmasCertificado.length === 1 ? "firma configurada" : "firmas configuradas" }}
+                          <template v-if="esGestionOrganizacion">
+                            {{ curso.firmasCertificado.length }}
+                            {{
+                              curso.firmasCertificado.length === 1
+                                ? "firma configurada"
+                                : "firmas configuradas"
+                            }}
+                          </template>
+                          <template v-else>
+                            Solo puedes añadir tu propia firma (imagen). Las
+                            firmas institucionales adicionales las configura el
+                            administrador de la organización.
+                          </template>
                         </p>
                       </div>
-                      <Button size="sm" variant="outline" @click="modalFirmas = true">
+                      <Button
+                        v-if="esGestionOrganizacion"
+                        size="sm"
+                        variant="outline"
+                        @click="modalFirmas = true"
+                      >
                         <Plus class="h-4 w-4" />Añadir firma
                       </Button>
                     </div>
-                    <div v-if="curso.firmasCertificado.length" class="mt-4 grid gap-2">
+
+                    <!-- Docente: solo firma propia por imagen -->
+                    <div
+                      v-if="!esGestionOrganizacion"
+                      class="mt-4 grid gap-3"
+                    >
+                      <div
+                        v-if="firmaPropiaDocente"
+                        class="flex items-center gap-3 border border-border bg-card p-3"
+                      >
+                        <img
+                          v-if="firmaPropiaDocente.imagen"
+                          :src="firmaPropiaDocente.imagen"
+                          alt="Tu firma"
+                          class="h-12 w-28 object-contain bg-white"
+                        />
+                        <span
+                          v-else
+                          class="grid h-10 w-10 shrink-0 place-items-center bg-primary/10 text-primary"
+                        >
+                          <Signature class="h-5 w-5" />
+                        </span>
+                        <div class="min-w-0 flex-1">
+                          <p class="truncate text-sm font-black">
+                            {{ firmaPropiaDocente.nombre }}
+                          </p>
+                          <p class="text-xs text-muted-foreground">
+                            Tu firma · {{ firmaPropiaDocente.cargo }}
+                          </p>
+                        </div>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          aria-label="Quitar tu firma"
+                          @click="quitarFirma(firmaPropiaDocente.id)"
+                        >
+                          <Trash2 class="h-4 w-4 text-red-600" />
+                        </Button>
+                      </div>
+                      <div
+                        class="rounded-lg border-2 border-dashed border-border p-4 text-center"
+                      >
+                        <input
+                          ref="selectorFirmaPropia"
+                          class="hidden"
+                          type="file"
+                          accept="image/png,image/jpeg,image/webp"
+                          @change="seleccionarFirmaPropia"
+                        />
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          :disabled="subiendoFirmaPropia"
+                          @click="selectorFirmaPropia?.click()"
+                        >
+                          <Upload class="h-4 w-4" />
+                          {{
+                            subiendoFirmaPropia
+                              ? "Subiendo…"
+                              : firmaPropiaDocente
+                                ? "Cambiar mi firma"
+                                : "Subir mi firma"
+                          }}
+                        </Button>
+                        <p class="mt-2 text-[11px] text-muted-foreground">
+                          PNG o JPG transparente recomendado · máx. 2 MB
+                        </p>
+                        <p
+                          v-if="errorFirmaPropia"
+                          class="mt-2 text-xs font-semibold text-red-600"
+                        >
+                          {{ errorFirmaPropia }}
+                        </p>
+                      </div>
+                      <div
+                        v-if="firmasInstitucionales.length"
+                        class="grid gap-2 border-t border-border pt-3"
+                      >
+                        <p class="text-xs font-bold text-muted-foreground">
+                          Firmas institucionales (solo admin de organización)
+                        </p>
+                        <div
+                          v-for="firma in firmasInstitucionales"
+                          :key="firma.id"
+                          class="flex items-center gap-3 border border-border bg-card/60 p-3 opacity-90"
+                        >
+                          <span
+                            class="grid h-10 w-10 shrink-0 place-items-center bg-muted text-muted-foreground"
+                          >
+                            <Signature class="h-5 w-5" />
+                          </span>
+                          <div class="min-w-0 flex-1">
+                            <p class="truncate text-sm font-black">
+                              {{ firma.nombre }}
+                            </p>
+                            <p class="text-xs text-muted-foreground">
+                              {{ firma.cargo }} · Configurada por administración
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- Admin organización: selección múltiple -->
+                    <div
+                      v-else-if="curso.firmasCertificado.length"
+                      class="mt-4 grid gap-2"
+                    >
                       <div
                         v-for="firma in curso.firmasCertificado"
                         :key="firma.id"
                         class="flex items-center gap-3 border border-border bg-card p-3"
                       >
-                        <span class="grid h-10 w-10 shrink-0 place-items-center bg-primary/10 text-primary">
+                        <img
+                          v-if="firma.imagen"
+                          :src="firma.imagen"
+                          :alt="`Firma de ${firma.nombre}`"
+                          class="h-12 w-28 object-contain bg-white"
+                        />
+                        <span
+                          v-else
+                          class="grid h-10 w-10 shrink-0 place-items-center bg-primary/10 text-primary"
+                        >
                           <Signature class="h-5 w-5" />
                         </span>
                         <div class="min-w-0 flex-1">
-                          <p class="truncate text-sm font-black">{{ firma.nombre }}</p>
+                          <p class="truncate text-sm font-black">
+                            {{ firma.nombre }}
+                          </p>
                           <p class="text-xs text-muted-foreground">
-                            {{ firma.cargo }} · Firma {{ firma.tipo === "DIGITAL" ? "digital" : "electrónica" }}
+                            {{ firma.cargo }} ·
+                            {{
+                              firma.origen === "PROPIA"
+                                ? "Firma del docente"
+                                : `Firma ${firma.tipo === "DIGITAL" ? "digital" : "electrónica"}`
+                            }}
                           </p>
                         </div>
                         <Button
+                          v-if="firma.origen !== 'PROPIA'"
                           size="icon"
                           variant="ghost"
                           :aria-label="`Quitar firma de ${firma.nombre}`"
@@ -1289,8 +1910,13 @@ function seleccionarImagen(evento: Event) {
                         </Button>
                       </div>
                     </div>
-                    <p v-else class="mt-4 border-l-4 border-l-amber-500 bg-amber-500/10 p-3 text-xs text-muted-foreground">
-                      Agrega al menos una firma institucional para aprobar el curso.
+                    <p
+                      v-else-if="esGestionOrganizacion"
+                      class="mt-4 border-l-4 border-l-amber-500 bg-amber-500/10 p-3 text-xs text-muted-foreground"
+                    >
+                      Agrega al menos una firma institucional para aprobar el
+                      curso. El docente solo aporta la suya; tú defines las
+                      demás.
                     </p>
                   </div
                   ></template
@@ -1316,7 +1942,13 @@ function seleccionarImagen(evento: Event) {
                   :class="curso.firmasCertificado.length > 1 ? 'grid-cols-2' : 'grid-cols-1'"
                 >
                   <div v-for="firma in curso.firmasCertificado" :key="firma.id">
-                    <Signature class="mx-auto h-7 w-7 text-amber-300" />
+                    <img
+                      v-if="firma.imagen"
+                      :src="firma.imagen"
+                      :alt="firma.nombre"
+                      class="mx-auto h-10 max-w-[7rem] object-contain"
+                    />
+                    <Signature v-else class="mx-auto h-7 w-7 text-amber-300" />
                     <div class="mx-auto mt-2 h-px w-28 bg-white/50" />
                     <p class="mt-1 text-[10px] font-bold">{{ firma.nombre }}</p>
                     <p class="text-[9px] text-blue-100">{{ firma.cargo }}</p>
@@ -1404,16 +2036,29 @@ function seleccionarImagen(evento: Event) {
 
             <div
               v-if="!enviado"
-              class="mt-8 flex justify-between border-t pt-5"
+              class="mt-8 flex flex-col gap-3 border-t pt-5"
             >
-              <Button
-                variant="outline"
-                :disabled="indicePasoVisible <= 0"
-                @click="anterior"
-                ><ChevronLeft class="h-4 w-4" />Anterior</Button
-              ><Button v-if="hayPasoSiguiente" @click="siguiente"
-                >Guardar y continuar<ChevronRight class="h-4 w-4"
-              /></Button>
+              <p
+                v-if="errorGuardado"
+                class="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-300"
+              >
+                {{ errorGuardado }}
+              </p>
+              <div class="flex justify-between gap-3">
+                <Button
+                  variant="outline"
+                  :disabled="indicePasoVisible <= 0 || guardando"
+                  @click="anterior"
+                  ><ChevronLeft class="h-4 w-4" />Anterior</Button
+                ><Button
+                  v-if="hayPasoSiguiente"
+                  :disabled="guardando"
+                  @click="siguiente"
+                  >{{
+                    guardando ? "Guardando…" : "Guardar y continuar"
+                  }}<ChevronRight class="h-4 w-4"
+                /></Button>
+              </div>
             </div> </CardContent
         ></Card>
       </div>
@@ -1545,9 +2190,10 @@ function seleccionarImagen(evento: Event) {
       </template>
     </Dialog>
     <Dialog
+      v-if="esGestionOrganizacion"
       v-model:visible="modalFirmas"
       modal
-      header="Añadir firma al certificado"
+      header="Añadir firma institucional"
       :style="{ width: 'min(46rem, calc(100vw - 2rem))' }"
     >
       <div class="grid gap-4">
@@ -1560,9 +2206,8 @@ function seleccionarImagen(evento: Event) {
           />
         </div>
         <p class="text-xs text-muted-foreground">
-          Cada persona dispone de una firma digital y una firma electrónica. Puedes seleccionar
-          ambas cuando el proceso institucional lo requiera.
-        </p>
+          Selecciona firmantes institucionales. La firma del docente (imagen) la
+          aporta el propio docente; aquí solo se agregan las de la organización.</p>
         <div class="max-h-96 grid gap-2 overflow-y-auto pr-1">
           <button
             v-for="firma in firmasDisponibles"
@@ -1592,7 +2237,7 @@ function seleccionarImagen(evento: Event) {
       </div>
       <template #footer>
         <Button @click="modalFirmas = false">
-          Listo · {{ curso.firmasCertificado.length }} firmas
+          Listo · {{ firmasInstitucionales.length }} institucionales
         </Button>
       </template>
     </Dialog>
@@ -1687,5 +2332,14 @@ function seleccionarImagen(evento: Event) {
         </div>
       </article>
     </div>
+
+    <PersonalizarPortadaModal
+      :abierto="modalPortadaAbierto"
+      :fuente="fuentePortadaTemp"
+      :nombre-archivo="archivoPortadaTemp?.name"
+      :tipo-mime="archivoPortadaTemp?.type"
+      @cancelar="cancelarPersonalizarPortada"
+      @listo="confirmarPortadaRecortada"
+    />
   </section>
 </template>

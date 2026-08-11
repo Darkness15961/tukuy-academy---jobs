@@ -28,8 +28,6 @@ import { Card, CardContent } from "@/components/ui/card";
 import type {
   EstructuraOrganizacional,
   NivelOrganizacional,
-  PoliticaIncorporacionUnidad,
-  TipoUnidadEntidad,
   UnidadOrganizacional,
   VinculacionUnidad,
 } from "@/portal-organizacion/types/estructura-organizacional.types";
@@ -44,8 +42,6 @@ const modalSolicitudes = ref(false);
 const estructuras = ref<EstructuraOrganizacional[]>([]);
 const niveles = ref<NivelOrganizacional[]>([]);
 const unidades = ref<UnidadOrganizacional[]>([]);
-const tiposUnidad = ref<TipoUnidadEntidad[]>([]);
-const politicas = ref<PoliticaIncorporacionUnidad[]>([]);
 const vinculaciones = ref<VinculacionUnidad[]>([]);
 const usuarios = ref<UsuarioOrganizacion[]>([]);
 const requiereDniEnrolamiento = ref(true);
@@ -101,24 +97,22 @@ onMounted(cargar);
 
 async function cargar() {
   try {
-    [
-      estructuras.value,
-      niveles.value,
-      unidades.value,
-      tiposUnidad.value,
-      politicas.value,
-      vinculaciones.value,
-      usuarios.value,
-    ] = await Promise.all([
-      organizacionService.estructura.estructuras.listar(),
-      organizacionService.estructura.niveles.listar(),
-      organizacionService.estructura.unidades.listar(),
-      organizacionService.estructura.tiposUnidad.listar(),
-      organizacionService.estructura.politicasIncorporacion.listar(),
-      organizacionService.estructura.vinculaciones.listar(),
-      organizacionService.usuarios.listar(),
-    ]);
-    const configuracion = await organizacionService.obtenerConfiguracion();
+    // Primero el directorio (RPC): desbloquea la tabla cuanto antes.
+    usuarios.value = await organizacionService.usuarios.listar();
+    cargando.value = false;
+
+    const [estructurasLista, nivelesLista, unidadesLista, vinculacionesLista, configuracion] =
+      await Promise.all([
+        organizacionService.estructura.estructuras.listar(),
+        organizacionService.estructura.niveles.listar(),
+        organizacionService.estructura.unidades.listar(),
+        organizacionService.estructura.vinculaciones.listar(),
+        organizacionService.obtenerConfiguracion(),
+      ]);
+    estructuras.value = estructurasLista;
+    niveles.value = nivelesLista;
+    unidades.value = unidadesLista;
+    vinculaciones.value = vinculacionesLista;
     requiereDniEnrolamiento.value = configuracion.requiereDniEnrolamiento;
 
     const guardadaId = localStorage.getItem("tukuy_demo_organizacion_estructura_seleccionada");
@@ -135,11 +129,21 @@ async function cargar() {
       : undefined;
     if (unidadDestino) {
       estructuraSeleccionadaId.value = unidadDestino.estructuraId ?? estructuraSeleccionadaId.value;
-      // Espera a que el watcher de estructura limpie los filtros antes de fijar la ruta del nodo.
       await nextTick();
       filtrosNodosVinculaciones.value = rutaIdsUnidad(unidadDestino.id);
       mensaje.value = `Mostrando personas de “${unidadDestino.nombre}”.`;
+    } else if (
+      usuarios.value.length &&
+      usuarios.value.every((u) => typeof u.id === "string" && u.id.includes("-"))
+    ) {
+      mensaje.value =
+        "Directorio de personal (sin alumnos STUDENT). Los alumnos están en Alumnos.";
     }
+  } catch (error) {
+    mensaje.value =
+      error instanceof Error
+        ? error.message
+        : "No se pudo cargar el directorio de personas";
   } finally {
     cargando.value = false;
   }

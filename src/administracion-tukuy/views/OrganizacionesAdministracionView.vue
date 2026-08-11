@@ -18,6 +18,11 @@ import {
 import { modulosPrincipalService, type ModuloPrincipal } from "@/api/services/modulos-principal.service";
 import { operacionPrincipalService } from "@/api/services/operacion-principal.service";
 import { provisionamientoPrincipalService } from "@/api/services/provisionamiento-principal.service";
+import { secundariaGatewayService } from "@/api/services/secundaria-gateway.service";
+import type {
+  ListadoCursosSecundaria,
+  TablaSecundaria,
+} from "@/lib/contrato-secundaria";
 import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -43,6 +48,10 @@ const alta = reactive({ codigo: "", razonSocial: "", nombreComercial: "", tipoDo
 const dialogoConexion = ref(false);
 const guardandoConexion = ref(false);
 const verificandoConexion = ref(false);
+const inventariando = ref(false);
+const explorandoCursos = ref(false);
+const inventarioTablas = ref<TablaSecundaria[]>([]);
+const exploracionCursos = ref<ListadoCursosSecundaria | null>(null);
 const conexionOrganizacion = ref<OrganizacionPrincipal | null>(null);
 const conexion = reactive({ servidorRef: "", nombreBaseLogico: "", secretoRef: "", region: "south-america-west1", versionEsquema: 1, estado: "SIN CONFIGURAR", verificadaEn: "", ultimoError: "" });
 const resumen = ref<ResumenOrganizacionesPrincipal>({
@@ -57,6 +66,7 @@ let temporizador: ReturnType<typeof setTimeout> | undefined;
 const opcionesEstado = [
   { label: "Todos los estados", value: "TODOS" },
   { label: "Pendiente", value: "PENDIENTE" },
+  { label: "Activa", value: "ACTIVA" },
   { label: "Habilitada", value: "HABILITADA" },
   { label: "Suspendida", value: "SUSPENDIDA" },
 ];
@@ -126,6 +136,8 @@ async function crearOrganizacion() {
 async function abrirConexion(organizacion: OrganizacionPrincipal) {
   conexionOrganizacion.value = organizacion;
   dialogoConexion.value = true;
+  inventarioTablas.value = [];
+  exploracionCursos.value = null;
   error.value = "";
   try {
     const actual = await provisionamientoPrincipalService.obtener(organizacion.id);
@@ -144,14 +156,67 @@ async function guardarConexion() {
 }
 
 async function verificarConexion() {
-  verificandoConexion.value = true; error.value = "";
+  if (!conexionOrganizacion.value) return;
+  verificandoConexion.value = true;
+  error.value = "";
   try {
-    const salud = await provisionamientoPrincipalService.verificar();
+    const salud = await provisionamientoPrincipalService.verificar(
+      conexionOrganizacion.value.id,
+    );
     conexion.estado = salud.estado;
     conexion.verificadaEn = salud.generadoEn;
-    mensaje.value = `Secundaria verificada: ${salud.tablasPublicas} tablas públicas y ${salud.accesosSincronizados} accesos sincronizados.`;
-  } catch (causa) { error.value = causa instanceof Error ? causa.message : "No se pudo verificar la secundaria."; }
-  finally { verificandoConexion.value = false; }
+    const extraSync =
+      salud.advertenciaSync
+        ? ` Advertencia de sync: ${salud.advertenciaSync}`
+        : "";
+    const membresiasOrg =
+      typeof salud.membresiasOrganizacion === "number"
+        ? ` Membresías org: ${salud.membresiasOrganizacion}.`
+        : "";
+    mensaje.value = `Secundaria ${salud.estado.toLowerCase()}: ${salud.tablasPublicas} tablas públicas y ${salud.accesosSincronizados} accesos sincronizados.${membresiasOrg}${extraSync}`;
+    await cargar();
+  } catch (causa) {
+    error.value =
+      causa instanceof Error ? causa.message : "No se pudo verificar la secundaria.";
+  } finally {
+    verificandoConexion.value = false;
+  }
+}
+
+async function inventariarSecundaria() {
+  inventariando.value = true;
+  error.value = "";
+  try {
+    const inventario = await secundariaGatewayService.inventariar();
+    inventarioTablas.value = inventario.tablas;
+    mensaje.value = `Inventario secundario: ${inventario.totalTablas} tablas públicas.`;
+  } catch (causa) {
+    error.value =
+      causa instanceof Error ? causa.message : "No se pudo inventariar la secundaria.";
+  } finally {
+    inventariando.value = false;
+  }
+}
+
+async function probarCursosSecundaria() {
+  explorandoCursos.value = true;
+  error.value = "";
+  try {
+    exploracionCursos.value = await secundariaGatewayService.listarCursos();
+    const listado = exploracionCursos.value;
+    const titulos = listado.cursos
+      .slice(0, 3)
+      .map((curso) => curso.titulo)
+      .join(" · ");
+    mensaje.value = listado.total
+      ? `Cursos tipados en secundaria: ${listado.total}.${titulos ? ` Ej.: ${titulos}` : ""}`
+      : "Cursos tipados en secundaria: 0 (tabla lista, sin filas o falta seed).";
+  } catch (causa) {
+    error.value =
+      causa instanceof Error ? causa.message : "No se pudieron leer cursos de la secundaria.";
+  } finally {
+    explorandoCursos.value = false;
+  }
 }
 
 async function abrirModulos(organizacion: OrganizacionPrincipal) {
@@ -286,8 +351,7 @@ onBeforeUnmount(() => {
       </div>
       <template #footer><Button variant="outline" @click="dialogoAlta = false">Cancelar</Button><Button :disabled="guardandoAlta || !alta.codigo.trim() || !alta.razonSocial.trim() || !alta.numeroDocumento.trim() || !alta.correoDireccion.trim() || !alta.correoAdministracion.trim()" @click="crearOrganizacion">{{ guardandoAlta ? 'Creando…' : 'Crear organización' }}</Button></template>
     </Dialog>
-    <Dialog v-model:visible="dialogoConexion" modal :header="`Base secundaria · ${conexionOrganizacion?.nombre ?? ''}`" :style="{ width: 'min(42rem, calc(100vw - 2rem))' }">
-      <div class="mb-4 border-l-4 border-l-primary bg-primary/10 p-4 text-sm">Aquí solo se registra la referencia. No ingreses URL, contraseña, anon key ni service_role.</div>
+    <Dialog v-model:visible="dialogoConexion" modal :header="`Base secundaria · ${conexionOrganizacion?.nombre ?? ''}`" :style="{ width: 'min(56rem, calc(100vw - 2rem))' }">
       <div class="grid gap-4 sm:grid-cols-2">
         <label><span class="filtro-label">Project ref Supabase</span><InputText v-model="conexion.servidorRef" class="filtro-control w-full" placeholder="abcdefghijklmno" /></label>
         <label><span class="filtro-label">Nombre lógico</span><InputText v-model="conexion.nombreBaseLogico" class="filtro-control w-full" /></label>
@@ -296,6 +360,24 @@ onBeforeUnmount(() => {
         <label><span class="filtro-label">Versión de esquema</span><InputNumber v-model="conexion.versionEsquema" :min="1" class="w-full" input-class="filtro-control w-full" /></label>
         <div class="border border-border p-3 text-sm"><b>Estado: {{ conexion.estado }}</b><p v-if="conexion.verificadaEn" class="mt-1 text-xs">Verificada: {{ fecha(conexion.verificadaEn) }}</p><p v-if="conexion.ultimoError" class="mt-1 text-xs text-red-600">{{ conexion.ultimoError }}</p></div>
       </div>
+      <div class="mt-4 flex flex-wrap gap-2">
+        <Button variant="outline" :disabled="inventariando" @click="inventariarSecundaria">{{ inventariando ? 'Inventariando…' : 'Inventariar esquema' }}</Button>
+        <Button variant="outline" :disabled="explorandoCursos" @click="probarCursosSecundaria">{{ explorandoCursos ? 'Leyendo cursos…' : 'Listar cursos tipados' }}</Button>
+      </div>
+      <div v-if="inventarioTablas.length" class="mt-4 max-h-64 overflow-auto border border-border text-xs">
+        <table class="w-full text-left">
+          <thead class="sticky top-0 bg-background"><tr><th class="p-2">Grupo</th><th class="p-2">Tabla</th><th class="p-2">Filas est.</th><th class="p-2">Columnas</th></tr></thead>
+          <tbody>
+            <tr v-for="tabla in inventarioTablas" :key="tabla.tabla" class="border-t border-border">
+              <td class="p-2">{{ tabla.grupo }}</td>
+              <td class="p-2 font-medium">{{ tabla.tabla }}</td>
+              <td class="p-2">{{ tabla.filas }}</td>
+              <td class="p-2 text-muted-foreground">{{ tabla.columnas.map((columna) => columna.nombre).join(', ') }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <pre v-if="exploracionCursos" class="mt-4 max-h-48 overflow-auto border border-border bg-muted/30 p-3 text-xs">{{ JSON.stringify(exploracionCursos, null, 2) }}</pre>
       <template #footer><Button variant="outline" @click="dialogoConexion=false">Cerrar</Button><Button variant="outline" :disabled="verificandoConexion || conexion.estado === 'SIN CONFIGURAR'" @click="verificarConexion">{{ verificandoConexion ? 'Verificando…' : 'Verificar conexión' }}</Button><Button :disabled="guardandoConexion || !conexion.servidorRef.trim() || !conexion.nombreBaseLogico.trim() || !conexion.secretoRef.trim()" @click="guardarConexion">{{ guardandoConexion ? 'Guardando…' : 'Guardar referencia' }}</Button></template>
     </Dialog>
     <Dialog v-model:visible="dialogoModulos" modal :header="`Módulos · ${organizacionModulos?.nombre ?? ''}`" :style="{ width: 'min(44rem, calc(100vw - 2rem))' }">

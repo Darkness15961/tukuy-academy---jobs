@@ -15,6 +15,7 @@ export const MODULOS_APRENDIZAJE_SEMILLA: ModuloAprendizaje[] = [
         title: "Video 1.1: Introducción a la plataforma y objetivos",
         type: "video",
         duration: "5 min",
+        videoUrl: "https://www.youtube.com/watch?v=aqz-KE-bpKQ",
         description:
           "Explicación del contenido general del curso, dinámicas de estudio y cómo usar el portal de Tukuy Academy para maximizar tu aprendizaje.",
       },

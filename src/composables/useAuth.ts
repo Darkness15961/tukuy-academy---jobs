@@ -133,6 +133,22 @@ export function useAuth() {
     }
   }
 
+  async function solicitarRecuperacionClave(correo: string) {
+    loading.value = true;
+    error.value = null;
+    try {
+      await authService.solicitarRecuperacionClave(correo);
+    } catch (err) {
+      error.value =
+        err instanceof Error
+          ? err.message
+          : "No se pudo enviar el correo de recuperación";
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  }
+
   async function completarOAuth(destinoDespues?: string) {
     loading.value = true;
     error.value = null;
@@ -200,6 +216,7 @@ export function useAuth() {
     login,
     registrar,
     loginConGoogle,
+    solicitarRecuperacionClave,
     completarOAuth,
     sincronizarSesion,
     logout,

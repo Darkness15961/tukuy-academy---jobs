@@ -2,6 +2,8 @@ import { api } from "@/api/client";
 import { apiConfig } from "@/api/config";
 import { API } from "@/api/endpoints";
 import { crearRepositorioLocal } from "@/api/repositorio-local";
+import { secundariaGatewayService } from "@/api/services/secundaria-gateway.service";
+import { mapearSesionSecundariaADocente } from "@/api/services/mapper-curso-secundaria";
 import {
   cursosAlumnoDemoOrg,
   emailAlumnoDemo,
@@ -20,6 +22,7 @@ import type { SesionDocente } from "@/portal-docente/types/docente.types";
 import { cursosDocente } from "@/portal-docente/data/docente.mock";
 import { enrichCourse } from "@/lib/presentacion-curso";
 import { cursoEstaMatriculado } from "@/lib/acceso-curso";
+import type { SesionEnVivoSecundaria } from "@/lib/contrato-secundaria";
 
 const VERSION = 3;
 const EVENTO = "tukuy:sesiones-en-vivo";
@@ -65,6 +68,47 @@ function emitirCambio(organizacionId: string) {
   );
 }
 
+function mapearSesionSecundariaAOrg(
+  sesion: SesionEnVivoSecundaria,
+  organizacionId: string,
+): SesionEnVivoOrganizacion {
+  const docente = mapearSesionSecundariaADocente(sesion);
+  const inicio = new Date(sesion.iniciaEn);
+  const fin = new Date(sesion.terminaEn);
+  const minutos = Math.max(
+    15,
+    Math.round((fin.getTime() - inicio.getTime()) / 60000),
+  );
+  return {
+    id: sesion.id,
+    clasificacion: "CLASE_EN_VIVO",
+    organizacionId,
+    titulo: sesion.titulo,
+    cursoId: sesion.cursoId,
+    cursoTitulo: sesion.cursoTitulo,
+    docenteNombre: "Docente",
+    docenteEmail: "docente@tukuy.academy",
+    fechaHoraInicio: sesion.iniciaEn,
+    duracionMinutos: minutos,
+    estado: docente.estado,
+    proveedor: "GOOGLE_CALENDAR_MEET",
+    calendarEventId: `sec-${sesion.id}`,
+    meetUrl: sesion.urlAcceso || "",
+    invitados: [],
+    inscritos: Number(sesion.inscritos ?? 0),
+    creadoPor: { portal: "docente", nombre: "Docente" },
+  };
+}
+
+async function listarSesionesSecundaria(
+  organizacionId: string,
+): Promise<SesionEnVivoOrganizacion[]> {
+  const listado = await secundariaGatewayService.listarSesiones();
+  return listado.sesiones.map((sesion) =>
+    mapearSesionSecundariaAOrg(sesion, organizacionId),
+  );
+}
+
 function semillaPara(organizacionId: string) {
   return sesionesEnVivoOrganizacion.filter(
     (sesion) => sesion.organizacionId === organizacionId,
@@ -100,6 +144,8 @@ function simularEventoCalendarMeet(titulo: string, sufijoFijo?: string) {
   return {
     calendarEventId: `gcal_${sufijo}`,
     meetUrl: `https://meet.google.com/${slug || "tukuy"}-${sufijo}`,
+    /** Placeholder hasta OAuth Google Calendar/Meet real. */
+    simulado: true as const,
   };
 }
 
@@ -335,6 +381,9 @@ function estadoInicial(fechaIso: string): SesionEnVivoOrganizacion["estado"] {
 }
 
 async function listarPorOrganizacion(organizacionId: string) {
+  if (apiConfig.secundariaCursos) {
+    return listarSesionesSecundaria(organizacionId);
+  }
   if (!apiConfig.useMock) {
     const { data } = await api.get<SesionEnVivoOrganizacion[]>(
       API.organizacion.sesionesEnVivo,
@@ -353,6 +402,25 @@ async function listarPorOrganizacion(organizacionId: string) {
 }
 
 async function programar(input: ProgramarSesionEnVivoInput) {
+  if (apiConfig.secundariaCursos) {
+    const inicio = new Date(input.fechaHoraInicio);
+    const fin = new Date(
+      inicio.getTime() + input.duracionMinutos * 60_000,
+    );
+    const creada = await secundariaGatewayService.crearSesion({
+      cursoId: input.cursoId,
+      titulo: input.titulo.trim(),
+      iniciaEn: inicio.toISOString(),
+      terminaEn: fin.toISOString(),
+      urlAcceso: simularEventoCalendarMeet(input.titulo).meetUrl,
+    });
+    const mapeada = mapearSesionSecundariaAOrg(
+      creada.sesion,
+      input.organizacionId,
+    );
+    emitirCambio(input.organizacionId);
+    return mapeada;
+  }
   if (!apiConfig.useMock) {
     const { data } = await api.post<SesionEnVivoOrganizacion>(
       API.organizacion.sesionesEnVivo,
@@ -417,6 +485,35 @@ async function actualizar(
   id: string,
   cambios: Partial<SesionEnVivoOrganizacion>,
 ) {
+  if (apiConfig.secundariaCursos) {
+    const lista = await listarPorOrganizacion(organizacionId);
+    const actual = lista.find((item) => item.id === id);
+    if (!actual) throw new Error("Sesión no encontrada");
+    const inicio = cambios.fechaHoraInicio
+      ? new Date(cambios.fechaHoraInicio)
+      : new Date(actual.fechaHoraInicio);
+    const minutos = cambios.duracionMinutos ?? actual.duracionMinutos;
+    const fin = new Date(inicio.getTime() + minutos * 60_000);
+    let sesion = (
+      await secundariaGatewayService.actualizarSesion({
+        sesionId: id,
+        titulo: cambios.titulo ?? actual.titulo,
+        iniciaEn: inicio.toISOString(),
+        terminaEn: fin.toISOString(),
+        urlAcceso: cambios.meetUrl ?? actual.meetUrl ?? null,
+      })
+    ).sesion;
+    if (cambios.estado && cambios.estado !== actual.estado) {
+      sesion = (
+        await secundariaGatewayService.actualizarEstadoSesion(
+          id,
+          cambios.estado,
+        )
+      ).sesion;
+    }
+    emitirCambio(organizacionId);
+    return mapearSesionSecundariaAOrg(sesion, organizacionId);
+  }
   if (!apiConfig.useMock) {
     const { data } = await api.patch<SesionEnVivoOrganizacion>(
       API.organizacion.sesionEnVivoPorId(id),
@@ -430,6 +527,12 @@ async function actualizar(
 }
 
 async function iniciar(organizacionId: string, id: string) {
+  if (apiConfig.secundariaCursos) {
+    const actualizada =
+      await secundariaGatewayService.actualizarEstadoSesion(id, "EN_VIVO");
+    emitirCambio(organizacionId);
+    return mapearSesionSecundariaAOrg(actualizada.sesion, organizacionId);
+  }
   if (!apiConfig.useMock) {
     const { data } = await api.post<SesionEnVivoOrganizacion>(
       API.organizacion.iniciarSesionEnVivo(id),
@@ -440,6 +543,12 @@ async function iniciar(organizacionId: string, id: string) {
 }
 
 async function cancelar(organizacionId: string, id: string) {
+  if (apiConfig.secundariaCursos) {
+    const actualizada =
+      await secundariaGatewayService.actualizarEstadoSesion(id, "CANCELADA");
+    emitirCambio(organizacionId);
+    return mapearSesionSecundariaAOrg(actualizada.sesion, organizacionId);
+  }
   if (!apiConfig.useMock) {
     const { data } = await api.post<SesionEnVivoOrganizacion>(
       API.organizacion.cancelarSesionEnVivo(id),
@@ -450,6 +559,13 @@ async function cancelar(organizacionId: string, id: string) {
 }
 
 async function reenviarInvitaciones(organizacionId: string, id: string) {
+  if (apiConfig.secundariaCursos) {
+    // Sin proveedor de correo aún: devolver sesión vigente (no-op real).
+    const lista = await listarPorOrganizacion(organizacionId);
+    const actual = lista.find((item) => item.id === id);
+    if (!actual) throw new Error("Sesión no encontrada");
+    return actual;
+  }
   if (!apiConfig.useMock) {
     const { data } = await api.post<SesionEnVivoOrganizacion>(
       API.organizacion.reenviarInvitacionesSesion(id),
@@ -492,6 +608,33 @@ async function listarParaContexto(
   contexto: ContextoSesion,
   cursosMatriculados?: Course[],
 ) {
+  if (apiConfig.secundariaCursos) {
+    const orgId =
+      contexto.organizacionId &&
+      !contexto.organizacionId.startsWith("org-personal-")
+        ? contexto.organizacionId
+        : ORG_ACADEMIA_TUKUY;
+    const todas = await listarSesionesSecundaria(orgId);
+
+    if (contexto.portal === "estudiante") {
+      const matriculados = (cursosMatriculados ?? []).filter(
+        cursoEstaMatriculado,
+      );
+      const idsMatricula = new Set(matriculados.map((c) => c.id));
+      if (!idsMatricula.size) return todas;
+      return todas.filter((sesion) => idsMatricula.has(sesion.cursoId));
+    }
+
+    if (contexto.portal === "docente") {
+      const ids = contexto.alcance?.cursoIds;
+      if (ids?.length) {
+        return todas.filter((sesion) => ids.includes(sesion.cursoId));
+      }
+    }
+
+    return todas;
+  }
+
   if (contexto.portal === "estudiante") {
     const matriculados = (cursosMatriculados ?? []).filter(cursoEstaMatriculado);
     const idsMatricula = new Set(matriculados.map((c) => c.id));
@@ -557,7 +700,22 @@ async function listarParaContexto(
  * Cursos que pueden tener clases en el calendario (EN_VIVO / HIBRIDA).
  * Los VIRTUALes quedan fuera: viven en el catálogo asíncrono.
  */
-function listarCursosParaCalendario(contexto: ContextoSesion) {
+async function listarCursosParaCalendario(contexto: ContextoSesion) {
+  if (apiConfig.secundariaCursos) {
+    const listado = await secundariaGatewayService.listarCursos();
+    return listado.cursos
+      .filter((curso) =>
+        cursoAdmiteSesionesEnVivo(
+          mapearModalidadCalendario(curso.modalidad),
+        ),
+      )
+      .map((curso) => ({
+        id: curso.id,
+        titulo: curso.titulo,
+        modalidadImparticion: mapearModalidadCalendario(curso.modalidad),
+      }));
+  }
+
   const independiente =
     contexto.ambitoDocencia === "INDEPENDIENTE" ||
     !contexto.organizacionId ||
@@ -590,6 +748,17 @@ function listarCursosParaCalendario(contexto: ContextoSesion) {
       titulo: curso.titulo,
       modalidadImparticion: curso.modalidadImparticion ?? "VIRTUAL",
     }));
+}
+
+function mapearModalidadCalendario(
+  modalidad: string,
+): "VIRTUAL" | "EN_VIVO" | "HIBRIDA" {
+  const valor = modalidad.trim().toUpperCase();
+  if (valor === "EN_VIVO" || valor === "PRESENCIAL") return "EN_VIVO";
+  if (valor === "HIBRIDA" || valor === "HIBRIDO" || valor === "MIXTO") {
+    return "HIBRIDA";
+  }
+  return "VIRTUAL";
 }
 
 function formatoCortoFecha(fecha: Date) {

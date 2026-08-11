@@ -33,6 +33,8 @@ export interface CursoDocente {
   modeloAcceso: string;
   titulo: string;
   imagen: string;
+  /** CSS object-position de la portada, p.ej. `30% 20%`. */
+  imagenPosicion?: string;
   estado: EstadoCursoDocente;
   /**
    * Define si el curso alimenta el calendario de clases en vivo.
@@ -258,6 +260,8 @@ export interface BorradorCursoDocente {
   categoria: string;
   nivel: string;
   imagen: string;
+  /** CSS object-position de la portada, p.ej. `30% 20%`. */
+  imagenPosicion?: string;
   ambito: string;
   organizacionId: string | null;
   acceso: string;
@@ -276,7 +280,20 @@ export interface BorradorCursoDocente {
   origenCarga?: "DOCENTE" | "ADMINISTRACION";
   secciones: Array<{
     titulo: string;
+    /** Compatibilidad: títulos planos (se sincronizan desde `items`). */
     clases: string[];
+    /** Estructura tipada del temario (lectura, video, quiz, assignment). */
+    items?: Array<{
+      titulo: string;
+      tipo: "lectura" | "video" | "quiz" | "assignment";
+      /** Enlace YouTube anclado (solo ítems tipo video). */
+      urlYoutube?: string;
+      preguntas?: Array<{
+        question: string;
+        options: string[];
+        correctIndex: number;
+      }>;
+    }>;
     recursos?: Array<{
       id: string;
       nombre: string;
@@ -305,4 +322,8 @@ export interface FirmaCertificadoCurso {
   nombre: string;
   cargo: string;
   tipo: "DIGITAL" | "ELECTRONICA";
+  /** Imagen de la firma (solo aplica a la firma propia del docente). */
+  imagen?: string;
+  /** PROPIA = subida por el docente; INSTITUCIONAL = elegida por admin de org. */
+  origen?: "PROPIA" | "INSTITUCIONAL";
 }

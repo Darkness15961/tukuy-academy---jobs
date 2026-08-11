@@ -272,7 +272,7 @@ function verPerfilPublico() {
               />
               <div class="absolute bottom-3 left-3 flex items-center gap-3">
                 <img
-                  :src="formulario.logo || '/img/LogoColegioING.png'"
+                  :src="formulario.logo || '/img/iconoTukuyAcademy.png'"
                   alt=""
                   class="h-12 w-12 object-contain bg-white p-1"
                 />

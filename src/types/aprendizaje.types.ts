@@ -14,6 +14,8 @@ export type ItemAprendizaje = {
   questions?: number;
   grade?: number;
   description: string;
+  /** URL o ID de YouTube para ítems tipo video. */
+  videoUrl?: string;
 };
 
 export type ModuloAprendizaje = {
