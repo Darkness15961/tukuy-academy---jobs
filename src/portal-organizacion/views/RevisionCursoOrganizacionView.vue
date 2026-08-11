@@ -17,6 +17,7 @@ import {
   organizacionService,
   type PropuestaCursoOrganizacion,
 } from "@/api/services/organizacion.service";
+import { apiConfig } from "@/api/config";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
@@ -57,6 +58,106 @@ const revisionConfirmada = computed(() =>
   Object.values(confirmaciones).every(Boolean),
 );
 
+async function cargarRevisionAcademica(
+  propuestaActual: PropuestaCursoOrganizacion,
+): Promise<RevisionAcademicaCurso> {
+  if (!apiConfig.secundariaCursos) {
+    return obtenerRevisionCursoMock(
+      propuestaActual.id,
+      propuestaActual.cursoDocenteId,
+      propuestaActual.titulo,
+    );
+  }
+
+  try {
+    const { secundariaGatewayService } = await import(
+      "@/api/services/secundaria-gateway.service"
+    );
+    const detalle = await secundariaGatewayService.obtenerBorrador(
+      propuestaActual.cursoDocenteId,
+    );
+    const borrador = (detalle.borrador ?? {}) as Record<string, unknown>;
+    const curso = (detalle.curso ?? {}) as Record<string, unknown>;
+    const secciones = Array.isArray(borrador.secciones)
+      ? (borrador.secciones as Array<Record<string, unknown>>)
+      : [];
+    const objetivos = Array.isArray(borrador.objetivos)
+      ? borrador.objetivos.map(String)
+      : String(borrador.descripcion ?? curso.resumen ?? "")
+        ? [String(borrador.descripcion ?? curso.resumen)]
+        : [];
+    const requisitos = Array.isArray(borrador.requisitos)
+      ? borrador.requisitos.map(String)
+      : [];
+
+    return {
+      cursoId: propuestaActual.cursoDocenteId,
+      version: Number(curso.totalVersiones ?? 1),
+      descripcion: String(
+        borrador.descripcion ?? curso.resumen ?? propuestaActual.titulo,
+      ),
+      objetivos: objetivos.length
+        ? objetivos
+        : [`Revisar el contenido de ${propuestaActual.titulo}.`],
+      requisitos: requisitos.length
+        ? requisitos
+        : ["Acceso a la plataforma Tukuy"],
+      modulos: secciones.map((seccion, indice) => {
+        const clases = Array.isArray(seccion.clases)
+          ? seccion.clases.map(String)
+          : [];
+        const items = Array.isArray(seccion.items)
+          ? (seccion.items as Array<Record<string, unknown>>)
+          : [];
+        const recursosRaw = Array.isArray(seccion.recursos)
+          ? (seccion.recursos as Array<Record<string, unknown>>)
+          : [];
+        return {
+          id: String(seccion.id ?? `${propuestaActual.cursoDocenteId}-m${indice}`),
+          titulo: String(seccion.titulo ?? `Módulo ${indice + 1}`),
+          descripcion: String(seccion.descripcion ?? ""),
+          clases: clases.length
+            ? clases
+            : items.map((item) => String(item.titulo ?? "Actividad")),
+          recursos: recursosRaw.map((recurso, rIdx) => ({
+            id: String(recurso.id ?? `r-${indice}-${rIdx}`),
+            nombre: String(recurso.nombre ?? recurso.titulo ?? "Recurso"),
+            tipo: String(recurso.tipo ?? "PDF").toUpperCase() === "VIDEO"
+              ? ("VIDEO" as const)
+              : String(recurso.tipo ?? "").toUpperCase() === "ENLACE"
+              ? ("ENLACE" as const)
+              : String(recurso.tipo ?? "").toUpperCase() === "PLANTILLA"
+              ? ("PLANTILLA" as const)
+              : ("PDF" as const),
+            tamanio: recurso.tamanio ? String(recurso.tamanio) : undefined,
+            urlDemo: String(recurso.url ?? recurso.urlDemo ?? "#"),
+          })),
+          actividades: items
+            .filter((item) => {
+              const tipo = String(item.tipo ?? "").toLowerCase();
+              return tipo === "assignment" || tipo === "quiz" || tipo === "lectura";
+            })
+            .map((item) => String(item.titulo ?? "Actividad")),
+        };
+      }),
+      horasCertificables: Number(
+        borrador.horas ??
+          ((curso.versionActual as Record<string, unknown> | undefined)?.horas ??
+            1),
+      ),
+      notaMinimaPropuesta: Number(borrador.notaMinima ?? 11),
+      certificadoPropuesto: Boolean(borrador.certificado ?? true),
+      enviadaEn: String(curso.actualizadoEn ?? new Date().toISOString()),
+    };
+  } catch {
+    return obtenerRevisionCursoMock(
+      propuestaActual.id,
+      propuestaActual.cursoDocenteId,
+      propuestaActual.titulo,
+    );
+  }
+}
+
 onMounted(async () => {
   try {
     const lista = await organizacionService.catalogoCursos.listar();
@@ -67,11 +168,7 @@ onMounted(async () => {
       error.value = "No se encontró la propuesta de curso a revisar.";
       return;
     }
-    revision.value = obtenerRevisionCursoMock(
-      propuesta.value.id,
-      propuesta.value.cursoDocenteId,
-      propuesta.value.titulo,
-    );
+    revision.value = await cargarRevisionAcademica(propuesta.value);
     if (propuesta.value.estado === "CONTENIDO_REVISADO") {
       confirmaciones.contenido = true;
       confirmaciones.materiales = true;

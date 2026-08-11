@@ -49,8 +49,18 @@ const logoEntidad = computed(
 const cargando = ref(true);
 const sincronizando = ref(false);
 const descargandoId = ref("");
+const firmandoId = ref("");
 const emitidos = ref<CertificadoEmitidoDocente[]>([]);
 const pendientes = ref<CertificadoPendienteDocente[]>([]);
+const pendientesFirma = ref<
+  Array<{
+    firmaId: string;
+    certificadoId: string;
+    nombre: string;
+    curso: string;
+    codigoVerificacion?: string;
+  }>
+>([]);
 const mensaje = ref("");
 const error = ref("");
 const busqueda = ref("");
@@ -141,10 +151,16 @@ onMounted(async () => {
       // Mock/API: recalcula elegibilidad local antes de leer repos.
       await docenteService.sincronizarCertificadosElegibles();
     }
-    [emitidos.value, pendientes.value] = await Promise.all([
+    const [listaEmitidos, listaPendientes, listaFirmas] = await Promise.all([
       docenteService.certificados.listar(),
       docenteService.certificadosPendientes.listar(),
+      apiConfig.secundariaCursos
+        ? docenteService.listarPendientesFirma()
+        : Promise.resolve([]),
     ]);
+    emitidos.value = listaEmitidos;
+    pendientes.value = listaPendientes;
+    pendientesFirma.value = listaFirmas;
   } catch (causa) {
     error.value =
       causa instanceof Error
@@ -168,13 +184,46 @@ async function emitir(pendienteId: string) {
       : await docenteService.emitirCertificado(pendienteId);
     emitidos.value.unshift(emitido);
     pendientes.value = pendientes.value.filter((x) => x.id !== pendienteId);
-    mensaje.value = "Certificado emitido y enviado al estudiante.";
-    setTimeout(() => (mensaje.value = ""), 2500);
+    if (apiConfig.secundariaCursos) {
+      pendientesFirma.value = await docenteService.listarPendientesFirma();
+    }
+    const requiereFirma =
+      (emitido as CertificadoEmitidoDocente & {
+        requiereFirmaInstitucional?: boolean;
+      }).requiereFirmaInstitucional === true;
+    mensaje.value = requiereFirma
+      ? "Certificado preparado. Falta la firma institucional para publicarlo."
+      : "Certificado emitido y enviado al estudiante.";
+    setTimeout(() => (mensaje.value = ""), 3500);
   } catch (causa) {
     error.value =
       causa instanceof Error
         ? causa.message
         : "No se pudo emitir el certificado.";
+  }
+}
+
+async function firmar(item: {
+  firmaId: string;
+  certificadoId: string;
+  nombre: string;
+  curso: string;
+}) {
+  firmandoId.value = item.firmaId;
+  error.value = "";
+  try {
+    await docenteService.firmarCertificado(item.certificadoId, item.firmaId);
+    pendientesFirma.value = pendientesFirma.value.filter(
+      (fila) => fila.firmaId !== item.firmaId,
+    );
+    mensaje.value = `Firma institucional aplicada · ${item.nombre} · ${item.curso}`;
+    setTimeout(() => (mensaje.value = ""), 3000);
+    emitidos.value = await docenteService.certificados.listar();
+  } catch (causa) {
+    error.value =
+      causa instanceof Error ? causa.message : "No se pudo firmar el certificado.";
+  } finally {
+    firmandoId.value = "";
   }
 }
 
@@ -382,6 +431,52 @@ async function descargarCertificado(certificado: CertificadoEmitidoDocente) {
         </div></CardContent
       ></Card
     >
+
+    <Card
+      v-if="pendientesFirma.length"
+      class="overflow-hidden border-primary/40 border-t-4 border-t-primary bg-card"
+    >
+      <CardContent class="p-5">
+        <div class="flex items-center gap-2">
+          <ShieldCheck class="h-5 w-5 text-primary" />
+          <h2 class="font-black text-foreground">
+            Pendientes de firma institucional
+          </h2>
+        </div>
+        <p class="mt-1 text-sm text-muted-foreground">
+          El índice público solo se publica cuando se completa esta firma.
+        </p>
+        <div class="mt-4 grid gap-3 md:grid-cols-2">
+          <div
+            v-for="item in pendientesFirma"
+            :key="item.firmaId"
+            class="flex items-center gap-3 border border-border bg-muted/40 p-4"
+          >
+            <div class="min-w-0 flex-1">
+              <b class="text-sm">{{ item.nombre }}</b>
+              <p class="truncate text-xs text-muted-foreground">
+                {{ item.curso }}
+              </p>
+              <p
+                v-if="item.codigoVerificacion"
+                class="mt-1 text-[11px] text-muted-foreground"
+              >
+                Código {{ item.codigoVerificacion }}
+              </p>
+            </div>
+            <Button
+              size="sm"
+              :disabled="firmandoId === item.firmaId"
+              @click="firmar(item)"
+            >
+              <ShieldCheck class="h-4 w-4" />
+              {{ firmandoId === item.firmaId ? "Firmando…" : "Firmar" }}
+            </Button>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+
     <Card
       v-if="tipoFiltro === 'AMBOS' || tipoFiltro === 'EMITIDOS'"
       class="border-border bg-card"

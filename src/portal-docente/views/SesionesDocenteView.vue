@@ -2,23 +2,33 @@
 import {
   CalendarDays,
   Clock3,
+  ClipboardCheck,
   Link2,
   Plus,
   UsersRound,
   Video,
   XCircle,
 } from "lucide-vue-next";
-import { onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
 import {
   docenteService,
   type SesionDocente,
 } from "@/api/services/docente.service";
+import { apiConfig } from "@/api/config";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import { Card, CardContent } from "@/components/ui/card";
 import Skeleton from "primevue/skeleton";
+
+type FilaAsistencia = {
+  estudianteId: string;
+  nombre: string;
+  iniciales: string;
+  estado: string;
+};
+
 const modal = ref(false);
 const cargando = ref(true);
 const sesiones = ref<SesionDocente[]>([]);
@@ -31,6 +41,15 @@ const nuevaSesion = reactive({
   duracion: "60 min",
   emailsInvitados: "",
 });
+
+const asistenciaActiva = apiConfig.secundariaCursos;
+const cargandoAsistencia = ref(false);
+const guardandoAsistencia = ref(false);
+const errorAsistencia = ref("");
+const asistencias = ref<FilaAsistencia[]>([]);
+const presentes = computed(
+  () => asistencias.value.filter((item) => item.estado === "PRESENTE").length,
+);
 
 onMounted(async () => {
   try {
@@ -48,6 +67,67 @@ onMounted(async () => {
     cargando.value = false;
   }
 });
+
+watch(sesionSeleccionada, async (sesion) => {
+  asistencias.value = [];
+  errorAsistencia.value = "";
+  if (!sesion || !asistenciaActiva) return;
+  // Solo UUIDs reales de secundaria.
+  if (!/^[0-9a-f-]{36}$/i.test(sesion.id)) return;
+  cargandoAsistencia.value = true;
+  try {
+    const { secundariaGatewayService } = await import(
+      "@/api/services/secundaria-gateway.service"
+    );
+    const data = await secundariaGatewayService.listarAsistenciaSesion(sesion.id);
+    asistencias.value = (data.asistencias ?? []).map((item) => ({
+      estudianteId: item.estudianteId,
+      nombre: item.nombre,
+      iniciales: item.iniciales,
+      estado: item.estado === "SIN_MARCAR" ? "AUSENTE" : item.estado,
+    }));
+  } catch (err) {
+    errorAsistencia.value =
+      err instanceof Error ? err.message : "No se pudo cargar la asistencia.";
+  } finally {
+    cargandoAsistencia.value = false;
+  }
+});
+
+async function guardarAsistencia() {
+  const sesion = sesionSeleccionada.value;
+  if (!sesion || !asistenciaActiva || !asistencias.value.length) return;
+  guardandoAsistencia.value = true;
+  errorAsistencia.value = "";
+  try {
+    const { secundariaGatewayService } = await import(
+      "@/api/services/secundaria-gateway.service"
+    );
+    const data = await secundariaGatewayService.marcarAsistenciaSesion(
+      sesion.id,
+      asistencias.value.map((item) => ({
+        estudianteId: item.estudianteId,
+        estado: item.estado,
+      })),
+    );
+    asistencias.value = (data.asistencias ?? []).map((item) => ({
+      estudianteId: item.estudianteId,
+      nombre: item.nombre,
+      iniciales: item.iniciales ?? item.nombre.slice(0, 2).toUpperCase(),
+      estado: item.estado,
+    }));
+    sesion.asistentes = data.presentes ?? presentes.value;
+  } catch (err) {
+    errorAsistencia.value =
+      err instanceof Error ? err.message : "No se pudo guardar la asistencia.";
+  } finally {
+    guardandoAsistencia.value = false;
+  }
+}
+
+function marcarTodos(estado: "PRESENTE" | "AUSENTE") {
+  asistencias.value = asistencias.value.map((item) => ({ ...item, estado }));
+}
 
 async function programar() {
   if (!nuevaSesion.titulo.trim() || !nuevaSesion.fechaHora || !nuevaSesion.cursoId)
@@ -249,7 +329,7 @@ function accionSesion(sesion: SesionDocente) {
       class="fixed inset-0 z-[70] grid place-items-center bg-slate-950/60 p-5"
       @click.self="sesionSeleccionada = undefined"
     >
-      <Card class="w-full max-w-lg border-border bg-card shadow-2xl">
+      <Card class="w-full max-w-2xl border-border bg-card shadow-2xl">
         <CardContent class="p-6">
           <Badge>{{ sesionSeleccionada.estado }}</Badge>
           <h2 class="mt-3 text-xl font-black">
@@ -270,8 +350,11 @@ function accionSesion(sesion: SesionDocente) {
               ><UsersRound class="mr-2 inline h-4 w-4" />{{
                 sesionSeleccionada.inscritos
               }}
-              inscritos · {{ sesionSeleccionada.asistentes ?? 0 }} asistentes
-              registrados</span
+              inscritos ·
+              {{
+                asistenciaActiva ? presentes : sesionSeleccionada.asistentes ?? 0
+              }}
+              presentes</span
             >
             <span v-if="sesionSeleccionada.enlace"
               ><Link2 class="mr-2 inline h-4 w-4" />{{
@@ -284,17 +367,78 @@ function accionSesion(sesion: SesionDocente) {
             >
               Invitados: {{ sesionSeleccionada.invitadosEmails.join(", ") }}
             </span>
-            <span
-              v-if="sesionSeleccionada.calendarEventId"
-              class="text-xs text-muted-foreground"
-            >
-              Calendar: {{ sesionSeleccionada.calendarEventId }}
-            </span>
           </div>
+
+          <div v-if="asistenciaActiva" class="mt-5">
+            <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <h3 class="flex items-center gap-2 font-black">
+                <ClipboardCheck class="h-4 w-4 text-primary" />
+                Pasar lista
+              </h3>
+              <div class="flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  :disabled="!asistencias.length"
+                  @click="marcarTodos('PRESENTE')"
+                  >Todos presentes</Button
+                >
+                <Button
+                  size="sm"
+                  variant="outline"
+                  :disabled="!asistencias.length"
+                  @click="marcarTodos('AUSENTE')"
+                  >Todos ausentes</Button
+                >
+              </div>
+            </div>
+            <p v-if="cargandoAsistencia" class="text-sm text-muted-foreground">
+              Cargando matriculados…
+            </p>
+            <p v-else-if="errorAsistencia" class="text-sm text-red-600">
+              {{ errorAsistencia }}
+            </p>
+            <p
+              v-else-if="!asistencias.length"
+              class="text-sm text-muted-foreground"
+            >
+              No hay alumnos matriculados en la edición de este curso.
+            </p>
+            <div v-else class="max-h-64 space-y-2 overflow-y-auto pr-1">
+              <div
+                v-for="fila in asistencias"
+                :key="fila.estudianteId"
+                class="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2"
+              >
+                <div class="min-w-0">
+                  <p class="truncate text-sm font-semibold">{{ fila.nombre }}</p>
+                  <p class="text-xs text-muted-foreground">
+                    {{ fila.iniciales }}
+                  </p>
+                </div>
+                <select
+                  v-model="fila.estado"
+                  class="h-9 rounded-md border border-border bg-card px-2 text-sm"
+                >
+                  <option value="PRESENTE">Presente</option>
+                  <option value="TARDANZA">Tardanza</option>
+                  <option value="AUSENTE">Ausente</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
           <div class="mt-5 flex flex-wrap justify-end gap-2">
             <Button variant="outline" @click="sesionSeleccionada = undefined"
               >Cerrar</Button
             >
+            <Button
+              v-if="asistenciaActiva && asistencias.length"
+              :disabled="guardandoAsistencia"
+              @click="guardarAsistencia"
+            >
+              {{ guardandoAsistencia ? "Guardando…" : "Guardar asistencia" }}
+            </Button>
             <Button
               v-if="
                 !['FINALIZADA', 'CANCELADA'].includes(sesionSeleccionada.estado)

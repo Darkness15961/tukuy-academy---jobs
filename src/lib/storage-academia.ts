@@ -48,6 +48,9 @@ async function pedirPresignUpload(entrada: {
   fileName: string;
   contentType: string;
 }) {
+  const { instalacionSecundariaActiva } = await import(
+    "@/api/services/secundaria-gateway.service"
+  );
   const { data, error } = await supabasePrincipal().functions.invoke(
     "media-presign",
     {
@@ -56,6 +59,7 @@ async function pedirPresignUpload(entrada: {
         kind: entrada.kind,
         fileName: entrada.fileName,
         contentType: entrada.contentType,
+        instalacionId: instalacionSecundariaActiva(),
       },
     },
   );

@@ -19,6 +19,7 @@ import Tag from "primevue/tag";
 import { computed, onMounted, ref } from "vue";
 
 import { organizacionService } from "@/api/services/organizacion.service";
+import { apiConfig } from "@/api/config";
 import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -39,8 +40,18 @@ const logoEntidad = computed(
 const cargando = ref(true);
 const descargandoId = ref("");
 const emitiendoId = ref("");
+const firmandoId = ref("");
 const emitidos = ref<CertificadoEmitidoDocente[]>([]);
 const pendientes = ref<CertificadoPendienteDocente[]>([]);
+const pendientesFirma = ref<
+  Array<{
+    firmaId: string;
+    certificadoId: string;
+    nombre: string;
+    curso: string;
+    codigoVerificacion?: string;
+  }>
+>([]);
 const mensaje = ref("");
 const error = ref("");
 const busqueda = ref("");
@@ -154,10 +165,16 @@ const indicadores = computed(() => [
 
 onMounted(async () => {
   try {
-    [emitidos.value, pendientes.value] = await Promise.all([
+    const [listaEmitidos, listaPendientes, listaFirmas] = await Promise.all([
       organizacionService.certificados.listar(),
       organizacionService.certificadosPendientes.listar(),
+      apiConfig.secundariaCursos
+        ? organizacionService.listarPendientesFirma()
+        : Promise.resolve([]),
     ]);
+    emitidos.value = listaEmitidos;
+    pendientes.value = listaPendientes;
+    pendientesFirma.value = listaFirmas;
   } finally {
     cargando.value = false;
   }
@@ -192,10 +209,19 @@ async function emitir(pendienteId: string) {
     const emitido = await organizacionService.emitirCertificado(pendienteId);
     emitidos.value.unshift(emitido);
     pendientes.value = pendientes.value.filter((item) => item.id !== pendienteId);
-    mensaje.value = "Certificado emitido y enviado al estudiante.";
+    if (apiConfig.secundariaCursos) {
+      pendientesFirma.value = await organizacionService.listarPendientesFirma();
+    }
+    const requiereFirma =
+      (emitido as CertificadoEmitidoDocente & {
+        requiereFirmaInstitucional?: boolean;
+      }).requiereFirmaInstitucional === true;
+    mensaje.value = requiereFirma
+      ? "Certificado preparado. Falta la firma institucional para publicarlo."
+      : "Certificado emitido y enviado al estudiante.";
     setTimeout(() => {
       mensaje.value = "";
-    }, 2500);
+    }, 3500);
   } catch (causa) {
     error.value =
       causa instanceof Error
@@ -203,6 +229,43 @@ async function emitir(pendienteId: string) {
         : "No se pudo emitir el certificado.";
   } finally {
     emitiendoId.value = "";
+  }
+}
+
+async function firmar(item: {
+  firmaId: string;
+  certificadoId: string;
+  nombre: string;
+  curso: string;
+}) {
+  if (
+    !tienePermiso("certificados.firmar") &&
+    !tienePermiso("certificados.emitir")
+  ) {
+    error.value = "Tu perfil no puede firmar certificados.";
+    return;
+  }
+  firmandoId.value = item.firmaId;
+  error.value = "";
+  try {
+    await organizacionService.firmarCertificado(
+      item.certificadoId,
+      item.firmaId,
+    );
+    pendientesFirma.value = pendientesFirma.value.filter(
+      (fila) => fila.firmaId !== item.firmaId,
+    );
+    mensaje.value = `Firma institucional aplicada · ${item.nombre}`;
+    setTimeout(() => {
+      mensaje.value = "";
+    }, 3000);
+  } catch (causa) {
+    error.value =
+      causa instanceof Error
+        ? causa.message
+        : "No se pudo firmar el certificado.";
+  } finally {
+    firmandoId.value = "";
   }
 }
 
@@ -320,6 +383,43 @@ async function descargarCertificado(certificado: CertificadoEmitidoDocente) {
     >
       {{ error }}
     </div>
+
+    <Card
+      v-if="pendientesFirma.length"
+      class="overflow-hidden border-primary/40 border-t-4 border-t-primary bg-card"
+    >
+      <CardContent class="p-5">
+        <div class="flex items-center gap-2">
+          <ShieldCheck class="h-5 w-5 text-primary" />
+          <h2 class="font-black">Pendientes de firma institucional</h2>
+        </div>
+        <p class="mt-1 text-sm text-muted-foreground">
+          El certificado solo se publica en el índice público cuando firmas.
+        </p>
+        <div class="mt-4 grid gap-3 md:grid-cols-2">
+          <div
+            v-for="item in pendientesFirma"
+            :key="item.firmaId"
+            class="flex items-center gap-3 border border-border bg-muted/40 p-4"
+          >
+            <div class="min-w-0 flex-1">
+              <b class="text-sm">{{ item.nombre }}</b>
+              <p class="truncate text-xs text-muted-foreground">
+                {{ item.curso }}
+              </p>
+            </div>
+            <Button
+              size="sm"
+              :disabled="firmandoId === item.firmaId"
+              @click="firmar(item)"
+            >
+              <ShieldCheck class="h-4 w-4" />
+              {{ firmandoId === item.firmaId ? "Firmando…" : "Firmar" }}
+            </Button>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
 
     <div v-if="cargando" class="grid gap-4 sm:grid-cols-3">
       <Skeleton v-for="item in 3" :key="item" class="h-24 w-full" />

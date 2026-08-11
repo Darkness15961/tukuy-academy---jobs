@@ -1455,7 +1455,12 @@ export const docenteService = {
         "Certificado emitido",
         `${emitido.nombre} · ${emitido.curso}`,
       );
-      return mapearCertificadoEmitidoSecundaria(emitido);
+      return {
+        ...mapearCertificadoEmitidoSecundaria(emitido),
+        requiereFirmaInstitucional: resultado.requiereFirmaInstitucional === true,
+      } as CertificadoEmitidoDocente & {
+        requiereFirmaInstitucional?: boolean;
+      };
     }
 
     if (!apiConfig.useMock) {
@@ -1519,6 +1524,25 @@ export const docenteService = {
       `${emitido.nombre} · ${emitido.curso}`,
     );
     return emitido;
+  },
+
+  async listarPendientesFirma() {
+    if (!apiConfig.secundariaCursos) return [];
+    const data =
+      await secundariaGatewayService.listarCertificadosPendientesFirma();
+    return data.pendientesFirma ?? [];
+  },
+
+  async firmarCertificado(certificadoId: string, firmaId?: string) {
+    if (!apiConfig.secundariaCursos) {
+      throw new Error("Las firmas requieren la secundaria activa.");
+    }
+    const resultado = await secundariaGatewayService.firmarCertificado({
+      certificadoId,
+      firmaId,
+    });
+    await registrarActividad("Certificado firmado", certificadoId);
+    return resultado;
   },
 
   async sincronizarCertificadosElegibles(cursoId?: string) {

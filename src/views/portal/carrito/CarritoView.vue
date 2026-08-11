@@ -56,7 +56,14 @@ const puedePagar = computed(
 
 async function pagarConIzipay() {
   if (!cursosPagados.value.length) return;
-  await pasarela.iniciarPagoCarrito(cursosPagados.value.map((curso) => curso.id));
+  await pasarela.iniciarPagoCarrito(
+    cursosPagados.value.map((curso) => curso.id),
+    cursosPagados.value.map((curso) => ({
+      cursoId: curso.id,
+      titulo: curso.title,
+      importe: curso.price ?? 0,
+    })),
+  );
 }
 
 watch(

@@ -1,3 +1,5 @@
+import { useContextoSesion } from "@/composables/useContextoSesion";
+import { INSTALACION_TUKUY_ACADEMY_ID } from "@/lib/constants";
 import { supabasePrincipal } from "@/lib/supabase";
 import type {
   BootstrapAlumnoSecundaria,
@@ -30,37 +32,61 @@ type FragmentosCache = {
   estudiantes?: ResultadoListarEstudiantesSecundaria;
 };
 
-let cache: FragmentosCache | null = null;
-let inflightDocente: Promise<BootstrapDocenteSecundaria> | null = null;
-let inflightAlumno: Promise<BootstrapAlumnoSecundaria> | null = null;
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Estado por instalación (tenant) para no mezclar datos entre organizaciones.
+const cachePorInstalacion = new Map<string, FragmentosCache>();
+const inflightDocentePorInstalacion = new Map<
+  string,
+  Promise<BootstrapDocenteSecundaria>
+>();
+const inflightAlumnoPorInstalacion = new Map<
+  string,
+  Promise<BootstrapAlumnoSecundaria>
+>();
+
+export function instalacionSecundariaActiva(): string {
+  const { contextoActivo } = useContextoSesion();
+  const id = contextoActivo.value?.organizacionId ?? "";
+  return UUID_RE.test(id) ? id : INSTALACION_TUKUY_ACADEMY_ID;
+}
 
 function cacheVivo(): FragmentosCache | null {
+  const clave = instalacionSecundariaActiva();
+  const cache = cachePorInstalacion.get(clave) ?? null;
   if (!cache) return null;
   if (Date.now() - cache.at > CACHE_TTL_MS) {
-    cache = null;
+    cachePorInstalacion.delete(clave);
     return null;
   }
   return cache;
 }
 
 function fusionarCache(parcial: Omit<FragmentosCache, "at">) {
-  cache = {
+  cachePorInstalacion.set(instalacionSecundariaActiva(), {
     ...(cacheVivo() ?? { at: 0 }),
     ...parcial,
     at: Date.now(),
-  };
+  });
 }
 
 export function invalidarCacheSecundaria() {
-  cache = null;
-  inflightDocente = null;
-  inflightAlumno = null;
+  cachePorInstalacion.clear();
+  inflightDocentePorInstalacion.clear();
+  inflightAlumnoPorInstalacion.clear();
 }
 
 async function invocar<T>(action: string, extra: Record<string, unknown> = {}) {
   const { data, error } = await supabasePrincipal().functions.invoke(
     "secondary-gateway",
-    { body: { action, ...extra } },
+    {
+      body: {
+        action,
+        instalacionId: instalacionSecundariaActiva(),
+        ...extra,
+      },
+    },
   );
   if (error) throw new Error(error.message);
   if (!data?.ok) {
@@ -94,6 +120,7 @@ export const secundariaGatewayService = {
   },
 
   async bootstrapDocente(forzar = false): Promise<BootstrapDocenteSecundaria> {
+    const instalacion = instalacionSecundariaActiva();
     if (!forzar) {
       const vivo = cacheVivo();
       if (
@@ -110,10 +137,11 @@ export const secundariaGatewayService = {
           estudiantes: vivo.estudiantes,
         };
       }
-      if (inflightDocente) return inflightDocente;
+      const enCurso = inflightDocentePorInstalacion.get(instalacion);
+      if (enCurso) return enCurso;
     }
 
-    inflightDocente = invocar<BootstrapDocenteSecundaria>("bootstrap-docente")
+    const promesa = invocar<BootstrapDocenteSecundaria>("bootstrap-docente")
       .then((data) => {
         fusionarCache({
           cursos: data.cursos,
@@ -124,12 +152,14 @@ export const secundariaGatewayService = {
         return data;
       })
       .finally(() => {
-        inflightDocente = null;
+        inflightDocentePorInstalacion.delete(instalacion);
       });
-    return inflightDocente;
+    inflightDocentePorInstalacion.set(instalacion, promesa);
+    return promesa;
   },
 
   async bootstrapAlumno(forzar = false): Promise<BootstrapAlumnoSecundaria> {
+    const instalacion = instalacionSecundariaActiva();
     if (!forzar) {
       const vivo = cacheVivo();
       if (vivo?.cursos && vivo.misCursos) {
@@ -139,10 +169,11 @@ export const secundariaGatewayService = {
           misCursos: vivo.misCursos,
         };
       }
-      if (inflightAlumno) return inflightAlumno;
+      const enCurso = inflightAlumnoPorInstalacion.get(instalacion);
+      if (enCurso) return enCurso;
     }
 
-    inflightAlumno = invocar<BootstrapAlumnoSecundaria>("bootstrap-alumno")
+    const promesa = invocar<BootstrapAlumnoSecundaria>("bootstrap-alumno")
       .then((data) => {
         fusionarCache({
           cursos: data.cursos,
@@ -151,9 +182,10 @@ export const secundariaGatewayService = {
         return data;
       })
       .finally(() => {
-        inflightAlumno = null;
+        inflightAlumnoPorInstalacion.delete(instalacion);
       });
-    return inflightAlumno;
+    inflightAlumnoPorInstalacion.set(instalacion, promesa);
+    return promesa;
   },
 
   async listarCursos(limite = 100): Promise<ListadoCursosSecundaria> {
@@ -213,6 +245,160 @@ export const secundariaGatewayService = {
       edicionId: string;
       cursoId: string;
     }>("matricular-curso", { cursoId });
+  },
+
+  /** Matrícula institucional: un gestor matricula a otra persona de su organización. */
+  async matricularEstudiante(cursoId: string, estudianteId: string) {
+    return invocarMutacion<{
+      ok: true;
+      matriculaId: string;
+      edicionId: string;
+      cursoId: string;
+      estudianteIdentidadRef: string;
+      advertenciaSync: string | null;
+    }>("matricular-estudiante", { cursoId, estudianteId });
+  },
+
+  async listarCursosRevision() {
+    return invocar<{
+      ok: true;
+      total: number;
+      cursos: Array<Record<string, unknown>>;
+    }>("list-cursos-revision");
+  },
+
+  async revisarContenidoCurso(cursoId: string) {
+    return invocarMutacion<{
+      ok: true;
+      estado: string;
+      curso: CursoSecundaria;
+      catalogo: Record<string, unknown>;
+    }>("revisar-contenido", { cursoId });
+  },
+
+  async observarCurso(cursoId: string, observacion: string) {
+    return invocarMutacion<{
+      ok: true;
+      estado: string;
+      curso: CursoSecundaria;
+      catalogo: Record<string, unknown>;
+    }>("observar-curso", { cursoId, observacion });
+  },
+
+  async aprobarCurso(
+    cursoId: string,
+    entrada: {
+      publicar?: boolean;
+      configuracion?: Record<string, unknown>;
+    } = {},
+  ) {
+    return invocarMutacion<{
+      ok: true;
+      estado: string;
+      curso: CursoSecundaria;
+      catalogo: Record<string, unknown>;
+    }>("aprobar-curso", {
+      cursoId,
+      publicar: entrada.publicar === true,
+      configuracion: entrada.configuracion ?? {},
+    });
+  },
+
+  async crearOrdenCompra(entrada: {
+    cursoIds?: string[];
+    items?: Array<{
+      cursoId: string;
+      titulo?: string;
+      importe?: number;
+      totalCentavos?: number;
+    }>;
+    moneda?: string;
+  }) {
+    return invocarMutacion<{
+      ok: true;
+      ordenId: string;
+      estado: string;
+      moneda: string;
+      totalCentavos: number;
+      importe: number;
+      cursoIds: string[];
+      items: Array<Record<string, unknown>>;
+    }>("crear-orden-compra", {
+      cursoIds: entrada.cursoIds ?? [],
+      items: entrada.items ?? [],
+      moneda: entrada.moneda ?? "PEN",
+    });
+  },
+
+  async obtenerOrdenCompra(ordenId: string) {
+    return invocar<{
+      ok: true;
+      ordenId: string;
+      estado: string;
+      moneda: string;
+      totalCentavos: number;
+      importe: number;
+      cursoIds: string[];
+      items: Array<Record<string, unknown>>;
+      pago?: Record<string, unknown> | null;
+    }>("obtener-orden-compra", { ordenId });
+  },
+
+  async confirmarPagoOrden(
+    ordenId: string,
+    entrada: { code?: string; transactionId?: string } = {},
+  ) {
+    return invocarMutacion<{
+      ok: true;
+      ordenId: string;
+      estado: string;
+      mensaje?: string;
+      cursoIds?: string[];
+      matriculas?: Array<Record<string, unknown>>;
+      importe?: number;
+    }>("confirmar-pago-orden", {
+      ordenId,
+      code: entrada.code ?? "00",
+      transactionId: entrada.transactionId ?? null,
+    });
+  },
+
+  async listarAsistenciaSesion(sesionId: string) {
+    return invocar<{
+      ok: true;
+      sesionId: string;
+      cursoId?: string;
+      total: number;
+      presentes: number;
+      asistencias: Array<{
+        estudianteId: string;
+        matriculaId?: string;
+        nombre: string;
+        correo?: string | null;
+        iniciales: string;
+        estado: string;
+        marcadoEn?: string | null;
+      }>;
+    }>("list-asistencia-sesion", { sesionId });
+  },
+
+  async marcarAsistenciaSesion(
+    sesionId: string,
+    items: Array<{ estudianteId: string; estado: string }>,
+  ) {
+    return invocarMutacion<{
+      ok: true;
+      sesionId: string;
+      total: number;
+      presentes: number;
+      marcados?: number;
+      asistencias: Array<{
+        estudianteId: string;
+        nombre: string;
+        iniciales?: string;
+        estado: string;
+      }>;
+    }>("marcar-asistencia-sesion", { sesionId, items });
   },
 
   async listarMisCursos(): Promise<ResultadoMisCursosSecundaria> {
@@ -363,8 +549,46 @@ export const secundariaGatewayService = {
       codigoVerificacion?: string;
       documentoId?: string;
       yaExistia?: boolean;
+      requiereFirmaInstitucional?: boolean;
+      firmas?: Record<string, unknown>;
       emitidos: import("@/lib/contrato-secundaria").CertificadoEmitidoSecundaria[];
     }>("emitir-certificado", { matriculaId });
+  },
+
+  async listarCertificadosPendientesFirma() {
+    return invocar<{
+      ok: true;
+      total: number;
+      pendientesFirma: Array<{
+        firmaId: string;
+        certificadoId: string;
+        documentoId?: string;
+        codigoVerificacion?: string;
+        matriculaId?: string;
+        nombre: string;
+        curso: string;
+        rolFirma: string;
+        estadoFirma: string;
+        preparadoEn?: string;
+      }>;
+    }>("list-certificados-pendientes-firma");
+  },
+
+  async firmarCertificado(entrada: {
+    certificadoId: string;
+    firmaId?: string;
+  }) {
+    return invocarMutacion<{
+      ok: true;
+      certificadoId: string;
+      firmaId?: string;
+      listoParaIndice?: boolean;
+      pendientes?: number;
+      indicePublico?: unknown;
+    }>("firmar-certificado", {
+      certificadoId: entrada.certificadoId,
+      firmaId: entrada.firmaId ?? null,
+    });
   },
 
   async listarEntregas(entrada: {

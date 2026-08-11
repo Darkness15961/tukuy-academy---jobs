@@ -39,6 +39,69 @@ function cors(req: Request) {
 
 type Contexto = Record<string, unknown>;
 
+function nombreSecreto(ref: string) {
+  return ref
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+async function resolverConexionSecundaria(
+  instalacionId: string,
+  principalUrl: string,
+  principalServiceRole: string | undefined,
+): Promise<{ url: string; key: string } | { error: string }> {
+  // Compatibilidad: la instalacion Tukuy puede seguir usando los secretos fijos.
+  if (instalacionId === INSTALACION_TUKUY) {
+    const url = Deno.env.get("SECONDARY_TUKUY_URL");
+    const key = Deno.env.get("SECONDARY_TUKUY_SERVICE_ROLE_KEY");
+    if (url && key) return { url, key };
+  }
+
+  if (!principalServiceRole) {
+    return {
+      error:
+        "El gateway no tiene SUPABASE_SERVICE_ROLE_KEY para resolver conexiones dinamicas",
+    };
+  }
+
+  const admin = createClient(principalUrl, principalServiceRole, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const { data: conexion, error } = await admin
+    .from("conexion_organizacion")
+    .select("servidor_ref, secreto_ref, estado")
+    .eq("instalacion_organizacion_id", instalacionId)
+    .maybeSingle();
+  if (error) {
+    return {
+      error: `No se pudo leer la conexion de la organizacion: ${error.message}`,
+    };
+  }
+  if (!conexion) {
+    return {
+      error: "La organizacion no tiene una conexion secundaria configurada",
+    };
+  }
+
+  const ref = nombreSecreto(String(conexion.secreto_ref ?? ""));
+  const key = ref
+    ? Deno.env.get(`${ref}_SERVICE_ROLE_KEY`) ?? Deno.env.get(ref) ?? null
+    : null;
+  const url = (ref ? Deno.env.get(`${ref}_URL`) : null) ??
+    (conexion.servidor_ref
+      ? `https://${conexion.servidor_ref}.supabase.co`
+      : null);
+  if (!url || !key) {
+    return {
+      error:
+        `Faltan secretos de la conexion secundaria (${ref}_URL / ${ref}_SERVICE_ROLE_KEY) en las Edge Functions`,
+    };
+  }
+  return { url, key };
+}
+
 async function sincronizarContextos(
   secundaria: SupabaseClient,
   usuario: { email?: string | null; user_metadata?: Record<string, unknown> },
@@ -135,15 +198,7 @@ Deno.serve(async (req) => {
   try {
     const principalUrl = Deno.env.get("SUPABASE_URL")!;
     const principalAnon = Deno.env.get("SUPABASE_ANON_KEY")!;
-    const secundariaUrl = Deno.env.get("SECONDARY_TUKUY_URL");
-    const secundariaServiceRole = Deno.env.get("SECONDARY_TUKUY_SERVICE_ROLE_KEY");
-    if (!secundariaUrl || !secundariaServiceRole) {
-      return json(
-        { error: "La conexion secundaria no tiene secretos configurados" },
-        503,
-        corsHeaders,
-      );
-    }
+    const principalServiceRole = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
     const authorization = req.headers.get("authorization") ?? "";
     const token = authorization.replace(/^Bearer\s+/i, "");
@@ -161,7 +216,24 @@ Deno.serve(async (req) => {
     }
 
     const entrada = await req.json().catch(() => ({}));
-    const secundaria = createClient(secundariaUrl, secundariaServiceRole, {
+
+    const UUID_RE =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const instalacionId =
+      typeof entrada.instalacionId === "string" &&
+        UUID_RE.test(entrada.instalacionId.trim())
+        ? entrada.instalacionId.trim()
+        : INSTALACION_TUKUY;
+
+    const conexion = await resolverConexionSecundaria(
+      instalacionId,
+      principalUrl,
+      principalServiceRole,
+    );
+    if ("error" in conexion) {
+      return json({ error: conexion.error }, 503, corsHeaders);
+    }
+    const secundaria = createClient(conexion.url, conexion.key, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
 
@@ -177,7 +249,7 @@ Deno.serve(async (req) => {
       }
       const lista = (contextos ?? []) as Contexto[];
       const deInstalacion = lista.filter(
-        (contexto) => contexto.instalacion_organizacion_ref === INSTALACION_TUKUY,
+        (contexto) => contexto.instalacion_organizacion_ref === instalacionId,
       );
       if (deInstalacion.length) return { error: null, propios: deInstalacion };
 
@@ -197,21 +269,6 @@ Deno.serve(async (req) => {
     };
 
     if (entrada.action === "health") {
-      const instalacionId =
-        typeof entrada.instalacionId === "string" && entrada.instalacionId
-          ? entrada.instalacionId
-          : INSTALACION_TUKUY;
-      if (instalacionId !== INSTALACION_TUKUY) {
-        return json(
-          {
-            error:
-              "Este gateway solo verifica la secundaria de Tukuy Academy por ahora",
-          },
-          400,
-          corsHeaders,
-        );
-      }
-
       const { data: esAdmin, error: errorAdmin } = await principal.rpc(
         "es_super_admin_actual",
       );
@@ -374,7 +431,7 @@ Deno.serve(async (req) => {
         }
         if (!resolucion.propios.length) {
           return json(
-            { error: "El usuario no pertenece a Tukuy Academy" },
+            { error: "El usuario no pertenece a esta organizacion" },
             403,
             corsHeaders,
           );
@@ -505,12 +562,84 @@ Deno.serve(async (req) => {
             corsHeaders,
           );
         }
+
+        // Al enviar a revisión, indexa la propuesta en el catálogo de la principal.
+        let catalogo: unknown = null;
+        let advertenciaCatalogo: string | null = null;
+        const cursoGuardado = guardado.data.curso as Record<string, unknown>;
+        const cursoGuardadoId = String(cursoGuardado.id ?? "");
+        const estadoGuardado = String(
+          estado ?? cursoGuardado.estado ?? "",
+        ).toUpperCase();
+        if (cursoGuardadoId && estadoGuardado === "EN_REVISION") {
+          const versionActual =
+            (cursoGuardado.versionActual as Record<string, unknown> | null) ??
+            null;
+          const horas = Number(versionActual?.horas ?? 1);
+          const upsert = await principal.rpc("org_upsert_curso_catalogo", {
+            p_instalacion_id: instalacionId,
+            p_curso_secundario_ref: cursoGuardadoId,
+            p_codigo: String(cursoGuardado.codigo ?? ""),
+            p_titulo: String(cursoGuardado.titulo ?? "Curso sin título"),
+            p_resumen:
+              typeof cursoGuardado.resumen === "string"
+                ? cursoGuardado.resumen
+                : null,
+            p_modalidad: String(cursoGuardado.modalidad ?? "VIRTUAL"),
+            p_duracion_minutos: Math.max(1, Math.round(horas * 60)),
+            p_imagen_publica_ref:
+              typeof cursoGuardado.portadaClave === "string"
+                ? cursoGuardado.portadaClave
+                : typeof (borrador as Record<string, unknown>).imagen ===
+                    "string"
+                ? (borrador as Record<string, unknown>).imagen
+                : null,
+            p_version_publicada: Number(
+              versionActual?.numero ?? cursoGuardado.totalVersiones ?? 1,
+            ),
+            p_estado_publicacion: "EN_REVISION",
+            p_datos_historicos: {
+              origen: "envio_revision",
+              docenteId: usuario.user.id,
+              borradorResumen: {
+                categoria: (borrador as Record<string, unknown>).categoria ??
+                  null,
+                docenteResponsableNombre:
+                  (borrador as Record<string, unknown>)
+                    .docenteResponsableNombre ?? null,
+                lecciones: Array.isArray(
+                    (borrador as Record<string, unknown>).secciones,
+                  )
+                  ? (
+                    (borrador as Record<string, unknown>).secciones as Array<
+                      { clases?: unknown[] }
+                    >
+                  ).reduce(
+                    (total, seccion) =>
+                      total +
+                      (Array.isArray(seccion.clases) ? seccion.clases.length : 0),
+                    0,
+                  )
+                  : 0,
+              },
+            },
+          });
+          if (upsert.error) {
+            advertenciaCatalogo =
+              `Curso guardado, pero falta 20260810191000_org_revision_catalogo.sql en la principal: ${upsert.error.message}`;
+          } else {
+            catalogo = upsert.data;
+          }
+        }
+
         return json(
           {
             ok: true,
             curso: guardado.data.curso,
             borrador: guardado.data.borrador,
             versionId: guardado.data.versionId,
+            catalogo,
+            advertenciaCatalogo,
           },
           200,
           corsHeaders,
@@ -557,7 +686,7 @@ Deno.serve(async (req) => {
         const resolucion = await resolverContextosSincronizables();
         if (resolucion.error || !resolucion.propios.length) {
           return json(
-            { error: "El usuario no pertenece a Tukuy Academy" },
+            { error: "El usuario no pertenece a esta organizacion" },
             403,
             corsHeaders,
           );
@@ -589,7 +718,16 @@ Deno.serve(async (req) => {
       const cursoSec = detalle.data.curso as Record<string, unknown>;
       const marcado = await secundaria.rpc("servicio_marcar_curso_publicado", {
         p_curso_id: cursoId,
-        p_estado: estadoPublicacion === "PUBLICADO" ? "PUBLICADO" : "BORRADOR",
+        p_estado: estadoPublicacion === "PUBLICADO"
+          ? "PUBLICADO"
+          : estadoPublicacion === "APROBADO"
+          ? "APROBADO"
+          : estadoPublicacion === "EN_REVISION" ||
+              estadoPublicacion === "CONTENIDO_REVISADO"
+          ? "EN_REVISION"
+          : estadoPublicacion === "OBSERVADO"
+          ? "BORRADOR"
+          : "BORRADOR",
       });
       if (marcado.error) {
         return json(
@@ -612,37 +750,41 @@ Deno.serve(async (req) => {
         versionActual?.numero ?? cursoSec.totalVersiones ?? 1,
       );
 
-      const catalogo = await principal.rpc(
-        "admin_upsert_curso_catalogo_secundaria",
-        {
-          p_instalacion_id: INSTALACION_TUKUY,
-          p_curso_secundario_ref: cursoId,
-          p_codigo: String(cursoSec.codigo ?? ""),
-          p_titulo: String(cursoSec.titulo ?? "Curso sin título"),
-          p_resumen:
-            typeof cursoSec.resumen === "string" ? cursoSec.resumen : null,
-          p_modalidad: String(cursoSec.modalidad ?? "VIRTUAL"),
-          p_duracion_minutos: duracionMinutos,
-          p_imagen_publica_ref:
-            typeof cursoSec.portadaClave === "string"
-              ? cursoSec.portadaClave
-              : null,
-          p_version_publicada: versionNumero,
-          p_estado_publicacion: estadoPublicacion,
-          p_datos_historicos: {
-            origen: "secundaria",
-            curso: marcado.data?.curso ?? cursoSec,
-            publicadoPor: usuario.user.id,
-            publicadoEnGateway: new Date().toISOString(),
-          },
+      const payloadCatalogo = {
+        p_instalacion_id: instalacionId,
+        p_curso_secundario_ref: cursoId,
+        p_codigo: String(cursoSec.codigo ?? ""),
+        p_titulo: String(cursoSec.titulo ?? "Curso sin título"),
+        p_resumen:
+          typeof cursoSec.resumen === "string" ? cursoSec.resumen : null,
+        p_modalidad: String(cursoSec.modalidad ?? "VIRTUAL"),
+        p_duracion_minutos: duracionMinutos,
+        p_imagen_publica_ref:
+          typeof cursoSec.portadaClave === "string"
+            ? cursoSec.portadaClave
+            : null,
+        p_version_publicada: versionNumero,
+        p_estado_publicacion: estadoPublicacion,
+        p_datos_historicos: {
+          origen: "secundaria",
+          curso: marcado.data?.curso ?? cursoSec,
+          publicadoPor: usuario.user.id,
+          publicadoEnGateway: new Date().toISOString(),
         },
-      );
+      };
+      const catalogo = esAdmin === true
+        ? await principal.rpc(
+          "admin_upsert_curso_catalogo_secundaria",
+          payloadCatalogo,
+        )
+        : await principal.rpc("org_upsert_curso_catalogo", payloadCatalogo);
       if (catalogo.error) {
         return json(
           {
             ok: false,
-            error:
-              "Falta ejecutar en la principal 20260805244000_publicar_curso_catalogo.sql",
+            error: esAdmin === true
+              ? "Falta ejecutar en la principal 20260805244000_publicar_curso_catalogo.sql"
+              : "Falta ejecutar en la principal 20260810191000_org_revision_catalogo.sql",
             details: catalogo.error.message,
           },
           200,
@@ -672,7 +814,7 @@ Deno.serve(async (req) => {
       const { data: esAdmin } = await principal.rpc("es_super_admin_actual");
       if (esAdmin !== true && (resolucion.error || !resolucion.propios.length)) {
         return json(
-          { error: "El usuario no pertenece a Tukuy Academy" },
+          { error: "El usuario no pertenece a esta organizacion" },
           403,
           corsHeaders,
         );
@@ -853,7 +995,7 @@ Deno.serve(async (req) => {
       const { data: esAdmin } = await principal.rpc("es_super_admin_actual");
       if (esAdmin !== true && (resolucion.error || !resolucion.propios.length)) {
         return json(
-          { error: "El usuario no pertenece a Tukuy Academy" },
+          { error: "El usuario no pertenece a esta organizacion" },
           403,
           corsHeaders,
         );
@@ -1073,16 +1215,101 @@ Deno.serve(async (req) => {
     }
 
     if (
+      entrada.action === "list-asistencia-sesion" ||
+      entrada.action === "marcar-asistencia-sesion"
+    ) {
+      const resolucion = await resolverContextosSincronizables();
+      const { data: esAdmin } = await principal.rpc("es_super_admin_actual");
+      if (esAdmin !== true && (resolucion.error || !resolucion.propios.length)) {
+        return json(
+          { error: "El usuario no pertenece a esta organizacion" },
+          403,
+          corsHeaders,
+        );
+      }
+
+      const sesionId =
+        typeof entrada.sesionId === "string" ? entrada.sesionId.trim() : "";
+      if (!sesionId || !UUID_RE.test(sesionId)) {
+        return json({ error: "sesionId (uuid) requerido" }, 400, corsHeaders);
+      }
+
+      if (entrada.action === "list-asistencia-sesion") {
+        const listado = await secundaria.rpc("servicio_listar_asistencia_sesion", {
+          p_sesion_id: sesionId,
+        });
+        if (listado.error) {
+          return json(
+            {
+              ok: false,
+              error:
+                "Falta ejecutar en la secundaria 20260810194000_asistencia_sesion.sql",
+              details: listado.error.message,
+            },
+            200,
+            corsHeaders,
+          );
+        }
+        if (!listado.data?.ok) {
+          return json(
+            {
+              ok: false,
+              error: listado.data?.error ?? "Sesion no encontrada",
+            },
+            404,
+            corsHeaders,
+          );
+        }
+        return json({ ok: true, ...listado.data }, 200, corsHeaders);
+      }
+
+      const items = Array.isArray(entrada.items) ? entrada.items : [];
+      if (!items.length) {
+        return json({ error: "items de asistencia requeridos" }, 400, corsHeaders);
+      }
+      const marcado = await secundaria.rpc("servicio_marcar_asistencia_sesion", {
+        p_sesion_id: sesionId,
+        p_marcador_identidad_ref: usuario.user.id,
+        p_items: items,
+      });
+      if (marcado.error) {
+        return json(
+          {
+            ok: false,
+            error:
+              "Falta ejecutar en la secundaria 20260810194000_asistencia_sesion.sql",
+            details: marcado.error.message,
+          },
+          200,
+          corsHeaders,
+        );
+      }
+      if (!marcado.data?.ok) {
+        return json(
+          {
+            ok: false,
+            error: marcado.data?.error ?? "No se pudo marcar la asistencia",
+          },
+          200,
+          corsHeaders,
+        );
+      }
+      return json({ ok: true, ...marcado.data }, 200, corsHeaders);
+    }
+
+    if (
       entrada.action === "list-certificados" ||
       entrada.action === "list-certificados-pendientes" ||
       entrada.action === "list-mis-certificados" ||
+      entrada.action === "list-certificados-pendientes-firma" ||
+      entrada.action === "firmar-certificado" ||
       entrada.action === "emitir-certificado"
     ) {
       const resolucion = await resolverContextosSincronizables();
       const { data: esAdmin } = await principal.rpc("es_super_admin_actual");
       if (esAdmin !== true && (resolucion.error || !resolucion.propios.length)) {
         return json(
-          { error: "El usuario no pertenece a Tukuy Academy" },
+          { error: "El usuario no pertenece a esta organizacion" },
           403,
           corsHeaders,
         );
@@ -1152,6 +1379,117 @@ Deno.serve(async (req) => {
         return json({ ok: true, ...listado.data }, 200, corsHeaders);
       }
 
+      if (entrada.action === "list-certificados-pendientes-firma") {
+        const listado = await secundaria.rpc(
+          "servicio_listar_certificados_pendientes_firma",
+        );
+        if (listado.error) {
+          return json(
+            {
+              ok: false,
+              error:
+                "Falta ejecutar en la secundaria 20260810195000_firma_certificado.sql",
+              details: listado.error.message,
+            },
+            200,
+            corsHeaders,
+          );
+        }
+        return json({ ok: true, ...listado.data }, 200, corsHeaders);
+      }
+
+      if (entrada.action === "firmar-certificado") {
+        const certificadoId =
+          typeof entrada.certificadoId === "string"
+            ? entrada.certificadoId.trim()
+            : "";
+        if (!certificadoId || !UUID_RE.test(certificadoId)) {
+          return json(
+            { error: "certificadoId (uuid) requerido" },
+            400,
+            corsHeaders,
+          );
+        }
+        const firmaId =
+          typeof entrada.firmaId === "string" && UUID_RE.test(entrada.firmaId)
+            ? entrada.firmaId.trim()
+            : null;
+        const firmado = await secundaria.rpc("servicio_firmar_certificado", {
+          p_certificado_id: certificadoId,
+          p_firmante_identidad_ref: usuario.user.id,
+          p_firmante_nombre:
+            typeof usuario.user.user_metadata?.full_name === "string"
+              ? usuario.user.user_metadata.full_name
+              : usuario.user.email ?? null,
+          p_firma_id: firmaId,
+        });
+        if (firmado.error) {
+          return json(
+            {
+              ok: false,
+              error:
+                "Falta ejecutar en la secundaria 20260810195000_firma_certificado.sql",
+              details: firmado.error.message,
+            },
+            200,
+            corsHeaders,
+          );
+        }
+        if (!firmado.data?.ok) {
+          return json(
+            {
+              ok: false,
+              error: firmado.data?.error ?? "No se pudo firmar el certificado",
+            },
+            200,
+            corsHeaders,
+          );
+        }
+
+        let indicePublico: unknown = null;
+        let advertenciaIndice: string | null = null;
+        if (
+          firmado.data.listoParaIndice === true &&
+          firmado.data.certificadoId &&
+          firmado.data.documentoId &&
+          firmado.data.codigoVerificacion
+        ) {
+          const indice = await principal.rpc(
+            "admin_upsert_indice_certificado_publico",
+            {
+              p_instalacion_id: instalacionId,
+              p_codigo_verificacion: firmado.data.codigoVerificacion,
+              p_certificado_secundario_ref: firmado.data.certificadoId,
+              p_documento_secundario_ref: firmado.data.documentoId,
+              p_huella_documento: firmado.data.huellaDocumento ?? "",
+              p_titular_historico: firmado.data.titular ?? "Titular",
+              p_curso_historico: firmado.data.curso ?? "Curso",
+              p_organizacion_historica:
+                firmado.data.organizacion ?? "Tukuy Academy",
+              p_emitido_en: firmado.data.emitidoEn ?? new Date().toISOString(),
+              p_estado_publico: "VIGENTE",
+            },
+          );
+          if (indice.error) {
+            advertenciaIndice =
+              `Firmado, pero falta índice público: ${indice.error.message}`;
+          } else {
+            indicePublico = indice.data;
+          }
+        }
+
+        return json(
+          {
+            ok: true,
+            ...firmado.data,
+            indicePublico,
+            advertenciaIndice,
+          },
+          200,
+          corsHeaders,
+        );
+      }
+
       const matriculaId =
         typeof entrada.matriculaId === "string"
           ? entrada.matriculaId.trim()
@@ -1181,9 +1519,35 @@ Deno.serve(async (req) => {
         );
       }
 
+      let firmas: unknown = null;
+      let advertenciaFirmas: string | null = null;
+      let listoParaIndice = true;
+      if (emitido.data?.certificadoId && emitido.data?.documentoId) {
+        const registro = await secundaria.rpc(
+          "servicio_registrar_firmas_certificado",
+          {
+            p_certificado_id: emitido.data.certificadoId,
+            p_documento_id: emitido.data.documentoId,
+            p_emisor_identidad_ref: usuario.user.id,
+            p_emisor_nombre:
+              typeof usuario.user.user_metadata?.full_name === "string"
+                ? usuario.user.user_metadata.full_name
+                : usuario.user.email ?? null,
+          },
+        );
+        if (registro.error) {
+          advertenciaFirmas =
+            `Emitido, pero falta 20260810195000_firma_certificado.sql: ${registro.error.message}`;
+        } else {
+          firmas = registro.data;
+          listoParaIndice = registro.data?.listoParaIndice === true;
+        }
+      }
+
       let indicePublico: unknown = null;
       let advertenciaIndice: string | null = null;
       if (
+        listoParaIndice &&
         emitido.data?.certificadoId &&
         emitido.data?.documentoId &&
         emitido.data?.codigoVerificacion
@@ -1191,7 +1555,7 @@ Deno.serve(async (req) => {
         const indice = await principal.rpc(
           "admin_upsert_indice_certificado_publico",
           {
-            p_instalacion_id: INSTALACION_TUKUY,
+            p_instalacion_id: instalacionId,
             p_codigo_verificacion: emitido.data.codigoVerificacion,
             p_certificado_secundario_ref: emitido.data.certificadoId,
             p_documento_secundario_ref: emitido.data.documentoId,
@@ -1216,7 +1580,10 @@ Deno.serve(async (req) => {
         {
           ok: true,
           ...emitido.data,
+          firmas,
+          requiereFirmaInstitucional: listoParaIndice !== true,
           indicePublico,
+          advertenciaFirmas,
           advertenciaIndice,
         },
         200,
@@ -1236,7 +1603,7 @@ Deno.serve(async (req) => {
       const { data: esAdmin } = await principal.rpc("es_super_admin_actual");
       if (esAdmin !== true && (resolucion.error || !resolucion.propios.length)) {
         return json(
-          { error: "El usuario no pertenece a Tukuy Academy" },
+          { error: "El usuario no pertenece a esta organizacion" },
           403,
           corsHeaders,
         );
@@ -1452,7 +1819,7 @@ Deno.serve(async (req) => {
       const { data: esAdmin } = await principal.rpc("es_super_admin_actual");
       if (esAdmin !== true && (resolucion.error || !resolucion.propios.length)) {
         return json(
-          { error: "El usuario no pertenece a Tukuy Academy" },
+          { error: "El usuario no pertenece a esta organizacion" },
           403,
           corsHeaders,
         );
@@ -1554,7 +1921,7 @@ Deno.serve(async (req) => {
       const { data: esAdmin } = await principal.rpc("es_super_admin_actual");
       if (esAdmin !== true && (resolucion.error || !resolucion.propios.length)) {
         return json(
-          { error: "El usuario no pertenece a Tukuy Academy" },
+          { error: "El usuario no pertenece a esta organizacion" },
           403,
           corsHeaders,
         );
@@ -1726,6 +2093,455 @@ Deno.serve(async (req) => {
       return json({ ok: true, ...ingresos.data }, 200, corsHeaders);
     }
 
+    if (
+      entrada.action === "list-cursos-revision" ||
+      entrada.action === "revisar-contenido" ||
+      entrada.action === "observar-curso" ||
+      entrada.action === "aprobar-curso"
+    ) {
+      const resolucion = await resolverContextosSincronizables();
+      const { data: esAdmin } = await principal.rpc("es_super_admin_actual");
+      if (esAdmin !== true && (resolucion.error || !resolucion.propios.length)) {
+        return json(
+          { error: "El usuario no pertenece a esta organizacion" },
+          403,
+          corsHeaders,
+        );
+      }
+
+      if (entrada.action === "list-cursos-revision") {
+        const listado = await principal.rpc("org_listar_cursos_catalogo", {
+          p_instalacion_id: instalacionId,
+        });
+        if (listado.error) {
+          return json(
+            {
+              ok: false,
+              error:
+                "Falta ejecutar en la principal 20260810191000_org_revision_catalogo.sql",
+              details: listado.error.message,
+            },
+            200,
+            corsHeaders,
+          );
+        }
+        return json({ ok: true, ...listado.data }, 200, corsHeaders);
+      }
+
+      const cursoId =
+        typeof entrada.cursoId === "string" ? entrada.cursoId.trim() : "";
+      if (!cursoId || !UUID_RE.test(cursoId)) {
+        return json({ error: "cursoId (uuid) requerido" }, 400, corsHeaders);
+      }
+
+      const detalle = await secundaria.rpc("servicio_obtener_curso_tipado", {
+        p_curso_id: cursoId,
+      });
+      if (detalle.error || !detalle.data?.ok || !detalle.data?.curso) {
+        return json(
+          {
+            ok: false,
+            error: "No se pudo leer el curso en la secundaria",
+            details: detalle.error?.message ?? detalle.data?.error,
+          },
+          200,
+          corsHeaders,
+        );
+      }
+      const cursoSec = detalle.data.curso as Record<string, unknown>;
+      const versionActual =
+        (cursoSec.versionActual as Record<string, unknown> | null) ?? null;
+      const horas = Number(versionActual?.horas ?? 1);
+
+      let estadoWorkflow = "EN_REVISION";
+      let estadoSecundaria = "EN_REVISION";
+      const historicos: Record<string, unknown> = {
+        origen: "revision_org",
+        revisadoPor: usuario.user.id,
+      };
+
+      if (entrada.action === "revisar-contenido") {
+        estadoWorkflow = "CONTENIDO_REVISADO";
+        estadoSecundaria = "CONTENIDO_REVISADO";
+        historicos.revisionAcademica = {
+          confirmadaEn: new Date().toISOString(),
+        };
+      } else if (entrada.action === "observar-curso") {
+        const observacion =
+          typeof entrada.observacion === "string"
+            ? entrada.observacion.trim()
+            : "";
+        if (!observacion) {
+          return json({ error: "observacion requerida" }, 400, corsHeaders);
+        }
+        estadoWorkflow = "OBSERVADO";
+        estadoSecundaria = "OBSERVADO";
+        historicos.observacion = observacion;
+        historicos.observadoEn = new Date().toISOString();
+      } else {
+        // aprobar-curso
+        const publicar = entrada.publicar === true;
+        estadoWorkflow = publicar ? "PUBLICADO" : "APROBADO";
+        estadoSecundaria = publicar ? "PUBLICADO" : "APROBADO";
+        historicos.configuracionPublicacion =
+          entrada.configuracion && typeof entrada.configuracion === "object"
+            ? entrada.configuracion
+            : {};
+        historicos.aprobadoEn = new Date().toISOString();
+        historicos.publicar = publicar;
+      }
+
+      const estadoSec = await secundaria.rpc("servicio_actualizar_estado_curso", {
+        p_curso_id: cursoId,
+        p_estado: estadoSecundaria,
+      });
+      if (estadoSec.error) {
+        return json(
+          {
+            ok: false,
+            error:
+              "Falta ejecutar en la secundaria 20260810192000_estado_curso_workflow_org.sql (o 20260805249000)",
+            details: estadoSec.error.message,
+          },
+          200,
+          corsHeaders,
+        );
+      }
+
+      if (estadoWorkflow === "PUBLICADO") {
+        const marcado = await secundaria.rpc("servicio_marcar_curso_publicado", {
+          p_curso_id: cursoId,
+          p_estado: "PUBLICADO",
+        });
+        if (marcado.error) {
+          return json(
+            {
+              ok: false,
+              error:
+                "No se pudo marcar PUBLICADO en la secundaria",
+              details: marcado.error.message,
+            },
+            200,
+            corsHeaders,
+          );
+        }
+      }
+
+      const catalogo = await principal.rpc("org_upsert_curso_catalogo", {
+        p_instalacion_id: instalacionId,
+        p_curso_secundario_ref: cursoId,
+        p_codigo: String(cursoSec.codigo ?? ""),
+        p_titulo: String(cursoSec.titulo ?? "Curso sin título"),
+        p_resumen: typeof cursoSec.resumen === "string" ? cursoSec.resumen : null,
+        p_modalidad: String(cursoSec.modalidad ?? "VIRTUAL"),
+        p_duracion_minutos: Math.max(1, Math.round(horas * 60)),
+        p_imagen_publica_ref:
+          typeof cursoSec.portadaClave === "string"
+            ? cursoSec.portadaClave
+            : null,
+        p_version_publicada: Number(
+          versionActual?.numero ?? cursoSec.totalVersiones ?? 1,
+        ),
+        p_estado_publicacion: estadoWorkflow,
+        p_datos_historicos: historicos,
+      });
+      if (catalogo.error) {
+        return json(
+          {
+            ok: false,
+            error:
+              "Falta ejecutar en la principal 20260810191000_org_revision_catalogo.sql",
+            details: catalogo.error.message,
+          },
+          200,
+          corsHeaders,
+        );
+      }
+
+      return json(
+        {
+          ok: true,
+          estado: estadoWorkflow,
+          curso: estadoSec.data?.curso ?? cursoSec,
+          catalogo: catalogo.data,
+        },
+        200,
+        corsHeaders,
+      );
+    }
+
+    if (
+      entrada.action === "crear-orden-compra" ||
+      entrada.action === "obtener-orden-compra" ||
+      entrada.action === "confirmar-pago-orden"
+    ) {
+      const resolucion = await resolverContextosSincronizables();
+      const { data: esAdmin } = await principal.rpc("es_super_admin_actual");
+      if (esAdmin !== true && (resolucion.error || !resolucion.propios.length)) {
+        return json(
+          { error: "El usuario no pertenece a esta organizacion" },
+          403,
+          corsHeaders,
+        );
+      }
+
+      const compradorId = usuario.user.id;
+
+      if (entrada.action === "crear-orden-compra") {
+        const itemsEntrada = Array.isArray(entrada.items) ? entrada.items : [];
+        const cursoIds = Array.isArray(entrada.cursoIds)
+          ? entrada.cursoIds.map(String)
+          : itemsEntrada
+            .map((item) =>
+              item && typeof item === "object"
+                ? String((item as Record<string, unknown>).cursoId ?? "")
+                : "",
+            )
+            .filter(Boolean);
+
+        if (!cursoIds.length && !itemsEntrada.length) {
+          return json(
+            { error: "cursoIds o items requeridos" },
+            400,
+            corsHeaders,
+          );
+        }
+
+        const items: Array<Record<string, unknown>> = [];
+        if (itemsEntrada.length) {
+          for (const raw of itemsEntrada) {
+            if (!raw || typeof raw !== "object") continue;
+            const fila = raw as Record<string, unknown>;
+            const cursoId = String(fila.cursoId ?? "").trim();
+            if (!UUID_RE.test(cursoId)) continue;
+            let totalCentavos = 0;
+            if (fila.totalCentavos != null && Number.isFinite(Number(fila.totalCentavos))) {
+              totalCentavos = Math.max(0, Math.round(Number(fila.totalCentavos)));
+            } else if (fila.importe != null && Number.isFinite(Number(fila.importe))) {
+              totalCentavos = Math.max(0, Math.round(Number(fila.importe) * 100));
+            }
+            items.push({
+              cursoId,
+              titulo: typeof fila.titulo === "string" ? fila.titulo : null,
+              totalCentavos,
+            });
+          }
+        } else {
+          for (const cursoId of cursoIds) {
+            if (!UUID_RE.test(cursoId)) continue;
+            const detalle = await secundaria.rpc("servicio_obtener_curso_tipado", {
+              p_curso_id: cursoId,
+            });
+            const curso = detalle.data?.curso as Record<string, unknown> | undefined;
+            items.push({
+              cursoId,
+              titulo: curso?.titulo ?? "Curso",
+              totalCentavos: 0,
+            });
+          }
+        }
+
+        if (!items.length) {
+          return json(
+            { error: "No hay cursos válidos para la orden" },
+            400,
+            corsHeaders,
+          );
+        }
+
+        const creada = await secundaria.rpc("servicio_crear_orden_compra", {
+          p_comprador_identidad_ref: compradorId,
+          p_items: items,
+          p_moneda: typeof entrada.moneda === "string" ? entrada.moneda : "PEN",
+        });
+        if (creada.error) {
+          return json(
+            {
+              ok: false,
+              error:
+                "Falta ejecutar en la secundaria 20260810193000_orden_compra_checkout.sql",
+              details: creada.error.message,
+            },
+            200,
+            corsHeaders,
+          );
+        }
+        return json({ ok: true, ...creada.data }, 200, corsHeaders);
+      }
+
+      const ordenId =
+        typeof entrada.ordenId === "string" ? entrada.ordenId.trim() : "";
+      if (!ordenId || !UUID_RE.test(ordenId)) {
+        return json({ error: "ordenId (uuid) requerido" }, 400, corsHeaders);
+      }
+
+      if (entrada.action === "obtener-orden-compra") {
+        const orden = await secundaria.rpc("servicio_obtener_orden_compra", {
+          p_orden_id: ordenId,
+          p_comprador_identidad_ref: compradorId,
+        });
+        if (orden.error) {
+          return json(
+            {
+              ok: false,
+              error:
+                "Falta ejecutar en la secundaria 20260810193000_orden_compra_checkout.sql",
+              details: orden.error.message,
+            },
+            200,
+            corsHeaders,
+          );
+        }
+        if (!orden.data?.ok) {
+          return json(
+            {
+              ok: false,
+              error: orden.data?.error ?? "Orden no encontrada",
+            },
+            404,
+            corsHeaders,
+          );
+        }
+        return json({ ok: true, ...orden.data }, 200, corsHeaders);
+      }
+
+      const confirmada = await secundaria.rpc("servicio_confirmar_pago_orden", {
+        p_orden_id: ordenId,
+        p_comprador_identidad_ref: compradorId,
+        p_codigo_respuesta:
+          typeof entrada.code === "string" ? entrada.code : "00",
+        p_referencia_externa:
+          typeof entrada.transactionId === "string"
+            ? entrada.transactionId
+            : null,
+        p_proveedor: "izipay",
+      });
+      if (confirmada.error) {
+        return json(
+          {
+            ok: false,
+            error:
+              "Falta ejecutar en la secundaria 20260810193000_orden_compra_checkout.sql",
+            details: confirmada.error.message,
+          },
+          200,
+          corsHeaders,
+        );
+      }
+      if (!confirmada.data?.ok) {
+        return json(
+          {
+            ok: false,
+            error: confirmada.data?.error ?? "No se pudo confirmar el pago",
+          },
+          200,
+          corsHeaders,
+        );
+      }
+      return json({ ok: true, ...confirmada.data }, 200, corsHeaders);
+    }
+
+    if (entrada.action === "matricular-estudiante") {
+      const cursoId =
+        typeof entrada.cursoId === "string" ? entrada.cursoId.trim() : "";
+      const estudianteId =
+        typeof entrada.estudianteId === "string"
+          ? entrada.estudianteId.trim()
+          : "";
+      if (!cursoId || !UUID_RE.test(estudianteId)) {
+        return json(
+          { error: "cursoId y estudianteId (uuid) requeridos" },
+          400,
+          corsHeaders,
+        );
+      }
+
+      // La autorización (permiso usuarios.administrar en la instalación) y la
+      // pertenencia del estudiante se validan en la principal con el JWT del gestor.
+      const resuelto = await principal.rpc(
+        "org_resolver_estudiante_secundaria",
+        {
+          p_instalacion_id: instalacionId,
+          p_identidad_id: estudianteId,
+        },
+      );
+      if (resuelto.error) {
+        const noAutorizado = /No autorizado/i.test(resuelto.error.message ?? "");
+        return json(
+          {
+            ok: false,
+            error: noAutorizado
+              ? "No autorizado para matricular en esta organizacion"
+              : "Falta ejecutar en la principal 20260810190000_org_matricula_secundaria.sql",
+            details: resuelto.error.message,
+          },
+          noAutorizado ? 403 : 200,
+          corsHeaders,
+        );
+      }
+      if (!resuelto.data?.ok) {
+        return json(
+          {
+            ok: false,
+            error: resuelto.data?.error ??
+              "La persona no es miembro activo de la organizacion",
+          },
+          403,
+          corsHeaders,
+        );
+      }
+
+      const alumno = resuelto.data as Record<string, unknown>;
+      const authRef = String(alumno.authRef);
+
+      // Upsert de la identidad/acceso del alumno en la secundaria para que
+      // aparezca con nombre en listados aunque aún no haya iniciado sesión.
+      let advertenciaSync: string | null = null;
+      const sync = await secundaria.rpc("servicio_sincronizar_acceso", {
+        p_identidad_principal_ref: authRef,
+        p_membresia_principal_ref: String(alumno.membresiaId),
+        p_correo: alumno.correo ?? null,
+        p_nombre_mostrar: alumno.nombre ?? alumno.correo ?? null,
+        p_perfiles: Array.isArray(alumno.perfiles) ? alumno.perfiles : [],
+        p_permisos: Array.isArray(alumno.permisos) ? alumno.permisos : [],
+        p_version_autorizacion: Number(alumno.versionAutorizacion ?? 1),
+        p_estado: "ACTIVO",
+      });
+      if (sync.error) {
+        advertenciaSync =
+          `No se pudo sincronizar la identidad del alumno en la secundaria: ${sync.error.message}`;
+      }
+
+      const mat = await secundaria.rpc("servicio_matricular_estudiante", {
+        p_curso_id: cursoId,
+        p_estudiante_identidad_ref: authRef,
+        p_origen: "ASIGNACION_ORGANIZACION",
+      });
+      if (mat.error) {
+        return json(
+          {
+            ok: false,
+            error: mat.error.message,
+            details:
+              "Si el error menciona read-only/cast: 20260805258300 o 20260805252200 en secundaria.",
+          },
+          200,
+          corsHeaders,
+        );
+      }
+      return json(
+        {
+          ok: true,
+          ...mat.data,
+          estudianteIdentidadRef: authRef,
+          advertenciaSync,
+          matriculadoPor: usuario.user.id,
+        },
+        200,
+        corsHeaders,
+      );
+    }
+
     if (entrada.action === "sync-access") {
       const resolucion = await resolverContextosSincronizables();
       if (resolucion.error) {
@@ -1740,7 +2556,7 @@ Deno.serve(async (req) => {
       }
       if (!resolucion.propios.length) {
         return json(
-          { error: "El usuario no pertenece a Tukuy Academy" },
+          { error: "El usuario no pertenece a esta organizacion" },
           403,
           corsHeaders,
         );

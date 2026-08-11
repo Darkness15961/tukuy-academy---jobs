@@ -137,8 +137,17 @@ Deno.serve(async (req) => {
         typeof entrada.fileName === "string" && entrada.fileName.trim()
           ? sanitizarNombre(entrada.fileName.trim())
           : "archivo";
+      // Namespace por tenant: aísla los objetos de cada organización.
+      const UUID_RE =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const instalacionId =
+        typeof entrada.instalacionId === "string" &&
+          UUID_RE.test(entrada.instalacionId.trim())
+          ? entrada.instalacionId.trim()
+          : "";
+      const segmentoTenant = instalacionId ? `${instalacionId}/` : "";
       const objectKey =
-        `${prefijoKind(kind)}/${usuario.user.id}/${crypto.randomUUID()}-${fileName}`;
+        `${prefijoKind(kind)}/${segmentoTenant}${usuario.user.id}/${crypto.randomUUID()}-${fileName}`;
 
       const uploadUrl = await getSignedUrl(
         client,

@@ -261,13 +261,20 @@ function formatoEstado(estado: string) {
   return estado.replace("_", " ");
 }
 
-function formatoFecha(fecha: string) {
+function formatoFecha(fecha: string | null | undefined) {
+  if (!fecha) return "—";
+  const bruto = String(fecha).trim();
+  const soloDia = /^\d{4}-\d{2}-\d{2}$/.test(bruto)
+    ? `${bruto}T00:00:00Z`
+    : bruto;
+  const fechaObj = new Date(soloDia);
+  if (Number.isNaN(fechaObj.getTime())) return "—";
   return new Intl.DateTimeFormat("es-PE", {
     day: "2-digit",
     month: "short",
     year: "numeric",
     timeZone: "UTC",
-  }).format(new Date(`${fecha}T00:00:00Z`));
+  }).format(fechaObj);
 }
 
 function exportarResultados() {

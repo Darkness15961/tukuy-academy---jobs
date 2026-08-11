@@ -1435,6 +1435,9 @@ async function evaluarAccesoCurso(
   };
 }
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 async function matricularUsuarioEnCurso(datos: {
   usuarioId: string;
   cursoId: string;
@@ -1442,7 +1445,47 @@ async function matricularUsuarioEnCurso(datos: {
   unidadOrigenId?: string;
   modalidad: NonNullable<MatriculaAlumnoOrganizacion["modalidad"]>;
   estadoInicial?: MatriculaAlumnoOrganizacion["estado"];
-}) {
+}): Promise<MatriculaAlumnoOrganizacion> {
+  // Ruta real: gestor matricula a un miembro (identidad principal) en la secundaria.
+  if (
+    usarOrgPrincipal() &&
+    apiConfig.secundariaCursos &&
+    UUID_RE.test(datos.usuarioId) &&
+    UUID_RE.test(datos.cursoId)
+  ) {
+    const { secundariaGatewayService } = await import(
+      "@/api/services/secundaria-gateway.service"
+    );
+    const resultado = await secundariaGatewayService.matricularEstudiante(
+      datos.cursoId,
+      datos.usuarioId,
+    );
+    const miembros = await usuarios.listar();
+    const persona = miembros.find(
+      (item) => String(item.id) === datos.usuarioId,
+    );
+    emitirCambio("matriculas-alumnos");
+    return {
+      id: resultado.matriculaId,
+      alumnoId: datos.usuarioId,
+      cursoId: datos.cursoId,
+      nombre: persona?.nombre ?? "Miembro de la organización",
+      iniciales: persona?.iniciales ?? "MO",
+      curso: datos.curso,
+      organizacion: contextoActual().organizacionNombre,
+      progreso: 0,
+      ultimoAcceso: "Aún no ingresa",
+      ultimoAccesoFecha: new Date().toISOString().slice(0, 10),
+      fechaInscripcion: new Date().toISOString().slice(0, 10),
+      estado: datos.estadoInicial ?? "ACTIVO",
+      tipo: datos.unidadOrigenId ? "INTERNO" : "EXTERNO",
+      condicionAlInscribirse: datos.unidadOrigenId ? "INTERNO" : "EXTERNO",
+      origenAcceso: "ASIGNACION",
+      unidadOrigenId: datos.unidadOrigenId,
+      modalidad: datos.modalidad,
+    };
+  }
+
   const [persona, existentes] = await Promise.all([
     usuarios.obtener(Number(datos.usuarioId)),
     matriculas.listar(),
@@ -1677,11 +1720,130 @@ const notificaciones = crearRepositorioOrganizacion<NotificacionOrganizacion>(
   ],
 );
 
-const catalogoCursos = crearRepositorioOrganizacion<PropuestaCursoOrganizacion>(
-  "catalogo-cursos",
-  API.organizacion.catalogoCursos,
-  catalogoCursosOrganizacion,
-);
+const catalogoCursosRepositorio =
+  crearRepositorioOrganizacion<PropuestaCursoOrganizacion>(
+    "catalogo-cursos",
+    API.organizacion.catalogoCursos,
+    catalogoCursosOrganizacion,
+  );
+
+const ESTADOS_PROPUESTA = new Set<EstadoPropuestaCursoOrganizacion>([
+  "EN_REVISION",
+  "CONTENIDO_REVISADO",
+  "APROBADO",
+  "OBSERVADO",
+  "PUBLICADO",
+]);
+
+function mapearEstadoPropuesta(
+  raw: unknown,
+  historicos?: Record<string, unknown> | null,
+): EstadoPropuestaCursoOrganizacion {
+  const workflow = String(historicos?.workflowEstado ?? "").toUpperCase();
+  if (ESTADOS_PROPUESTA.has(workflow as EstadoPropuestaCursoOrganizacion)) {
+    return workflow as EstadoPropuestaCursoOrganizacion;
+  }
+  const estado = String(raw ?? "EN_REVISION").toUpperCase();
+  if (ESTADOS_PROPUESTA.has(estado as EstadoPropuestaCursoOrganizacion)) {
+    return estado as EstadoPropuestaCursoOrganizacion;
+  }
+  if (estado === "BORRADOR") return "EN_REVISION";
+  if (estado === "RETIRADO") return "OBSERVADO";
+  return "EN_REVISION";
+}
+
+function mapearCatalogoAPropuesta(
+  item: Record<string, unknown>,
+): PropuestaCursoOrganizacion {
+  const historicos =
+    item.datosHistoricos && typeof item.datosHistoricos === "object"
+      ? (item.datosHistoricos as Record<string, unknown>)
+      : {};
+  const borrador =
+    historicos.borradorResumen && typeof historicos.borradorResumen === "object"
+      ? (historicos.borradorResumen as Record<string, unknown>)
+      : {};
+  const config =
+    historicos.configuracionPublicacion &&
+    typeof historicos.configuracionPublicacion === "object"
+      ? (historicos.configuracionPublicacion as Record<string, unknown>)
+      : {};
+  const duracionMin = Number(item.duracionMinutos ?? 0);
+  const actualizadoEn = String(item.actualizadoEn ?? item.creadoEn ?? "");
+  const enviado = actualizadoEn
+    ? new Intl.DateTimeFormat("es-PE", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    }).format(new Date(actualizadoEn))
+    : "—";
+  const cursoSecundarioRef = String(
+    item.cursoSecundarioRef ?? item.curso_secundario_ref ?? "",
+  );
+  return {
+    id: String(item.id),
+    cursoDocenteId: cursoSecundarioRef,
+    titulo: String(item.titulo ?? "Curso"),
+    imagen: String(item.imagenPublicaRef ?? item.imagen_publica_ref ?? ""),
+    docente: String(
+      borrador.docenteResponsableNombre ??
+        historicos.docenteNombre ??
+        "Docente",
+    ),
+    categoria: String(borrador.categoria ?? item.modalidad ?? "General"),
+    enviado,
+    lecciones: Number(borrador.lecciones ?? Math.max(1, Math.round(duracionMin / 30))),
+    duracion: duracionMin > 0
+      ? `${Math.max(1, Math.round(duracionMin / 60))} h`
+      : "—",
+    estado: mapearEstadoPropuesta(item.estadoPublicacion, historicos),
+    observacion:
+      typeof historicos.observacion === "string"
+        ? historicos.observacion
+        : undefined,
+    precio: Number(config.precio ?? historicos.precio ?? 0) || undefined,
+    moneda: (config.moneda as "PEN" | "USD" | undefined) ?? "PEN",
+    gratuito: Boolean(config.gratuito ?? historicos.gratuito),
+    alcance: (config.alcance as AlcanceCursoOrganizacion | undefined) ??
+      undefined,
+    destinoArea: (config.destinoArea as string | null | undefined) ?? null,
+    descuentoInterno: Number(config.descuentoInterno ?? 0) || undefined,
+    descuentoAplicaA:
+      (config.descuentoAplicaA as DestinatarioDescuento | undefined) ??
+      undefined,
+    descuentoArea: (config.descuentoArea as string | null | undefined) ?? null,
+    configuracionPublicacion: config.configuracionPublicacion as
+      | PropuestaCursoOrganizacion["configuracionPublicacion"]
+      | undefined,
+  };
+}
+
+const catalogoCursos = {
+  ...catalogoCursosRepositorio,
+  async listar() {
+    if (usarOrgPrincipal() && apiConfig.secundariaCursos) {
+      const { secundariaGatewayService } = await import(
+        "@/api/services/secundaria-gateway.service"
+      );
+      const data = await secundariaGatewayService.listarCursosRevision();
+      return (data.cursos ?? []).map((item) =>
+        mapearCatalogoAPropuesta(item as Record<string, unknown>)
+      );
+    }
+    return catalogoCursosRepositorio.listar();
+  },
+  async obtener(id: Identificador) {
+    if (usarOrgPrincipal() && apiConfig.secundariaCursos) {
+      const lista = await this.listar();
+      return (
+        lista.find((item) => item.id === String(id)) ??
+        lista.find((item) => item.cursoDocenteId === String(id)) ??
+        null
+      );
+    }
+    return catalogoCursosRepositorio.obtener(id);
+  },
+};
 
 async function programarSesionEnVivo(
   input: Omit<ProgramarSesionEnVivoInput, "organizacionId" | "creadoPor"> & {
@@ -1731,7 +1893,47 @@ async function registrarCursoParaRevision(datos: {
   categoria: string;
   lecciones: number;
 }) {
-  const existentes = await catalogoCursos.listar();
+  // Con secundaria real, el indexado al catálogo lo hace el gateway
+  // al guardar el curso con estado EN_REVISION.
+  if (usarOrgPrincipal() && apiConfig.secundariaCursos) {
+    if (!UUID_RE.test(datos.cursoDocenteId)) {
+      throw new Error("cursoDocenteId inválido para registrar en revisión.");
+    }
+    const { secundariaGatewayService } = await import(
+      "@/api/services/secundaria-gateway.service"
+    );
+    await secundariaGatewayService.publicarCurso({
+      cursoId: datos.cursoDocenteId,
+      estadoPublicacion: "EN_REVISION",
+    });
+    emitirCambio("catalogo-cursos");
+    const lista = await catalogoCursos.listar();
+    const existente = lista.find(
+      (item) => item.cursoDocenteId === datos.cursoDocenteId,
+    );
+    if (existente) return existente;
+    return {
+      id: datos.cursoDocenteId,
+      cursoDocenteId: datos.cursoDocenteId,
+      titulo: datos.titulo,
+      imagen: datos.imagen,
+      docente: datos.docenteResponsableNombre,
+      docenteResponsableId: datos.docenteResponsableId,
+      cargadoPor: datos.cargadoPor,
+      origenCarga: datos.origenCarga,
+      categoria: datos.categoria,
+      enviado: new Intl.DateTimeFormat("es-PE", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+      }).format(new Date()),
+      lecciones: datos.lecciones,
+      duracion: `${Math.max(1, Math.ceil(datos.lecciones / 2))} h`,
+      estado: "EN_REVISION" as const,
+    };
+  }
+
+  const existentes = await catalogoCursosRepositorio.listar();
   const existente = existentes.find(
     (item) => item.cursoDocenteId === datos.cursoDocenteId,
   );
@@ -1755,8 +1957,8 @@ async function registrarCursoParaRevision(datos: {
     estado: "EN_REVISION",
   };
   return existente
-    ? catalogoCursos.actualizar(existente.id, propuesta)
-    : catalogoCursos.crear(propuesta);
+    ? catalogoCursosRepositorio.actualizar(existente.id, propuesta)
+    : catalogoCursosRepositorio.crear(propuesta);
 }
 
 async function sincronizarEstadoDocente(
@@ -1791,6 +1993,49 @@ async function aprobarCursoPropuesto(
   id: string,
   configuracion?: AprobacionCursoOrganizacion,
 ) {
+  if (usarOrgPrincipal() && apiConfig.secundariaCursos) {
+    const propuesta = await catalogoCursos.obtener(id);
+    if (!propuesta?.cursoDocenteId) {
+      throw new Error("No se encontró el curso a aprobar.");
+    }
+    const publicar = configuracion?.publicar ?? false;
+    const { secundariaGatewayService } = await import(
+      "@/api/services/secundaria-gateway.service"
+    );
+    const resultado = await secundariaGatewayService.aprobarCurso(
+      propuesta.cursoDocenteId,
+      {
+        publicar,
+        configuracion: {
+          precio: configuracion?.precio ?? 0,
+          moneda: configuracion?.moneda ?? "PEN",
+          alcance: configuracion?.alcance ?? "ORGANIZACION",
+          destinoArea: configuracion?.destinoArea ?? null,
+          descuentoInterno: configuracion?.descuentoInterno ?? 0,
+          descuentoAplicaA: configuracion?.descuentoAplicaA ?? "NINGUNO",
+          descuentoArea: configuracion?.descuentoArea ?? null,
+          publicar,
+          configuracionPublicacion: configuracion?.configuracionPublicacion,
+        },
+      },
+    );
+    emitirCambio("catalogo-cursos");
+    return mapearCatalogoAPropuesta({
+      ...(resultado.catalogo ?? {}),
+      id: String(resultado.catalogo?.id ?? propuesta.id),
+      cursoSecundarioRef: propuesta.cursoDocenteId,
+      titulo: propuesta.titulo,
+      estadoPublicacion: resultado.estado,
+      datosHistoricos: {
+        ...(typeof resultado.catalogo?.datosHistoricos === "object"
+          ? (resultado.catalogo.datosHistoricos as Record<string, unknown>)
+          : {}),
+        workflowEstado: resultado.estado,
+        configuracionPublicacion: configuracion,
+      },
+    });
+  }
+
   if (!apiConfig.useMock) {
     const { data } = await api.post<PropuestaCursoOrganizacion>(
       API.organizacion.aprobarCurso(id),
@@ -1819,7 +2064,7 @@ async function aprobarCursoPropuesto(
     descuentoAplicaA,
   );
 
-  const actualizado = await catalogoCursos.actualizar(id, {
+  const actualizado = await catalogoCursosRepositorio.actualizar(id, {
     estado: publicar ? "PUBLICADO" : "APROBADO",
     observacion: undefined,
     precio,
@@ -1840,13 +2085,33 @@ async function aprobarCursoPropuesto(
 }
 
 async function marcarContenidoRevisado(id: string) {
+  if (usarOrgPrincipal() && apiConfig.secundariaCursos) {
+    const propuesta = await catalogoCursos.obtener(id);
+    if (!propuesta?.cursoDocenteId) {
+      throw new Error("No se encontró el curso a revisar.");
+    }
+    const { secundariaGatewayService } = await import(
+      "@/api/services/secundaria-gateway.service"
+    );
+    const resultado = await secundariaGatewayService.revisarContenidoCurso(
+      propuesta.cursoDocenteId,
+    );
+    emitirCambio("catalogo-cursos");
+    return {
+      ...propuesta,
+      estado: "CONTENIDO_REVISADO" as const,
+      observacion: undefined,
+      id: String(resultado.catalogo?.id ?? propuesta.id),
+    };
+  }
+
   if (!apiConfig.useMock) {
     const { data } = await api.post<PropuestaCursoOrganizacion>(
       API.organizacion.revisarContenidoCurso(id),
     );
     return data;
   }
-  const actualizado = await catalogoCursos.actualizar(id, {
+  const actualizado = await catalogoCursosRepositorio.actualizar(id, {
     estado: "CONTENIDO_REVISADO",
     observacion: undefined,
   });
@@ -1858,6 +2123,27 @@ async function marcarContenidoRevisado(id: string) {
 }
 
 async function observarCursoPropuesto(id: string, observacion: string) {
+  if (usarOrgPrincipal() && apiConfig.secundariaCursos) {
+    const propuesta = await catalogoCursos.obtener(id);
+    if (!propuesta?.cursoDocenteId) {
+      throw new Error("No se encontró el curso a observar.");
+    }
+    const { secundariaGatewayService } = await import(
+      "@/api/services/secundaria-gateway.service"
+    );
+    const resultado = await secundariaGatewayService.observarCurso(
+      propuesta.cursoDocenteId,
+      observacion,
+    );
+    emitirCambio("catalogo-cursos");
+    return {
+      ...propuesta,
+      estado: "OBSERVADO" as const,
+      observacion,
+      id: String(resultado.catalogo?.id ?? propuesta.id),
+    };
+  }
+
   if (!apiConfig.useMock) {
     const { data } = await api.post<PropuestaCursoOrganizacion>(
       API.organizacion.observarCurso(id),
@@ -1865,7 +2151,7 @@ async function observarCursoPropuesto(id: string, observacion: string) {
     );
     return data;
   }
-  const actualizado = await catalogoCursos.actualizar(id, {
+  const actualizado = await catalogoCursosRepositorio.actualizar(id, {
     estado: "OBSERVADO",
     observacion,
   });
@@ -1879,6 +2165,25 @@ async function publicarCursoPropuesto(
   id: string,
   configuracion?: Partial<AprobacionCursoOrganizacion>,
 ) {
+  if (usarOrgPrincipal() && apiConfig.secundariaCursos) {
+    const curso = await catalogoCursos.obtener(id);
+    return aprobarCursoPropuesto(id, {
+      precio: configuracion?.precio ?? curso?.precio ?? 0,
+      moneda: configuracion?.moneda ?? curso?.moneda ?? "PEN",
+      alcance: configuracion?.alcance ?? curso?.alcance ?? "ORGANIZACION",
+      destinoArea: configuracion?.destinoArea ?? curso?.destinoArea ?? null,
+      descuentoInterno:
+        configuracion?.descuentoInterno ?? curso?.descuentoInterno ?? 0,
+      descuentoAplicaA:
+        configuracion?.descuentoAplicaA ?? curso?.descuentoAplicaA ?? "NINGUNO",
+      descuentoArea: configuracion?.descuentoArea ?? curso?.descuentoArea ?? null,
+      publicar: true,
+      configuracionPublicacion:
+        configuracion?.configuracionPublicacion ??
+        curso?.configuracionPublicacion,
+    });
+  }
+
   if (!apiConfig.useMock) {
     const { data } = await api.put<PropuestaCursoOrganizacion>(
       `${API.organizacion.catalogoCursos}/${id}`,
@@ -2079,6 +2384,15 @@ export const organizacionService = {
     eliminar: certificadosPendientes.eliminar.bind(certificadosPendientes),
   },
   emitirCertificado: emitirCertificadoInstitucional,
+  listarPendientesFirma: async () => {
+    if (!apiConfig.secundariaCursos) return [];
+    const { docenteService } = await import("@/api/services/docente.service");
+    return docenteService.listarPendientesFirma();
+  },
+  firmarCertificado: async (certificadoId: string, firmaId?: string) => {
+    const { docenteService } = await import("@/api/services/docente.service");
+    return docenteService.firmarCertificado(certificadoId, firmaId);
+  },
   matricularUsuarioEnCurso,
   solicitarMatriculaCurso,
   aprobarSolicitudMatricula,

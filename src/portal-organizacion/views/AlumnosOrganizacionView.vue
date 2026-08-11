@@ -256,9 +256,15 @@ const formateadorFecha = new Intl.DateTimeFormat("es-PE", {
   timeZone: "UTC",
 });
 
-function formatoFecha(fecha: string) {
+function formatoFecha(fecha: string | null | undefined) {
   if (!fecha) return "—";
-  return formateadorFecha.format(new Date(`${fecha}T00:00:00Z`));
+  const bruto = String(fecha).trim();
+  const soloDia = /^\d{4}-\d{2}-\d{2}$/.test(bruto)
+    ? `${bruto}T00:00:00Z`
+    : bruto;
+  const fechaObj = new Date(soloDia);
+  if (Number.isNaN(fechaObj.getTime())) return "—";
+  return formateadorFecha.format(fechaObj);
 }
 
 async function aprobarPendientes(alumno: FilaAlumno) {

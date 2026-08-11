@@ -78,12 +78,19 @@ export function usePasarelaIzipay() {
     }
   }
 
-  async function iniciarPagoCurso(cursoId: string) {
+  async function iniciarPagoCurso(
+    cursoId: string,
+    extras: { titulo?: string; importe?: number } = {},
+  ) {
     fase.value = "creando";
     error.value = null;
 
     try {
-      sesion.value = await pagosService.crearOrdenCurso({ cursoId });
+      sesion.value = await pagosService.crearOrdenCurso({
+        cursoId,
+        titulo: extras.titulo,
+        importe: extras.importe,
+      });
       fase.value = "checkout";
 
       if (!sesion.value.demostracion) {
@@ -101,12 +108,18 @@ export function usePasarelaIzipay() {
     }
   }
 
-  async function iniciarPagoCarrito(cursoIds: string[]) {
+  async function iniciarPagoCarrito(
+    cursoIds: string[],
+    items?: Array<{ cursoId: string; titulo?: string; importe?: number }>,
+  ) {
     fase.value = "creando";
     error.value = null;
 
     try {
-      sesion.value = await pagosService.crearOrdenCarrito({ cursoIds });
+      sesion.value = await pagosService.crearOrdenCarrito({
+        cursoIds,
+        items,
+      });
       fase.value = "checkout";
 
       if (!sesion.value.demostracion) {

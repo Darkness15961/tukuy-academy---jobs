@@ -120,11 +120,17 @@ const detalleContextoDocente = computed(() =>
     ? "Cursos propios · Contexto activo"
     : "Docente institucional · Contexto activo",
 );
-const logoEntidad = computed(
-  () =>
+const logoEntidad = computed(() => {
+  const activa = funcionesEntidadActiva.value.find(
+    (item) => item.id === contextoActivo.value?.funcionId,
+  );
+  return (
+    activa?.organizacion?.logo ||
     funcionesEntidadActiva.value.find((item) => item.organizacion?.logo)
-      ?.organizacion?.logo ?? "/img/LogoColegioING.png",
-);
+      ?.organizacion?.logo ||
+    "/img/iconoTukuyAcademy.png"
+  );
+});
 
 const navegacion = computed(() => [
   { etiqueta: "Inicio", ruta: "/docente/inicio", icono: Home },

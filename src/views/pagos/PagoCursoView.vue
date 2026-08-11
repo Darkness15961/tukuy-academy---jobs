@@ -70,7 +70,10 @@ const esCursoPagado = computed(
 
 async function continuarConIzipay() {
   if (!curso.value) return;
-  await pasarela.iniciarPagoCurso(curso.value.id);
+  await pasarela.iniciarPagoCurso(curso.value.id, {
+    titulo: curso.value.title,
+    importe: curso.value.price ?? 0,
+  });
 }
 
 async function irAAprendizaje() {

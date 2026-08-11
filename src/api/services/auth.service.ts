@@ -122,6 +122,10 @@ async function membresiasDesdeSupabase(): Promise<MembresiaEntrada[]> {
           nombre: contexto.organizacion_nombre,
           tipo: "EMPRESA" as const,
           estado: "ACTIVA" as const,
+          logo:
+            contexto.instalacion_organizacion_ref === INSTALACION_TUKUY_ACADEMY_ID
+              ? "/img/iconoTukuyAcademy.png"
+              : undefined,
         }
       : null,
     rol: contexto.rol_codigo as Rol,
@@ -138,39 +142,55 @@ async function respuestaDesdeSesionSupabase(
   sesion: Session,
 ): Promise<LoginResponseDto> {
   const memberships = await membresiasDesdeSupabase();
-  const debeSincronizarSecundaria = memberships.some(
-    (membresia) =>
-      membresia.organizacion?.id === INSTALACION_TUKUY_ACADEMY_ID ||
-      membresia.portal === "admin" ||
-      membresia.rol === "SUPER_ADMIN",
-  );
-  if (debeSincronizarSecundaria) {
-    const SYNC_KEY = "tukuy_sync_secundaria_at";
-    const SYNC_TTL_MS = 5 * 60_000;
+
+  // Sincroniza el acceso en la secundaria de cada organización del usuario.
+  const UUID_RE =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const instalaciones = [
+    ...new Set(
+      memberships
+        .map((membresia) => membresia.organizacion?.id ?? "")
+        .filter((id) => UUID_RE.test(id)),
+    ),
+  ];
+  const esAdminPlataforma = memberships.some((membresia) => {
+    if ("rol" in membresia) {
+      return membresia.portal === "admin" || membresia.rol === "SUPER_ADMIN";
+    }
+    return membresia.roles.some(
+      (funcion) => funcion.portal === "admin" || funcion.codigo === "SUPER_ADMIN",
+    );
+  });
+  if (esAdminPlataforma && !instalaciones.includes(INSTALACION_TUKUY_ACADEMY_ID)) {
+    instalaciones.push(INSTALACION_TUKUY_ACADEMY_ID);
+  }
+
+  const SYNC_TTL_MS = 5 * 60_000;
+  for (const instalacionId of instalaciones) {
+    const syncKey = `tukuy_sync_secundaria_at_${instalacionId}`;
     const ultima = Number(
       typeof localStorage !== "undefined"
-        ? localStorage.getItem(SYNC_KEY) || 0
+        ? localStorage.getItem(syncKey) || 0
         : 0,
     );
-    if (Date.now() - ultima >= SYNC_TTL_MS) {
-      try {
-        localStorage.setItem(SYNC_KEY, String(Date.now()));
-      } catch {
-        // ignore quota / private mode
-      }
-      void supabasePrincipal()
-        .functions.invoke("secondary-gateway", {
-          body: { action: "sync-access" },
-        })
-        .then(({ error }) => {
-          if (error) {
-            console.warn(
-              "No se pudo sincronizar el acceso secundario:",
-              error.message,
-            );
-          }
-        });
+    if (Date.now() - ultima < SYNC_TTL_MS) continue;
+    try {
+      localStorage.setItem(syncKey, String(Date.now()));
+    } catch {
+      // ignore quota / private mode
     }
+    void supabasePrincipal()
+      .functions.invoke("secondary-gateway", {
+        body: { action: "sync-access", instalacionId },
+      })
+      .then(({ error }) => {
+        if (error) {
+          console.warn(
+            `No se pudo sincronizar el acceso secundario (${instalacionId}):`,
+            error.message,
+          );
+        }
+      });
   }
   return {
     token: sesion.access_token,
