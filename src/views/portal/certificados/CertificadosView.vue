@@ -20,28 +20,29 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { apiConfig } from "@/api/config";
+import { academicoService } from "@/api/services/academico.service";
 import { secundariaGatewayService } from "@/api/services/secundaria-gateway.service";
 import type { Course } from "@/types/academia";
 import { downloadPortfolioPdf } from "@/lib/certificado-pdf";
+import {
+  reemplazarMetaCertificadosAlumno,
+  type MetaCertificadoAlumno,
+} from "@/lib/certificado-alumno-meta";
 import { usePortalContext } from "../composables/usePortalContext";
 
 const portal = usePortalContext();
 
-type MetaCertificado = {
-  codigo: string;
-  fecha: string;
-  horas: number;
-};
-
 const emitidosSecundaria = ref<Course[]>([]);
-const metaPorCursoId = ref<Record<string, MetaCertificado>>({});
+const metaPorCursoId = ref<Record<string, MetaCertificadoAlumno>>({});
 const cargandoCertificados = ref(apiConfig.secundariaCursos);
 
 onMounted(async () => {
   if (!apiConfig.secundariaCursos) return;
   try {
     const data = await secundariaGatewayService.listarMisCertificados();
-    const meta: Record<string, MetaCertificado> = {};
+    const meta: Record<string, MetaCertificadoAlumno> = {};
+    const entradasMeta: Array<{ cursoId: string; meta: MetaCertificadoAlumno }> =
+      [];
     emitidosSecundaria.value = (data.emitidos ?? []).map((item) => {
       const fecha = item.fecha
         ? new Date(item.fecha).toLocaleDateString("es-PE", {
@@ -50,11 +51,16 @@ onMounted(async () => {
             year: "numeric",
           })
         : "—";
-      meta[item.cursoId] = {
+      const fila: MetaCertificadoAlumno = {
         codigo: item.codigoVerificacion || item.id,
         fecha,
         horas: Number(item.horasCertificadas ?? 0),
+        certificadoId: item.id,
+        claveAlmacenamiento: item.claveAlmacenamiento ?? null,
+        organizacionEmisora: item.organizacionEmisora,
       };
+      meta[item.cursoId] = fila;
+      entradasMeta.push({ cursoId: item.cursoId, meta: fila });
       return {
         id: item.cursoId,
         title: item.curso,
@@ -74,6 +80,7 @@ onMounted(async () => {
       } satisfies Course;
     });
     metaPorCursoId.value = meta;
+    reemplazarMetaCertificadosAlumno(entradasMeta);
   } catch (error) {
     console.warn("No se pudieron cargar certificados del alumno", error);
   } finally {
@@ -220,46 +227,59 @@ async function handleDownloadPortfolio() {
   }
 }
 
-function handleVerifyCode() {
+async function handleVerifyCode() {
   if (!verificationCode.value.trim()) return;
   isVerifying.value = true;
   verificationResult.value = null;
 
-  setTimeout(() => {
-    isVerifying.value = false;
-    const code = verificationCode.value.trim().toUpperCase();
-    const found = simulatedCertificates.value.find((c) => {
-      const codeMeta = metaPorCursoId.value[c.id]?.codigo?.toUpperCase();
-      const suffix = c.id.replace("c-", "").padStart(4, "0");
-      return (
-        code === codeMeta ||
-        code === `TA-2026-${suffix}` ||
-        code === c.id.toUpperCase() ||
-        code === `TA-2026-${c.id.replace("c-", "")}`
-      );
-    });
-
-    if (found) {
+  try {
+    const code = verificationCode.value.trim();
+    const verificado = await academicoService.verificarCertificado(code);
+    if (verificado && verificado.estado !== "REVOCADO") {
       verificationResult.value = {
         success: true,
         message: "Código de certificado verificado exitosamente.",
         certificate: {
-          title: found.title,
-          category: found.category,
-          code: certificateCode(found),
-          issuedAt: issuedDate(found, 0),
-          duration: found.duration,
-          mode: found.mode,
+          title: verificado.curso,
+          category: verificado.organizacion,
+          code: verificado.codigo,
+          issuedAt: verificado.emitidoEn
+            ? new Date(verificado.emitidoEn).toLocaleDateString("es-PE", {
+                day: "2-digit",
+                month: "short",
+                year: "numeric",
+              })
+            : "—",
+          duration: `${verificado.horasCertificadas || 0} h`,
+          mode: verificado.estado,
         },
       };
-    } else {
+      return;
+    }
+    if (verificado?.estado === "REVOCADO") {
       verificationResult.value = {
         success: false,
         message:
-          "El código ingresado no corresponde a ningún certificado válido o emitido en la plataforma.",
+          "Este certificado fue revocado y ya no es válido para verificación pública.",
       };
+      return;
     }
-  }, 1500);
+    verificationResult.value = {
+      success: false,
+      message:
+        "El código ingresado no corresponde a ningún certificado válido o emitido en la plataforma.",
+    };
+  } catch (causa) {
+    verificationResult.value = {
+      success: false,
+      message:
+        causa instanceof Error
+          ? causa.message
+          : "No se pudo verificar el certificado en este momento.",
+    };
+  } finally {
+    isVerifying.value = false;
+  }
 }
 </script>
 
@@ -635,10 +655,8 @@ function handleVerifyCode() {
         <!-- Modal Body -->
         <div class="p-5 space-y-4">
           <p class="text-xs leading-relaxed text-muted-foreground">
-            Ingresa el código único de validación de Tukuy Academy (ejemplo:
-            <strong class="text-foreground">TA-2026-0008</strong> o
-            <strong class="text-foreground">TA-2026-010</strong>) para verificar
-            su autenticidad.
+            Ingresa el código único de validación de Tukuy Academy para verificar
+            su autenticidad en el registro público.
           </p>
 
           <div class="flex gap-2">

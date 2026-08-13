@@ -113,7 +113,7 @@ function irACursos() {
           </h1>
           <p class="mt-3 max-w-2xl text-base leading-7 text-muted-foreground">
             Revisa los cursos de pago, confirma el total y completa la matrícula
-            con la pasarela simulada de Izipay.
+            con Izipay.
           </p>
         </div>
         <Button
@@ -228,11 +228,10 @@ function irACursos() {
                 <p class="text-xs font-black uppercase tracking-[.24em] text-emerald-700">
                   Pago confirmado
                 </p>
-                <h2 class="mt-2 text-2xl font-black">Compra simulada aprobada</h2>
+                <h2 class="mt-2 text-2xl font-black">Pago confirmado</h2>
                 <p class="mt-3 text-sm leading-6 text-muted-foreground">
                   La orden <strong>{{ pasarela.orden.value?.ordenId }}</strong>
-                  fue validada por el servidor de demostración. Ya puedes
-                  continuar con tus cursos.
+                  fue validada. Ya puedes continuar con tus cursos.
                 </p>
                 <Button
                   class="mt-5 rounded-none bg-[#0B3A78] text-white hover:bg-[#071F52]"

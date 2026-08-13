@@ -122,8 +122,8 @@ function sesionDesdeOrdenSecundaria(
     metodosDisponibles: ["CARD", "YAPE_CODE", "QR", "PAGO_PUSH"],
     autorizacionSesion: "sesion-secundaria",
     llaveRsaPublica: "llave-publica-demostracion",
-    // simulacion (default) = pasarela demo; sdk = intenta Izipay real cuando haya merchant.
-    demostracion: apiConfig.pagoModo !== "sdk",
+    // simulacion = demo; dankira|sdk = checkout real.
+    demostracion: apiConfig.pagoModo === "simulacion",
     configuracion: {
       transactionId: String(ahora),
       action: "pay",
@@ -158,6 +158,10 @@ async function crearOrdenEnSecundaria(items: Array<{
     moneda: "PEN",
   });
   const base = sesionDesdeOrdenSecundaria(data);
+  // dankira usa formToken vía izipay-lyra-proxy (no Token/Generate).
+  if (apiConfig.pagoModo === "dankira") {
+    return { ...base, demostracion: false };
+  }
   if (apiConfig.pagoModo !== "sdk") return base;
   return enriquecerSesionConTokenIzipay(base);
 }

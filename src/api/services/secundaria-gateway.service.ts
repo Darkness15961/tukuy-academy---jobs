@@ -8,6 +8,7 @@ import type {
   InventarioSecundaria,
   ListadoCursosSecundaria,
   ResultadoBorradorCursoSecundaria,
+  ResultadoCalificarQuizSecundaria,
   ResultadoCompletarActividadSecundaria,
   ResultadoContenidoAprendizajeSecundaria,
   ResultadoCrearSesionSecundaria,
@@ -70,7 +71,9 @@ const FRAGMENTOS_POR_ACCION: Record<string, FragmentoClave[] | "*"> = {
   "matricular-estudiante": ["misCursos", "estudiantes", "cursos"],
   "confirmar-pago-orden": ["misCursos", "estudiantes", "cursos"],
   "completar-actividad": ["misCursos", "entregas"],
+  "calificar-quiz": ["misCursos", "entregas"],
   "guardar-apuntes": ["misCursos"],
+  "guardar-item-activo": [],
   "crear-sesion": ["sesiones"],
   "actualizar-sesion": ["sesiones"],
   "eliminar-sesion": ["sesiones"],
@@ -639,9 +642,42 @@ export const secundariaGatewayService = {
         cursoId,
         actividadId,
         nota: opciones.nota ?? null,
-        marcarCompletada: opciones.marcarCompletada !== false,
+        marcarCompletada: opciones.marcarCompletada ?? true,
       },
     );
+  },
+
+  async calificarQuiz(
+    cursoId: string,
+    actividadId: string,
+    respuestas: number[],
+  ) {
+    return invocarMutacion<ResultadoCalificarQuizSecundaria>("calificar-quiz", {
+      cursoId,
+      actividadId,
+      respuestas,
+    });
+  },
+
+  async guardarItemActivo(cursoId: string, actividadId: string) {
+    try {
+      return await invocarMutacion<{
+        ok: boolean;
+        matriculaId?: string;
+        itemActivoId?: string;
+      }>("guardar-item-activo", { cursoId, actividadId });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Edge antigua sin la acción: no bloquear completar/progreso.
+      if (/accion no soportada|non-2xx/i.test(msg)) {
+        console.warn(
+          "[Tukuy] guardar-item-activo no disponible en secondary-gateway. Redeploya la Edge.",
+          msg,
+        );
+        return { ok: false, itemActivoId: actividadId };
+      }
+      throw err;
+    }
   },
 
   async guardarApuntes(cursoId: string, apuntes: string) {

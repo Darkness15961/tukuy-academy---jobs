@@ -202,25 +202,45 @@ function asegurarItems(seccion: SeccionBorrador) {
 
 const secciones = ref<BorradorCursoDocente["secciones"]>([
   {
+    id: crypto.randomUUID(),
     titulo: "Introducción y fundamentos",
     clases: ["Bienvenida al curso", "Conceptos principales"],
     items: [
-      { titulo: "Bienvenida al curso", tipo: "video", urlYoutube: "" },
-      { titulo: "Conceptos principales", tipo: "lectura" },
+      {
+        id: crypto.randomUUID(),
+        titulo: "Bienvenida al curso",
+        tipo: "video",
+        urlYoutube: "",
+      },
+      {
+        id: crypto.randomUUID(),
+        titulo: "Conceptos principales",
+        tipo: "lectura",
+      },
     ],
     recursos: [],
   },
   {
+    id: crypto.randomUUID(),
     titulo: "Aplicación práctica",
     clases: ["Caso de estudio en obra", "Cuestionario práctico", "Evidencia PDF"],
     items: [
-      { titulo: "Caso de estudio en obra", tipo: "lectura" },
       {
+        id: crypto.randomUUID(),
+        titulo: "Caso de estudio en obra",
+        tipo: "lectura",
+      },
+      {
+        id: crypto.randomUUID(),
         titulo: "Cuestionario práctico",
         tipo: "quiz",
         preguntas: preguntasSemilla(),
       },
-      { titulo: "Evidencia PDF", tipo: "assignment" },
+      {
+        id: crypto.randomUUID(),
+        titulo: "Evidencia PDF",
+        tipo: "assignment",
+      },
     ],
     recursos: [],
   },
@@ -235,6 +255,7 @@ function iconoTipo(tipo: ItemSeccion["tipo"]) {
 function agregarItem(seccion: SeccionBorrador, tipo: ItemSeccion["tipo"] = "lectura") {
   asegurarItems(seccion);
   seccion.items!.push({
+    id: crypto.randomUUID(),
     titulo:
       tipo === "quiz"
         ? "Nuevo cuestionario"
@@ -569,6 +590,10 @@ function clonPlano<T>(valor: T): T {
 function construirBorrador(): BorradorCursoDocente {
   const seccionesNormalizadas = clonPlano(secciones.value).map((seccion) => {
     asegurarItems(seccion);
+    if (!seccion.id) seccion.id = crypto.randomUUID();
+    for (const item of seccion.items ?? []) {
+      if (!item.id) item.id = crypto.randomUUID();
+    }
     // Conservar URLs http(s)/s3; no reenviar dataURL enormes.
     return {
       ...seccion,
@@ -595,11 +620,29 @@ async function guardar() {
   guardando.value = true;
   errorGuardado.value = "";
   try {
-    const guardadoCurso = await docenteService.guardarCursoDesdeBorrador(
-      membresiaId,
-      cursoId.value,
-      construirBorrador(),
-    );
+    const { curso: guardadoCurso, borrador: borradorPersistido } =
+      await docenteService.guardarCursoDesdeBorrador(
+        membresiaId,
+        cursoId.value,
+        construirBorrador(),
+      );
+    // Rehidratar IDs estables que escribió la secundaria (evita wipe en el 2º save).
+    const { secciones: seccionesGuardadas, ...datosCurso } = borradorPersistido;
+    Object.assign(curso, datosCurso);
+    secciones.value = seccionesGuardadas.map((seccion) => {
+      const items =
+        seccion.items?.map((item) => ({
+          ...item,
+          id: item.id || crypto.randomUUID(),
+        })) ?? [];
+      return {
+        ...seccion,
+        id: seccion.id || crypto.randomUUID(),
+        items,
+        clases: items.map((item) => item.titulo),
+        recursos: seccion.recursos ?? [],
+      };
+    });
     if (
       cursoId.value === "nuevo" ||
       cursoId.value.startsWith("borrador-") ||
@@ -633,9 +676,10 @@ function agregarRequisito() {
 }
 function agregarSeccion() {
   const seccion: SeccionBorrador = {
+    id: crypto.randomUUID(),
     titulo: "Nueva sección",
     clases: ["Nueva clase"],
-    items: [{ titulo: "Nueva clase", tipo: "lectura" }],
+    items: [{ id: crypto.randomUUID(), titulo: "Nueva clase", tipo: "lectura" }],
     recursos: [],
   };
   secciones.value.push(seccion);
@@ -975,7 +1019,7 @@ async function enviarRevision() {
   if (!listoParaEnviar.value) return;
   const borrador = construirBorrador();
   if (esGestionOrganizacion.value) {
-    const guardado = await docenteService.guardarCursoDesdeBorrador(
+    const { curso: guardado } = await docenteService.guardarCursoDesdeBorrador(
       membresiaId,
       cursoId.value,
       borrador,

@@ -1181,7 +1181,7 @@ export const docenteService = {
     membresiaId: string,
     cursoId: string,
     borrador: BorradorCursoDocente,
-  ): Promise<CursoDocente> {
+  ): Promise<{ curso: CursoDocente; borrador: BorradorCursoDocente }> {
     if (apiConfig.secundariaCursos) {
       const contexto = obtenerContextoActual();
       const resultado = await secundariaGatewayService.guardarCurso({
@@ -1189,16 +1189,23 @@ export const docenteService = {
         borrador,
       });
       const mapeado = mapearCursoSecundariaADocente(resultado.curso, contexto);
+      const borradorPersistido = mapearDocumentoABorrador(
+        (resultado.borrador ?? borrador) as Record<string, unknown>,
+        borrador,
+      );
       return {
-        ...mapeado,
-        titulo: borrador.titulo || mapeado.titulo,
-        imagen: borrador.imagen || mapeado.imagen,
-        progreso: progresoBorrador(borrador),
-        docenteResponsableId: borrador.docenteResponsableId,
-        docenteResponsableNombre: borrador.docenteResponsableNombre,
-        cargadoPorNombre: borrador.cargadoPorNombre,
-        origenCarga: borrador.origenCarga,
-        actualizado: "Ahora",
+        curso: {
+          ...mapeado,
+          titulo: borradorPersistido.titulo || mapeado.titulo,
+          imagen: borradorPersistido.imagen || mapeado.imagen,
+          progreso: progresoBorrador(borradorPersistido),
+          docenteResponsableId: borradorPersistido.docenteResponsableId,
+          docenteResponsableNombre: borradorPersistido.docenteResponsableNombre,
+          cargadoPorNombre: borradorPersistido.cargadoPorNombre,
+          origenCarga: borradorPersistido.origenCarga,
+          actualizado: "Ahora",
+        },
+        borrador: borradorPersistido,
       };
     }
 
@@ -1239,7 +1246,7 @@ export const docenteService = {
       ? await cursos.actualizar(id, datos)
       : await cursos.crear(datos);
     await academicoService.sincronizarEstructuraCurso(id, borrador.secciones);
-    return guardado;
+    return { curso: guardado, borrador };
   },
 
   async enviarBorradorRevision(
@@ -1271,7 +1278,7 @@ export const docenteService = {
       return data;
     }
 
-    const curso = await this.guardarCursoDesdeBorrador(
+    const { curso } = await this.guardarCursoDesdeBorrador(
       membresiaId,
       cursoId,
       borrador,

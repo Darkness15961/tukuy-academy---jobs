@@ -32,6 +32,11 @@ async function fetchCourses(opciones: { silencioso?: boolean } = {}) {
   return fetchEnCurso;
 }
 
+/** Espera a que el catálogo esté disponible (útil en deep-link / F5). */
+export function asegurarCursosCargados() {
+  return fetchCourses({ silencioso: cargadoUnaVez.value });
+}
+
 export function useCursos() {
   onMounted(() => {
     void fetchCourses({ silencioso: cargadoUnaVez.value });

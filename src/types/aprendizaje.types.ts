@@ -18,16 +18,27 @@ export type ItemAprendizaje = {
   videoUrl?: string;
 };
 
+export type RecursoAprendizaje = {
+  id: string;
+  nombre: string;
+  tipo: string;
+  tamanio?: number;
+  /** URL http(s)/s3 o data URL corta. */
+  contenido?: string;
+};
+
 export type ModuloAprendizaje = {
   id: string;
   title: string;
   items: ItemAprendizaje[];
+  recursos?: RecursoAprendizaje[];
 };
 
 export type PreguntaQuiz = {
   question: string;
   options: string[];
-  correctIndex: number;
+  /** Solo en mock/constructor; el alumno califica en servidor. */
+  correctIndex?: number;
 };
 
 /** Contenido didáctico de un curso (temario + quizzes). `id` = cursoId. */
@@ -35,6 +46,8 @@ export type ContenidoCursoAprendizaje = {
   id: string;
   modulos: ModuloAprendizaje[];
   quizzes: Record<string, PreguntaQuiz[]>;
+  /** Nota mínima de la versión (escala 0–20). */
+  notaMinima?: number;
 };
 
 /** Avance del estudiante en un curso. `id` = cursoId. */

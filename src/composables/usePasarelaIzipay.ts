@@ -116,10 +116,7 @@ export function usePasarelaIzipay() {
       fase.value = "checkout";
 
       if (!sesion.value.demostracion) {
-        const { abrirCheckoutIzipay } = await import("@/lib/checkout-izipay");
-        await abrirCheckoutIzipay(sesion.value, (respuesta) => {
-          void procesarRespuesta(respuesta);
-        });
+        await abrirCheckoutReal(sesion.value);
       }
     } catch (err) {
       fase.value = "rechazado";
@@ -128,6 +125,42 @@ export function usePasarelaIzipay() {
           ? err.message
           : "No se pudo iniciar el pago seguro.";
     }
+  }
+
+  async function abrirCheckoutReal(sesionPago: SesionPagoCurso) {
+    const { env } = await import("@/lib/env");
+    if (env.pagoModo === "dankira") {
+      const {
+        abrirCheckoutDankira,
+        leerConfigDankiraDesdeEnv,
+      } = await import("@/lib/checkout-dankira");
+      const config = leerConfigDankiraDesdeEnv();
+      if (!config) {
+        throw new Error(
+          "Faltan VITE_IZIPAY_MERCHANT_CODE, VITE_IZIPAY_PUBLIC_KEY y VITE_IZIPAY_SHA256.",
+        );
+      }
+      const { supabasePrincipal } = await import("@/lib/supabase");
+      const { data } = await supabasePrincipal().auth.getUser();
+      const email = data.user?.email?.trim() || "alumno@tukuy.academy";
+      const { nextTick } = await import("vue");
+      await nextTick();
+      await abrirCheckoutDankira({
+        amountSoles: sesionPago.importe,
+        orderId: sesionPago.configuracion.order.orderNumber,
+        email,
+        config,
+        onResult: (respuesta) => {
+          void procesarRespuesta(respuesta);
+        },
+      });
+      return;
+    }
+
+    const { abrirCheckoutIzipay } = await import("@/lib/checkout-izipay");
+    await abrirCheckoutIzipay(sesionPago, (respuesta) => {
+      void procesarRespuesta(respuesta);
+    });
   }
 
   async function iniciarPagoCarrito(
@@ -145,10 +178,7 @@ export function usePasarelaIzipay() {
       fase.value = "checkout";
 
       if (!sesion.value.demostracion) {
-        const { abrirCheckoutIzipay } = await import("@/lib/checkout-izipay");
-        await abrirCheckoutIzipay(sesion.value, (respuesta) => {
-          void procesarRespuesta(respuesta);
-        });
+        await abrirCheckoutReal(sesion.value);
       }
     } catch (err) {
       fase.value = "rechazado";

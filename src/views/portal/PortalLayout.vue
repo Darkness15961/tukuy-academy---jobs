@@ -25,6 +25,10 @@ import {
   viewCourseCertificate,
 } from "@/lib/certificado-pdf";
 import {
+  abrirPdfCertificadoAlumno,
+  reemplazarMetaCertificadosAlumno,
+} from "@/lib/certificado-alumno-meta";
+import {
   cursoEstaMatriculado,
   cursoPuedeInscribirseGratis,
   cursoRequiereCompra,
@@ -81,6 +85,32 @@ const isPageLoading = computed(() => userLoading.value && !user.value);
 onMounted(() => {
   if (apiConfig.secundariaCursos) {
     secundariaGatewayService.prefetchAlumno();
+    void secundariaGatewayService
+      .listarMisCertificados()
+      .then((data) => {
+        reemplazarMetaCertificadosAlumno(
+          (data.emitidos ?? []).map((item) => ({
+            cursoId: item.cursoId,
+            meta: {
+              codigo: item.codigoVerificacion || item.id,
+              fecha: item.fecha
+                ? new Date(item.fecha).toLocaleDateString("es-PE", {
+                    day: "2-digit",
+                    month: "short",
+                    year: "numeric",
+                  })
+                : "—",
+              horas: Number(item.horasCertificadas ?? 0),
+              certificadoId: item.id,
+              claveAlmacenamiento: item.claveAlmacenamiento ?? null,
+              organizacionEmisora: item.organizacionEmisora,
+            },
+          })),
+        );
+      })
+      .catch(() => {
+        /* silencioso: fallback a PDF local */
+      });
   }
 });
 
@@ -185,7 +215,10 @@ async function handleViewCertificate(course: Course) {
 
   openingCertificateId.value = course.id;
   try {
-    await viewCourseCertificate(course, user.value);
+    await abrirPdfCertificadoAlumno({
+      cursoId: course.id,
+      fallback: () => viewCourseCertificate(course, user.value!),
+    });
   } finally {
     openingCertificateId.value = null;
   }
@@ -196,7 +229,12 @@ async function handleDownloadCertificate(course: Course) {
 
   openingCertificateId.value = course.id;
   try {
-    await downloadCertificatePdf(buildCertificateData(course, user.value));
+    await abrirPdfCertificadoAlumno({
+      cursoId: course.id,
+      descargar: true,
+      fallback: () =>
+        downloadCertificatePdf(buildCertificateData(course, user.value!)),
+    });
   } finally {
     openingCertificateId.value = null;
   }

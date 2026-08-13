@@ -9,9 +9,10 @@ type EnvConfig = {
   secundariaCursos: boolean;
   /**
    * simulacion = pasarela demo (confirmar code 00 desde el browser).
-   * sdk = intenta checkout Izipay real (requiere merchant + PAYMENT_MODE≠simulacion en Edge).
+   * dankira = formulario embebido @dankira/izipay + Edge izipay-lyra-proxy.
+   * sdk = checkout pop-up Token/Generate (izipay-session) legado.
    */
-  pagoModo: "simulacion" | "sdk";
+  pagoModo: "simulacion" | "dankira" | "sdk";
   isProduction: boolean;
 };
 
@@ -32,7 +33,11 @@ function readEnv(): EnvConfig {
     .trim()
     .toLowerCase();
   const pagoModo: EnvConfig["pagoModo"] =
-    pagoModoRaw === "sdk" || pagoModoRaw === "izipay" ? "sdk" : "simulacion";
+    pagoModoRaw === "dankira" || pagoModoRaw === "izipay"
+      ? "dankira"
+      : pagoModoRaw === "sdk"
+        ? "sdk"
+        : "simulacion";
 
   if (authProvider === "supabase") {
     if (!supabasePrimaryUrl || !supabasePrimaryAnonKey) {

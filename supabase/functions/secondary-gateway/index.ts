@@ -850,7 +850,9 @@ Deno.serve(async (req) => {
       entrada.action === "mis-cursos" ||
       entrada.action === "contenido-curso" ||
       entrada.action === "completar-actividad" ||
-      entrada.action === "guardar-apuntes"
+      entrada.action === "calificar-quiz" ||
+      entrada.action === "guardar-apuntes" ||
+      entrada.action === "guardar-item-activo"
     ) {
       const resolucion = await resolverContextosSincronizables();
       const { data: esAdmin } = await principal.rpc("es_super_admin_actual");
@@ -946,7 +948,7 @@ Deno.serve(async (req) => {
               ok: false,
               error: detalle,
               details:
-                "Si el error menciona read-only/cast: 20260805258300 o 20260805252200 en secundaria.",
+                "Si el error menciona read-only/cast: 20260812190000 (o 05258300) / 20260805252200 en secundaria.",
             },
             200,
             corsHeaders,
@@ -975,7 +977,7 @@ Deno.serve(async (req) => {
             {
               ok: false,
               error: esReadOnly
-                ? "Ejecuta en la secundaria 20260805258300_contenido_aprendizaje_volatile.sql (obtener contenido no puede ser STABLE)"
+                ? "Ejecuta en la secundaria 20260812190000_contenido_aprendizaje_volatile_again.sql (obtener contenido no puede ser STABLE; las 121x lo revirtieron)"
                 : "Error al obtener contenido de aprendizaje",
               details: detalle,
             },
@@ -1022,6 +1024,40 @@ Deno.serve(async (req) => {
         return json({ ok: true, ...apuntes.data }, 200, corsHeaders);
       }
 
+      if (entrada.action === "guardar-item-activo") {
+        const cursoId =
+          typeof entrada.cursoId === "string" ? entrada.cursoId.trim() : "";
+        const actividadId =
+          typeof entrada.actividadId === "string"
+            ? entrada.actividadId.trim()
+            : "";
+        if (!cursoId || !actividadId) {
+          return json(
+            { error: "cursoId y actividadId requeridos" },
+            400,
+            corsHeaders,
+          );
+        }
+        const guardado = await secundaria.rpc("servicio_guardar_item_activo", {
+          p_curso_id: cursoId,
+          p_estudiante_identidad_ref: estudianteId,
+          p_actividad_id: actividadId,
+        });
+        if (guardado.error) {
+          return json(
+            {
+              ok: false,
+              error:
+                "Falta ejecutar en la secundaria 20260812140000_p2_item_activo_cola.sql",
+              details: guardado.error.message,
+            },
+            200,
+            corsHeaders,
+          );
+        }
+        return json({ ok: true, ...guardado.data }, 200, corsHeaders);
+      }
+
       if (entrada.action === "completar-actividad") {
         const cursoId =
           typeof entrada.cursoId === "string" ? entrada.cursoId.trim() : "";
@@ -1056,7 +1092,7 @@ Deno.serve(async (req) => {
             {
               ok: false,
               error:
-                "Falta ejecutar en la secundaria 20260805255000_quizzes_notas_aprendizaje.sql (o 20260805245000)",
+                "Falta ejecutar en la secundaria 20260812110000_quiz_server_cert_auto_version.sql (o 20260812100000)",
               details: progreso.error.message,
             },
             200,
@@ -1064,6 +1100,44 @@ Deno.serve(async (req) => {
           );
         }
         return json({ ok: true, ...progreso.data }, 200, corsHeaders);
+      }
+
+      if (entrada.action === "calificar-quiz") {
+        const cursoId =
+          typeof entrada.cursoId === "string" ? entrada.cursoId.trim() : "";
+        const actividadId =
+          typeof entrada.actividadId === "string"
+            ? entrada.actividadId.trim()
+            : "";
+        if (!cursoId || !actividadId) {
+          return json(
+            { error: "cursoId y actividadId requeridos" },
+            400,
+            corsHeaders,
+          );
+        }
+        const respuestas = Array.isArray(entrada.respuestas)
+          ? entrada.respuestas
+          : [];
+        const calificado = await secundaria.rpc("servicio_calificar_quiz", {
+          p_curso_id: cursoId,
+          p_estudiante_identidad_ref: estudianteId,
+          p_actividad_id: actividadId,
+          p_respuestas: respuestas,
+        });
+        if (calificado.error) {
+          return json(
+            {
+              ok: false,
+              error:
+                "Falta ejecutar en la secundaria 20260812110000_quiz_server_cert_auto_version.sql",
+              details: calificado.error.message,
+            },
+            200,
+            corsHeaders,
+          );
+        }
+        return json({ ok: true, ...calificado.data }, 200, corsHeaders);
       }
 
       return json({ error: "Accion de aprendizaje no soportada" }, 400, corsHeaders);
@@ -2979,7 +3053,7 @@ Deno.serve(async (req) => {
             ok: false,
             error: mat.error.message,
             details:
-              "Si el error menciona read-only/cast: 20260805258300 o 20260805252200 en secundaria.",
+              "Si el error menciona read-only/cast: 20260812190000 (o 05258300) / 20260805252200 en secundaria.",
           },
           200,
           corsHeaders,

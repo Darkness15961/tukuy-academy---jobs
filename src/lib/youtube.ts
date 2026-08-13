@@ -38,7 +38,65 @@ export function idVideoYoutube(entrada: string | null | undefined): string | nul
 
 export function urlEmbedYoutube(
   entrada: string | null | undefined,
+  opciones: { startSeconds?: number; enableJsApi?: boolean } = {},
 ): string | null {
   const id = idVideoYoutube(entrada);
-  return id ? `https://www.youtube.com/embed/${id}` : null;
+  if (!id) return null;
+  const params = new URLSearchParams();
+  if (opciones.enableJsApi !== false) params.set("enablejsapi", "1");
+  params.set("rel", "0");
+  const start = Math.max(0, Math.floor(opciones.startSeconds ?? 0));
+  if (start > 0) params.set("start", String(start));
+  return `https://www.youtube.com/embed/${id}?${params.toString()}`;
+}
+
+const CLAVE_PROGRESO_VIDEO = "tukuy:video-progreso";
+
+type MapaProgresoVideo = Record<string, number>;
+
+function leerMapaProgresoVideo(): MapaProgresoVideo {
+  if (typeof localStorage === "undefined") return {};
+  try {
+    const raw = localStorage.getItem(CLAVE_PROGRESO_VIDEO);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as MapaProgresoVideo;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export function claveProgresoVideo(cursoId: string, actividadId: string): string {
+  return `${cursoId}:${actividadId}`;
+}
+
+export function leerProgresoVideoSegundos(
+  cursoId: string,
+  actividadId: string,
+): number {
+  const valor = leerMapaProgresoVideo()[claveProgresoVideo(cursoId, actividadId)];
+  return Number.isFinite(valor) && valor > 0 ? Math.floor(valor) : 0;
+}
+
+export function guardarProgresoVideoSegundos(
+  cursoId: string,
+  actividadId: string,
+  segundos: number,
+): void {
+  if (typeof localStorage === "undefined") return;
+  const seguro = Math.max(0, Math.floor(segundos));
+  if (seguro < 3) return;
+  const mapa = leerMapaProgresoVideo();
+  mapa[claveProgresoVideo(cursoId, actividadId)] = seguro;
+  localStorage.setItem(CLAVE_PROGRESO_VIDEO, JSON.stringify(mapa));
+}
+
+export function limpiarProgresoVideo(
+  cursoId: string,
+  actividadId: string,
+): void {
+  if (typeof localStorage === "undefined") return;
+  const mapa = leerMapaProgresoVideo();
+  delete mapa[claveProgresoVideo(cursoId, actividadId)];
+  localStorage.setItem(CLAVE_PROGRESO_VIDEO, JSON.stringify(mapa));
 }

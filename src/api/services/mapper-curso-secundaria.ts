@@ -166,6 +166,7 @@ export function mapearDocumentoABorrador(
     vigenciaMeses: Number(documento.vigenciaMeses ?? semilla.vigenciaMeses ?? 12),
     secciones: seccionesRaw.map((seccion) => {
       const item = seccion as {
+        id?: string;
         titulo?: string;
         clases?: unknown;
         items?: unknown;
@@ -179,6 +180,7 @@ export function mapearDocumentoABorrador(
         itemsRaw.length > 0
           ? itemsRaw.map((raw, indice) => {
               const fila = raw as {
+                id?: string;
                 titulo?: string;
                 tipo?: string;
                 urlYoutube?: string;
@@ -214,6 +216,7 @@ export function mapearDocumentoABorrador(
                     .filter((p) => p.question && p.options.length > 0)
                   : undefined;
               return {
+                id: fila.id ? String(fila.id) : undefined,
                 titulo: String(fila.titulo ?? clases[indice] ?? "Actividad"),
                 tipo,
                 ...(tipo === "video" && urlYoutube ? { urlYoutube } : {}),
@@ -239,12 +242,14 @@ export function mapearDocumentoABorrador(
               };
             })
           : clases.map((titulo, indice) => ({
+              id: crypto.randomUUID(),
               titulo,
               tipo: (indice === 0 ? "video" : "lectura") as
                 | "video"
                 | "lectura",
             }));
       return {
+        id: item.id ? String(item.id) : undefined,
         titulo: String(item.titulo ?? "Sección"),
         clases: items.map((actividad) => actividad.titulo),
         items,
@@ -323,6 +328,17 @@ export function mapearContenidoAprendizajeSecundaria(
   const modulos = (data.contenido.modulos ?? []).map((modulo) => ({
     id: modulo.id,
     title: modulo.title,
+    recursos: Array.isArray(modulo.recursos)
+      ? modulo.recursos
+          .map((recurso) => ({
+            id: String(recurso.id ?? ""),
+            nombre: String(recurso.nombre ?? "Recurso"),
+            tipo: String(recurso.tipo ?? "application/octet-stream"),
+            tamanio: Number(recurso.tamanio ?? 0) || undefined,
+            contenido: String(recurso.contenido ?? "").trim() || undefined,
+          }))
+          .filter((recurso) => recurso.nombre && recurso.contenido)
+      : [],
     items: (modulo.items ?? []).map((item) => ({
       id: item.id,
       title: item.title,
@@ -341,18 +357,36 @@ export function mapearContenidoAprendizajeSecundaria(
   const items = modulos.flatMap((modulo) => modulo.items);
   const itemsCompletados = data.itemsCompletados ?? [];
   const progresoNum = Number(data.progresoPorcentaje ?? 0);
+  const itemActivoServidor =
+    typeof data.itemActivoId === "string" && data.itemActivoId
+      ? data.itemActivoId
+      : "";
+  const itemActivoId =
+    (itemActivoServidor &&
+      items.some((item) => item.id === itemActivoServidor) &&
+      itemActivoServidor) ||
+    items.find((item) => !itemsCompletados.includes(item.id))?.id ||
+    items[0]?.id ||
+    "";
   const quizzesRaw = data.contenido.quizzes ?? {};
   const quizzes: ContenidoCursoAprendizaje["quizzes"] = {};
   for (const [actividadId, preguntas] of Object.entries(quizzesRaw)) {
     if (!Array.isArray(preguntas)) continue;
     quizzes[actividadId] = preguntas
-      .map((pregunta) => ({
-        question: String(pregunta.question ?? ""),
-        options: Array.isArray(pregunta.options)
-          ? pregunta.options.map((opcion) => String(opcion))
-          : [],
-        correctIndex: Number(pregunta.correctIndex ?? 0),
-      }))
+      .map((pregunta) => {
+        const correctRaw = pregunta.correctIndex;
+        const correctIndex =
+          typeof correctRaw === "number" && Number.isFinite(correctRaw)
+            ? correctRaw
+            : undefined;
+        return {
+          question: String(pregunta.question ?? ""),
+          options: Array.isArray(pregunta.options)
+            ? pregunta.options.map((opcion) => String(opcion))
+            : [],
+          ...(correctIndex !== undefined ? { correctIndex } : {}),
+        };
+      })
       .filter((pregunta) => pregunta.question && pregunta.options.length > 0);
   }
 
@@ -367,15 +401,15 @@ export function mapearContenidoAprendizajeSecundaria(
       id: data.contenido.id,
       modulos,
       quizzes,
+      notaMinima: Number.isFinite(Number(data.notaMinima))
+        ? Number(data.notaMinima)
+        : 14,
     },
     progreso: {
       id: data.contenido.id,
       itemsCompletados,
       notas,
-      itemActivoId:
-        items.find((item) => !itemsCompletados.includes(item.id))?.id ??
-        items[0]?.id ??
-        "",
+      itemActivoId,
       progreso: progresoNum,
       estado:
         progresoNum >= 100

@@ -116,6 +116,17 @@ const iconos = {
       </Button>
     </div>
 
+    <!-- Contenedor obligatorio de @dankira/izipay (formulario embebido). -->
+    <div
+      v-show="sesion && !sesion.demostracion && fase === 'checkout'"
+      class="mt-8"
+    >
+      <p class="mb-3 text-sm font-bold text-[#0B3A78]">
+        Completa el pago en el formulario seguro de Izipay
+      </p>
+      <div id="izipay-form" class="min-h-[120px]" />
+    </div>
+
     <div
       v-if="error"
       class="mt-8 flex items-start gap-3 border border-red-200 bg-red-50 p-5 text-red-800"

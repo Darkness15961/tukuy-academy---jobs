@@ -288,11 +288,15 @@ export interface BorradorCursoDocente {
   cargadoPorNombre?: string;
   origenCarga?: "DOCENTE" | "ADMINISTRACION";
   secciones: Array<{
+    /** Id estable del módulo (UUID) cuando existe en secundaria. */
+    id?: string;
     titulo: string;
     /** Compatibilidad: títulos planos (se sincronizan desde `items`). */
     clases: string[];
     /** Estructura tipada del temario (lectura, video, quiz, assignment). */
     items?: Array<{
+      /** Id estable de la actividad (UUID) — crítico para no perder progreso. */
+      id?: string;
       titulo: string;
       tipo: "lectura" | "video" | "quiz" | "assignment";
       /** Enlace YouTube anclado (solo ítems tipo video). */

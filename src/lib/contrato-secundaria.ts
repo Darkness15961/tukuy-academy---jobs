@@ -54,7 +54,9 @@ export const ACCIONES_GATEWAY_SECUNDARIA = [
   "mis-cursos",
   "contenido-curso",
   "completar-actividad",
+  "calificar-quiz",
   "guardar-apuntes",
+  "guardar-item-activo",
   "list-sesiones",
   "crear-sesion",
   "actualizar-sesion",
@@ -265,12 +267,21 @@ export type ResultadoContenidoAprendizajeSecundaria = {
   itemsCompletados: string[];
   notas?: Record<string, number>;
   apuntes?: string;
+  notaMinima?: number;
+  itemActivoId?: string | null;
   contenido: {
     id: string;
     modulos: Array<{
       id: string;
       title: string;
       orden?: number;
+      recursos?: Array<{
+        id?: string;
+        nombre?: string;
+        tipo?: string;
+        tamanio?: number;
+        contenido?: string;
+      }>;
       items: Array<{
         id: string;
         title: string;
@@ -286,7 +297,8 @@ export type ResultadoContenidoAprendizajeSecundaria = {
       Array<{
         question: string;
         options: string[];
-        correctIndex: number;
+        /** Solo presente en borrador/docente; el alumno no lo recibe. */
+        correctIndex?: number;
       }>
     >;
   };
@@ -301,6 +313,29 @@ export type ResultadoCompletarActividadSecundaria = {
   estado: string;
   nota?: number | null;
   notas?: Record<string, number>;
+  certificado?: {
+    ok?: boolean;
+    certificadoId?: string;
+    codigo?: string;
+    error?: string;
+  } | null;
+};
+
+export type ResultadoCalificarQuizSecundaria = {
+  ok: boolean;
+  actividadId: string;
+  score: number;
+  passed: boolean;
+  notaMinima: number;
+  correctas: number;
+  total: number;
+  correctIndexes: number[];
+  progresoPorcentaje: number;
+  estado: string;
+  itemsCompletados: string[];
+  notas?: Record<string, number>;
+  matriculaId?: string;
+  certificado?: ResultadoCompletarActividadSecundaria["certificado"];
 };
 
 export type ResultadoApuntesSecundaria = {

@@ -56,6 +56,25 @@ function progresoVacio(
   };
 }
 
+/** Serializa mutaciones de progreso por curso (evita carreras read-modify-write). */
+const colaProgresoPorCurso = new Map<string, Promise<unknown>>();
+
+function encolarProgresoCurso<T>(
+  cursoId: string,
+  tarea: () => Promise<T>,
+): Promise<T> {
+  const previa = colaProgresoPorCurso.get(cursoId) ?? Promise.resolve();
+  const siguiente = previa.then(tarea, tarea);
+  colaProgresoPorCurso.set(
+    cursoId,
+    siguiente.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  return siguiente;
+}
+
 async function migrarLegadoAsync(): Promise<void> {
   if (!apiConfig.useMock || typeof localStorage === "undefined") return;
   if (localStorage.getItem(`${APRENDIZAJE_PROGRESOS_KEY}_migrado`) === "1") {
@@ -203,13 +222,45 @@ export const aprendizajeService = {
     cursoId: string,
     cambios: ActualizarProgresoCurso,
   ): Promise<ProgresoCursoAprendizaje> {
+    return encolarProgresoCurso(cursoId, () =>
+      this._guardarProgresoInterno(cursoId, cambios),
+    );
+  },
+
+  async guardarItemActivo(
+    cursoId: string,
+    actividadId: string,
+  ): Promise<void> {
+    if (!actividadId) return;
+    if (apiConfig.secundariaCursos) {
+      await encolarProgresoCurso(cursoId, async () => {
+        await secundariaGatewayService.guardarItemActivo(cursoId, actividadId);
+      });
+      return;
+    }
+    if (!apiConfig.useMock) return;
+    const actual = await progresosRepo.obtener(cursoId);
+    if (!actual) return;
+    await progresosRepo.actualizar(cursoId, {
+      ...actual,
+      itemActivoId: actividadId,
+      actualizadoEn: new Date().toISOString(),
+    });
+  },
+
+  async _guardarProgresoInterno(
+    cursoId: string,
+    cambios: ActualizarProgresoCurso,
+  ): Promise<ProgresoCursoAprendizaje> {
     if (apiConfig.secundariaCursos) {
       const actual =
         await secundariaGatewayService.obtenerContenidoAprendizaje(cursoId);
       const mapeado = mapearContenidoAprendizajeSecundaria(actual);
       const itemsAntes = new Set(mapeado.progreso.itemsCompletados);
-      const itemsNuevos = (cambios.itemsCompletados ?? []).filter(
-        (id) => !itemsAntes.has(id),
+      const itemsDeseados = new Set(cambios.itemsCompletados ?? []);
+      const itemsNuevos = [...itemsDeseados].filter((id) => !itemsAntes.has(id));
+      const itemsReabiertos = [...itemsAntes].filter(
+        (id) => !itemsDeseados.has(id),
       );
       const notas = cambios.notas ?? mapeado.progreso.notas;
       const notasNuevas = Object.entries(notas).filter(([id, valor]) => {
@@ -223,8 +274,30 @@ export const aprendizajeService = {
 
       let ultimo = mapeado.progreso;
 
+      for (const actividadId of itemsReabiertos) {
+        const resultado = await secundariaGatewayService.completarActividad(
+          cursoId,
+          actividadId,
+          { marcarCompletada: false },
+        );
+        ultimo = {
+          ...ultimo,
+          itemsCompletados: resultado.itemsCompletados,
+          notas: {
+            ...ultimo.notas,
+            ...(resultado.notas ?? {}),
+          },
+          progreso: Number(resultado.progresoPorcentaje),
+          estado:
+            resultado.estado === "Completado" ? "Completado" : "En curso",
+          itemActivoId: cambios.itemActivoId ?? ultimo.itemActivoId,
+          actualizadoEn: new Date().toISOString(),
+        };
+      }
+
       for (const [actividadId, nota] of notasNuevas) {
         if (itemsNuevos.includes(actividadId)) continue;
+        if (itemsReabiertos.includes(actividadId)) continue;
         const resultado = await secundariaGatewayService.completarActividad(
           cursoId,
           actividadId,
@@ -280,9 +353,20 @@ export const aprendizajeService = {
 
       if (
         !itemsNuevos.length &&
+        !itemsReabiertos.length &&
         !notasNuevas.length &&
         cambios.itemActivoId
       ) {
+        await secundariaGatewayService.guardarItemActivo(
+          cursoId,
+          cambios.itemActivoId,
+        );
+        ultimo = { ...ultimo, itemActivoId: cambios.itemActivoId };
+      } else if (cambios.itemActivoId) {
+        await secundariaGatewayService.guardarItemActivo(
+          cursoId,
+          cambios.itemActivoId,
+        );
         ultimo = { ...ultimo, itemActivoId: cambios.itemActivoId };
       }
 
@@ -329,6 +413,105 @@ export const aprendizajeService = {
       return progresosRepo.actualizar(cursoId, siguiente);
     }
     return progresosRepo.crear(siguiente);
+  },
+
+  async calificarQuiz(
+    cursoId: string,
+    actividadId: string,
+    respuestas: number[],
+  ): Promise<{
+    score: number;
+    passed: boolean;
+    notaMinima: number;
+    correctIndexes: number[];
+    itemsCompletados: string[];
+    notas: Record<string, number>;
+    progreso: number;
+    estado: Course["status"];
+    certificado?: {
+      ok?: boolean;
+      certificadoId?: string;
+      codigo?: string;
+      error?: string;
+    } | null;
+  }> {
+    if (apiConfig.secundariaCursos) {
+      const resultado = await secundariaGatewayService.calificarQuiz(
+        cursoId,
+        actividadId,
+        respuestas,
+      );
+      const progreso = Number(resultado.progresoPorcentaje ?? 0);
+      const notas: Record<string, number> = {};
+      for (const [id, valor] of Object.entries(resultado.notas ?? {})) {
+        const n = Number(valor);
+        if (Number.isFinite(n)) notas[id] = n;
+      }
+      if (Number.isFinite(Number(resultado.score))) {
+        notas[actividadId] = Number(resultado.score);
+      }
+      return {
+        score: Number(resultado.score ?? 0),
+        passed: Boolean(resultado.passed),
+        notaMinima: Number(resultado.notaMinima ?? 14),
+        correctIndexes: Array.isArray(resultado.correctIndexes)
+          ? resultado.correctIndexes.map((v) => Number(v))
+          : [],
+        itemsCompletados: (resultado.itemsCompletados ?? []).map(String),
+        notas,
+        progreso,
+        estado: progreso >= 100 ? "Completado" : "En curso",
+        certificado: resultado.certificado ?? null,
+      };
+    }
+
+    const contenido =
+      (await this.obtenerContenido(cursoId)) ??
+      crearContenidoCursoSemilla(cursoId);
+    const preguntas = contenido.quizzes[actividadId] ?? [];
+    let correctas = 0;
+    const correctIndexes: number[] = [];
+    preguntas.forEach((q, idx) => {
+      const correcta = typeof q.correctIndex === "number" ? q.correctIndex : 0;
+      correctIndexes.push(correcta);
+      if (respuestas[idx] === correcta) correctas += 1;
+    });
+    const score =
+      preguntas.length === 0
+        ? 0
+        : Math.round((correctas / preguntas.length) * 20);
+    const notaMinima = 14;
+    const passed = score >= notaMinima;
+    const progresoActual = await this.obtenerProgreso(cursoId);
+    const itemsCompletados = new Set(progresoActual?.itemsCompletados ?? []);
+    if (passed) itemsCompletados.add(actividadId);
+    const notas = {
+      ...(progresoActual?.notas ?? {}),
+      [actividadId]: score,
+    };
+    const total = totalItemsContenido(contenido);
+    const progreso =
+      total > 0 ? Math.round((itemsCompletados.size / total) * 100) : 0;
+    const estado: Course["status"] =
+      progreso >= 100 ? "Completado" : "En curso";
+    await this.guardarProgreso(cursoId, {
+      itemsCompletados: [...itemsCompletados],
+      notas,
+      itemActivoId: actividadId,
+      progreso,
+      estado,
+    });
+    return {
+      score,
+      passed,
+      notaMinima,
+      correctIndexes,
+      itemsCompletados: [...itemsCompletados],
+      notas,
+      progreso,
+      estado,
+      certificado: null,
+    };
   },
 
   async listarProgresos(): Promise<ProgresoCursoAprendizaje[]> {

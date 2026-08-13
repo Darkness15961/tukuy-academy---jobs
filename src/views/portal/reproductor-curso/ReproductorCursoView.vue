@@ -13,6 +13,7 @@ import {
   FileText,
   GraduationCap,
   HelpCircle,
+  Lock,
   MessageSquare,
   Play,
   RefreshCw,
@@ -22,7 +23,7 @@ import {
   UserRound,
   X,
 } from "lucide-vue-next";
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import Skeleton from "primevue/skeleton";
 
@@ -38,14 +39,24 @@ import {
   cursoEstaMatriculado,
   cursoRequiereCompra,
 } from "@/lib/acceso-curso";
-import { urlEmbedYoutube } from "@/lib/youtube";
+import {
+  guardarProgresoVideoSegundos,
+  leerProgresoVideoSegundos,
+  limpiarProgresoVideo,
+  urlEmbedYoutube,
+} from "@/lib/youtube";
 import type { Course } from "@/types/academia";
 import type {
   ContenidoCursoAprendizaje,
   ItemAprendizaje,
   PreguntaQuiz,
+  RecursoAprendizaje,
 } from "@/types/aprendizaje.types";
 import { usePortalContext } from "../composables/usePortalContext";
+import { asegurarCursosCargados } from "@/composables/useCursos";
+import { apiConfig } from "@/api/config";
+import { secundariaGatewayService } from "@/api/services/secundaria-gateway.service";
+import { mapearContenidoAprendizajeSecundaria } from "@/api/services/mapper-curso-secundaria";
 
 const route = useRoute();
 const router = useRouter();
@@ -53,8 +64,12 @@ const portal = usePortalContext();
 const { contextoActivo } = useContextoSesion();
 
 const courseId = computed(() => route.params.courseId as string);
+/** Fallback si el catálogo aún no trae el curso (deep-link raro). */
+const courseFallback = ref<Course | null>(null);
 const course = computed(
-  () => portal.courses.value.find((c) => c.id === courseId.value) ?? null,
+  () =>
+    portal.courses.value.find((c) => c.id === courseId.value) ??
+    courseFallback.value,
 );
 
 const cargando = ref(true);
@@ -73,6 +88,10 @@ const quizResult = ref<{
   score: number;
   passed: boolean;
   submitted: boolean;
+  correctIndexes?: number[];
+  enviando?: boolean;
+  error?: string;
+  mostrandoRevision?: boolean;
 } | null>(null);
 
 const activeItem = computed<ItemAprendizaje>(() => {
@@ -90,11 +109,119 @@ const activeItem = computed<ItemAprendizaje>(() => {
   };
 });
 
-const embedYoutube = computed(() =>
-  activeItem.value.type === "video"
-    ? urlEmbedYoutube(activeItem.value.videoUrl)
-    : null,
+const embedYoutube = computed(() => {
+  if (activeItem.value.type !== "video") return null;
+  const start = leerProgresoVideoSegundos(courseId.value, activeItem.value.id);
+  return urlEmbedYoutube(activeItem.value.videoUrl, {
+    startSeconds: start > 5 ? start : 0,
+    enableJsApi: true,
+  });
+});
+
+const iframeYoutube = ref<HTMLIFrameElement | null>(null);
+let timerProgresoVideo: ReturnType<typeof setInterval> | null = null;
+let ytPlayer: {
+  getCurrentTime?: () => number;
+  destroy?: () => void;
+} | null = null;
+
+declare global {
+  interface Window {
+    YT?: {
+      Player: new (
+        el: HTMLElement | string,
+        opts: Record<string, unknown>,
+      ) => {
+        getCurrentTime: () => number;
+        destroy: () => void;
+      };
+    };
+    onYouTubeIframeAPIReady?: () => void;
+  }
+}
+
+function cargarApiYoutube(): Promise<void> {
+  if (typeof window === "undefined") return Promise.resolve();
+  if (window.YT?.Player) return Promise.resolve();
+  return new Promise((resolve) => {
+    const previo = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = () => {
+      previo?.();
+      resolve();
+    };
+    if (!document.querySelector('script[data-tukuy-yt]')) {
+      const script = document.createElement("script");
+      script.src = "https://www.youtube.com/iframe_api";
+      script.async = true;
+      script.dataset.tukuyYt = "1";
+      document.head.appendChild(script);
+    }
+  });
+}
+
+async function montarPlayerYoutube() {
+  if (activeItem.value.type !== "video" || !iframeYoutube.value) return;
+  if (!embedYoutube.value) return;
+  try {
+    await cargarApiYoutube();
+    if (!window.YT?.Player || !iframeYoutube.value) return;
+    ytPlayer?.destroy?.();
+    ytPlayer = new window.YT.Player(iframeYoutube.value, {
+      events: {
+        onStateChange: (evento: { data?: number }) => {
+          // 0 = ended
+          if (evento.data === 0) {
+            limpiarProgresoVideo(courseId.value, activeItem.value.id);
+            if (!completedItems.value.includes(activeItem.value.id)) {
+              void marcarActividadCompleta(activeItem.value.id);
+            }
+          }
+        },
+      },
+    });
+    if (timerProgresoVideo) clearInterval(timerProgresoVideo);
+    timerProgresoVideo = setInterval(() => {
+      const t = ytPlayer?.getCurrentTime?.();
+      if (typeof t === "number" && Number.isFinite(t) && t > 0) {
+        guardarProgresoVideoSegundos(
+          courseId.value,
+          activeItem.value.id,
+          t,
+        );
+      }
+    }, 4000);
+  } catch {
+    // Sin API: el embed igual funciona; solo no hay resume fino.
+  }
+}
+
+function destruirPlayerYoutube() {
+  if (timerProgresoVideo) {
+    clearInterval(timerProgresoVideo);
+    timerProgresoVideo = null;
+  }
+  try {
+    ytPlayer?.destroy?.();
+  } catch {
+    /* noop */
+  }
+  ytPlayer = null;
+}
+
+watch(
+  () => [activeItem.value.id, activeItem.value.type, embedYoutube.value] as const,
+  async () => {
+    destruirPlayerYoutube();
+    if (activeItem.value.type === "video" && embedYoutube.value) {
+      await nextTick();
+      await montarPlayerYoutube();
+    }
+  },
 );
+
+onBeforeUnmount(() => {
+  destruirPlayerYoutube();
+});
 
 const totalItemsCount = computed(() =>
   syllabusSections.value.reduce((sum, s) => sum + s.items.length, 0),
@@ -125,9 +252,46 @@ const averageGrade = computed(() => {
   return Math.round((total / gradedActivities.value.length) * 10) / 10;
 });
 
+const notaMinimaCurso = computed(() => {
+  const desdeContenido = Number(contenido.value?.notaMinima);
+  if (Number.isFinite(desdeContenido) && desdeContenido > 0) {
+    return desdeContenido;
+  }
+  return 14;
+});
+
+const itemsEnOrden = computed(() =>
+  syllabusSections.value.flatMap((section) => section.items),
+);
+
+function actividadBloqueada(itemId: string): boolean {
+  const orden = itemsEnOrden.value;
+  const idx = orden.findIndex((item) => item.id === itemId);
+  if (idx <= 0) return false;
+  for (let i = 0; i < idx; i += 1) {
+    if (!completedItems.value.includes(orden[i].id)) return true;
+  }
+  return false;
+}
+
+const recursosModuloActivo = computed<RecursoAprendizaje[]>(() => {
+  for (const section of syllabusSections.value) {
+    if (section.items.some((item) => item.id === activeItemId.value)) {
+      return section.recursos ?? [];
+    }
+  }
+  return [];
+});
+
+function abrirRecurso(recurso: RecursoAprendizaje) {
+  const url = recurso.contenido?.trim();
+  if (!url) return;
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
 const gradeStatus = computed(() => {
   if (!gradedActivities.value.length) return "Pendiente";
-  return averageGrade.value >= 14 ? "Aprobando" : "En riesgo";
+  return averageGrade.value >= notaMinimaCurso.value ? "Aprobando" : "En riesgo";
 });
 
 const collapsedSections = ref<Record<string, boolean>>({});
@@ -193,9 +357,65 @@ async function persistirProgreso() {
 async function cargarCurso() {
   cargando.value = true;
   errorCarga.value = null;
+  courseFallback.value = null;
   try {
+    // F5 / enlace directo: el catálogo aún no está en memoria (sí lo está
+    // al entrar desde "Continuar curso"). Esperar antes de buscar el id.
+    await asegurarCursosCargados();
     await portal.sincronizarProgresosCursos();
-    const cursoActual = course.value;
+    await nextTick();
+
+    let cursoActual = course.value;
+    if (!cursoActual && apiConfig.secundariaCursos) {
+      // Deep-link: el id puede existir en secundaria aunque el merge del
+      // catálogo falle. Cargamos contenido y armamos meta mínima.
+      const data =
+        await secundariaGatewayService.obtenerContenidoAprendizaje(
+          courseId.value,
+        );
+      if (!data.ok) {
+        errorCarga.value = "No encontramos este curso.";
+        return;
+      }
+      if (!data.matriculaId) {
+        await router.replace(`/tukuy-academy/cursos/${courseId.value}`);
+        return;
+      }
+      const mapeado = mapearContenidoAprendizajeSecundaria(data);
+      const titulo = String(data.curso?.titulo ?? "Curso");
+      courseFallback.value = {
+        id: courseId.value,
+        title: titulo,
+        category: String(data.curso?.categoria ?? ""),
+        duration: "",
+        level: "Basico",
+        mode: "Virtual",
+        progress: mapeado.progreso.progreso,
+        status: mapeado.progreso.estado,
+        pricing: data.curso?.gratuito === false ? "paid" : "free",
+        price: Number(data.curso?.precio ?? 0),
+        imageTone: "from-primary/20 to-primary/5",
+        image: "",
+        origen: "tukuy",
+        alcance: "PUBLICO",
+      };
+      contenido.value = mapeado.contenido;
+      collapsedSections.value = Object.fromEntries(
+        mapeado.contenido.modulos.map((m) => [m.id, false]),
+      );
+      completedItems.value = [...mapeado.progreso.itemsCompletados];
+      userGrades.value = { ...mapeado.progreso.notas };
+      apuntes.value = mapeado.apuntes;
+      activeItemId.value =
+        mapeado.progreso.itemActivoId ||
+        mapeado.contenido.modulos[0]?.items[0]?.id ||
+        "v1.1";
+      restaurarEstadoQuizActivo();
+      await cargarEntregaActiva();
+      await cargarChatDocente();
+      return;
+    }
+
     if (!cursoActual) {
       errorCarga.value = "No encontramos este curso.";
       return;
@@ -246,10 +466,10 @@ async function cargarCurso() {
 function restaurarEstadoQuizActivo() {
   selectedAnswers.value = {};
   if (completedItems.value.includes(activeItemId.value)) {
-    const savedGrade = userGrades.value[activeItemId.value] ?? 18;
+    const savedGrade = userGrades.value[activeItemId.value] ?? notaMinimaCurso.value;
     quizResult.value = {
       score: savedGrade,
-      passed: savedGrade >= 14,
+      passed: savedGrade >= notaMinimaCurso.value,
       submitted: true,
     };
   } else {
@@ -335,7 +555,30 @@ function irAMensajeDocente() {
 }
 
 
+async function marcarActividadCompleta(itemId: string) {
+  if (!itemId || completedItems.value.includes(itemId)) return;
+  if (actividadBloqueada(itemId)) return;
+  const item = encontrarItem(itemId);
+  if (item && (item.type === "quiz" || item.type === "assignment")) return;
+  completedItems.value = [...completedItems.value, itemId];
+  await persistirProgreso();
+}
+
+function encontrarItem(itemId: string): ItemAprendizaje | undefined {
+  for (const s of syllabusSections.value) {
+    const found = s.items.find((item) => item.id === itemId);
+    if (found) return found;
+  }
+  return undefined;
+}
+
 async function toggleItem(itemId: string) {
+  const item = encontrarItem(itemId);
+  if (item && (item.type === "quiz" || item.type === "assignment")) return;
+  if (actividadBloqueada(itemId) && !completedItems.value.includes(itemId)) {
+    return;
+  }
+
   if (completedItems.value.includes(itemId)) {
     completedItems.value = completedItems.value.filter((id) => id !== itemId);
   } else {
@@ -346,44 +589,49 @@ async function toggleItem(itemId: string) {
 
 async function submitQuiz(itemId: string) {
   const questions = quizQuestionsDatabase.value[itemId];
-  if (!questions) return;
+  if (!questions?.length || quizResult.value?.enviando) return;
 
-  let correctCount = 0;
-  questions.forEach((q, idx) => {
-    if (selectedAnswers.value[idx] === q.correctIndex) correctCount++;
+  const respuestas = questions.map((_, idx) => {
+    const valor = selectedAnswers.value[idx];
+    return typeof valor === "number" ? valor : -1;
   });
+  if (respuestas.some((r) => r < 0)) return;
 
-  const score = Math.round((correctCount / questions.length) * 20);
-  const passed = score >= 14;
+  quizResult.value = {
+    score: 0,
+    passed: false,
+    submitted: false,
+    enviando: true,
+    error: undefined,
+  };
 
-  quizResult.value = { score, passed, submitted: true };
-  userGrades.value = { ...userGrades.value, [itemId]: score };
-
-  if (passed && !completedItems.value.includes(itemId)) {
-    completedItems.value = [...completedItems.value, itemId];
+  try {
+    const resultado = await aprendizajeService.calificarQuiz(
+      courseId.value,
+      itemId,
+      respuestas,
+    );
+    quizResult.value = {
+      score: resultado.score,
+      passed: resultado.passed,
+      submitted: true,
+      correctIndexes: resultado.correctIndexes,
+    };
+    userGrades.value = { ...userGrades.value, ...resultado.notas };
+    completedItems.value = [...resultado.itemsCompletados];
+    sincronizarPortal(resultado.progreso, resultado.estado);
+  } catch (causa) {
+    quizResult.value = {
+      score: 0,
+      passed: false,
+      submitted: false,
+      enviando: false,
+      error:
+        causa instanceof Error
+          ? causa.message
+          : "No se pudo calificar el cuestionario.",
+    };
   }
-
-  await persistirProgreso();
-}
-
-async function simulateQuickComplete() {
-  const all = syllabusSections.value.flatMap((s) =>
-    s.items.filter((item) => item.type !== "assignment").map((item) => item.id),
-  );
-  completedItems.value = all;
-  const notas: Record<string, number> = { ...userGrades.value };
-  Object.keys(quizQuestionsDatabase.value).forEach((quizId) => {
-    notas[quizId] = 20;
-  });
-  userGrades.value = notas;
-  await persistirProgreso();
-}
-
-async function simulateReset() {
-  completedItems.value = [];
-  userGrades.value = {};
-  quizResult.value = null;
-  await persistirProgreso();
 }
 
 function goBack() {
@@ -395,13 +643,25 @@ function toggleSection(sectionId: string) {
 }
 
 function selectItem(itemId: string) {
+  if (actividadBloqueada(itemId)) return;
   activeItemId.value = itemId;
   sidebarOpen.value = false;
   restaurarEstadoQuizActivo();
   archivoSeleccionado.value = undefined;
   errorEntrega.value = "";
   void cargarEntregaActiva();
-  void persistirProgreso();
+  programarGuardadoItemActivo();
+}
+
+let timerItemActivo: ReturnType<typeof setTimeout> | null = null;
+function programarGuardadoItemActivo() {
+  if (timerItemActivo) clearTimeout(timerItemActivo);
+  timerItemActivo = setTimeout(() => {
+    void aprendizajeService.guardarItemActivo(
+      courseId.value,
+      activeItemId.value,
+    );
+  }, 400);
 }
 
 async function cargarEntregaActiva() {
@@ -414,9 +674,7 @@ async function cargarEntregaActiva() {
   entregaActual.value = entregas.find(
     (entrega) =>
       entrega.estudianteId === estudianteId &&
-      entrega.actividadId.endsWith(
-        `act-${Number(activeItem.value.id.match(/\d+/)?.[0] ?? 5)}`,
-      ),
+      entrega.actividadId === activeItem.value.id,
   );
 }
 
@@ -612,11 +870,12 @@ watch(courseId, cargarCurso);
           <template v-if="activeItem.type === 'video'">
             <iframe
               v-if="embedYoutube"
-              :key="activeItem.id"
+              :key="`${activeItem.id}-${embedYoutube}`"
+              ref="iframeYoutube"
               class="absolute inset-0 h-full w-full"
               :src="embedYoutube"
               :title="activeItem.title"
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
               allowfullscreen
               referrerpolicy="strict-origin-when-cross-origin"
             />
@@ -627,7 +886,7 @@ watch(courseId, cargarCurso);
               <Button
                 size="sm"
                 class="bg-primary text-white hover:bg-primary/90 font-semibold shadow-lg"
-                @click="simulateQuickComplete"
+                @click="marcarActividadCompleta(activeItem.id)"
               >
                 Marcar como vista
               </Button>
@@ -659,7 +918,7 @@ watch(courseId, cargarCurso);
               <Button
                 size="sm"
                 class="mt-2 bg-primary text-white hover:bg-primary/90 font-semibold"
-                @click="simulateQuickComplete"
+                @click="marcarActividadCompleta(activeItem.id)"
               >
                 Marcar como vista
               </Button>
@@ -694,7 +953,8 @@ watch(courseId, cargarCurso);
                 >
                   Responde las siguientes preguntas de opción múltiple basadas
                   en el material de este módulo. Se requiere una nota mínima
-                  aprobatoria de <strong>14/20</strong> para completar esta
+                  aprobatoria de
+                  <strong>{{ notaMinimaCurso }}/20</strong> para completar esta
                   lección.
                 </p>
 
@@ -735,17 +995,28 @@ watch(courseId, cargarCurso);
                   </div>
                 </div>
 
-                <div class="flex items-center justify-end gap-3 pt-2">
+                <div class="flex flex-col items-end gap-2 pt-2">
+                  <p
+                    v-if="quizResult?.error"
+                    class="text-xs text-red-400 max-w-md text-right"
+                  >
+                    {{ quizResult.error }}
+                  </p>
                   <Button
                     size="sm"
                     class="bg-amber-600 hover:bg-amber-500 font-bold text-white px-6 py-2.5 h-10"
                     :disabled="
+                      quizResult?.enviando ||
                       Object.keys(selectedAnswers).length <
-                      (quizQuestionsDatabase[activeItem.id]?.length || 0)
+                        (quizQuestionsDatabase[activeItem.id]?.length || 0)
                     "
                     @click="submitQuiz(activeItem.id)"
                   >
-                    Enviar y Calificar cuestionario
+                    {{
+                      quizResult?.enviando
+                        ? "Calificando…"
+                        : "Enviar y Calificar cuestionario"
+                    }}
                   </Button>
                 </div>
               </div>
@@ -754,97 +1025,176 @@ watch(courseId, cargarCurso);
             <!-- When Submitted (Results screen) -->
             <div
               v-else
-              class="absolute inset-0 flex flex-col items-center justify-center p-6 bg-slate-900 text-white text-center"
+              class="absolute inset-0 flex flex-col bg-slate-900 text-white p-6 overflow-y-auto"
             >
-              <div class="max-w-md mx-auto space-y-6">
-                <!-- Result icon -->
-                <div class="flex justify-center">
-                  <div
-                    class="rounded-full p-5 ring-8"
-                    :class="
-                      quizResult.passed
-                        ? 'bg-emerald-500/10 ring-emerald-500/15 text-emerald-400'
-                        : 'bg-red-500/10 ring-red-500/15 text-red-400'
-                    "
-                  >
-                    <CheckCircle2
-                      v-if="quizResult.passed"
-                      class="h-10 w-10 text-emerald-400"
-                    />
-                    <X v-else class="h-10 w-10 text-red-400" />
+              <div
+                class="max-w-2xl mx-auto w-full space-y-6"
+                :class="quizResult.mostrandoRevision ? '' : 'text-center'"
+              >
+                <template v-if="!quizResult.mostrandoRevision">
+                  <!-- Result icon -->
+                  <div class="flex justify-center">
+                    <div
+                      class="rounded-full p-5 ring-8"
+                      :class="
+                        quizResult.passed
+                          ? 'bg-emerald-500/10 ring-emerald-500/15 text-emerald-400'
+                          : 'bg-red-500/10 ring-red-500/15 text-red-400'
+                      "
+                    >
+                      <CheckCircle2
+                        v-if="quizResult.passed"
+                        class="h-10 w-10 text-emerald-400"
+                      />
+                      <X v-else class="h-10 w-10 text-red-400" />
+                    </div>
                   </div>
-                </div>
 
-                <div class="space-y-2">
-                  <span
-                    class="text-xs font-bold tracking-wider uppercase"
-                    :class="
-                      quizResult.passed ? 'text-emerald-400' : 'text-red-400'
-                    "
-                  >
-                    {{
-                      quizResult.passed
-                        ? "¡Cuestionario Aprobado!"
-                        : "Cuestionario Desaprobado"
-                    }}
-                  </span>
-                  <h3 class="text-lg font-bold text-white">
-                    {{ activeItem.title }}
-                  </h3>
-                </div>
+                  <div class="space-y-2">
+                    <span
+                      class="text-xs font-bold tracking-wider uppercase"
+                      :class="
+                        quizResult.passed ? 'text-emerald-400' : 'text-red-400'
+                      "
+                    >
+                      {{
+                        quizResult.passed
+                          ? "¡Cuestionario Aprobado!"
+                          : "Cuestionario Desaprobado"
+                      }}
+                    </span>
+                    <h3 class="text-lg font-bold text-white">
+                      {{ activeItem.title }}
+                    </h3>
+                  </div>
 
-                <!-- Score indicator -->
-                <div
-                  class="bg-slate-950/50 rounded-xl p-4 border border-slate-800 max-w-xs mx-auto"
-                >
-                  <p
-                    class="text-xs font-bold uppercase tracking-wide text-slate-400"
+                  <div
+                    class="bg-slate-950/50 rounded-xl p-4 border border-slate-800 max-w-xs mx-auto"
                   >
-                    Calificación obtenida
-                  </p>
-                  <strong
-                    class="text-4xl font-black block mt-1"
-                    :class="
-                      quizResult.passed ? 'text-emerald-400' : 'text-red-400'
-                    "
-                  >
-                    {{ quizResult.score }} / 20
-                  </strong>
-                  <p class="mt-1 text-[10px] text-slate-400">
-                    {{
-                      quizResult.passed
-                        ? "Nota aprobada para acreditación."
-                        : "Requiere un mínimo de 14 para aprobar."
-                    }}
-                  </p>
-                </div>
+                    <p
+                      class="text-xs font-bold uppercase tracking-wide text-slate-400"
+                    >
+                      Calificación obtenida
+                    </p>
+                    <strong
+                      class="text-4xl font-black block mt-1"
+                      :class="
+                        quizResult.passed ? 'text-emerald-400' : 'text-red-400'
+                      "
+                    >
+                      {{ quizResult.score }} / 20
+                    </strong>
+                    <p class="mt-1 text-[10px] text-slate-400">
+                      {{
+                        quizResult.passed
+                          ? "Nota aprobada para acreditación."
+                          : `Requiere un mínimo de ${notaMinimaCurso} para aprobar.`
+                      }}
+                    </p>
+                  </div>
 
-                <div class="flex justify-center gap-3 pt-2">
-                  <Button
-                    v-if="!quizResult.passed"
-                    size="sm"
-                    class="bg-amber-600 hover:bg-amber-500 font-bold text-white px-5"
-                    @click="
-                      quizResult = null;
-                      selectedAnswers = {};
-                    "
-                  >
-                    <RefreshCw class="mr-1.5 h-3.5 w-3.5" />
-                    Intentar de nuevo
-                  </Button>
-                  <Button
-                    v-else
-                    size="sm"
-                    variant="outline"
-                    class="border-slate-700 bg-slate-800 text-white hover:bg-slate-700"
-                    @click="
-                      quizResult = null;
-                      selectedAnswers = {};
-                    "
-                  >
-                    Ver mis respuestas
-                  </Button>
-                </div>
+                  <div class="flex justify-center gap-3 pt-2">
+                    <Button
+                      v-if="!quizResult.passed"
+                      size="sm"
+                      class="bg-amber-600 hover:bg-amber-500 font-bold text-white px-5"
+                      @click="
+                        quizResult = null;
+                        selectedAnswers = {};
+                      "
+                    >
+                      <RefreshCw class="mr-1.5 h-3.5 w-3.5" />
+                      Intentar de nuevo
+                    </Button>
+                    <Button
+                      v-if="quizResult.correctIndexes?.length"
+                      size="sm"
+                      variant="outline"
+                      class="border-slate-700 bg-slate-800 text-white hover:bg-slate-700"
+                      @click="quizResult = { ...quizResult, mostrandoRevision: true }"
+                    >
+                      Ver mis respuestas
+                    </Button>
+                  </div>
+                </template>
+
+                <template v-else>
+                  <div class="flex items-center justify-between gap-3">
+                    <div>
+                      <p
+                        class="text-[10px] font-bold uppercase tracking-wider text-amber-400"
+                      >
+                        Revisión del intento
+                      </p>
+                      <h3 class="text-base font-bold text-white">
+                        {{ activeItem.title }}
+                      </h3>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      class="border-slate-700 bg-slate-800 text-white hover:bg-slate-700"
+                      @click="
+                        quizResult = { ...quizResult, mostrandoRevision: false }
+                      "
+                    >
+                      Volver al resultado
+                    </Button>
+                  </div>
+
+                  <div class="space-y-4">
+                    <div
+                      v-for="(q, qIdx) in quizQuestionsDatabase[activeItem.id]"
+                      :key="qIdx"
+                      class="space-y-2.5 bg-slate-950/40 p-4 rounded-lg border border-slate-800 text-left"
+                    >
+                      <h4 class="text-xs font-bold text-slate-200">
+                        {{ qIdx + 1 }}. {{ q.question }}
+                      </h4>
+                      <div class="grid gap-2">
+                        <div
+                          v-for="(opt, oIdx) in q.options"
+                          :key="oIdx"
+                          class="rounded-md p-2.5 text-xs border"
+                          :class="
+                            oIdx === quizResult.correctIndexes?.[qIdx]
+                              ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-200'
+                              : selectedAnswers[qIdx] === oIdx
+                                ? 'bg-red-500/15 border-red-500/40 text-red-200'
+                                : 'bg-slate-900 border-slate-800 text-slate-400'
+                          "
+                        >
+                          {{ opt }}
+                          <span
+                            v-if="oIdx === quizResult.correctIndexes?.[qIdx]"
+                            class="ml-2 text-[10px] font-bold uppercase"
+                            >Correcta</span
+                          >
+                          <span
+                            v-else-if="selectedAnswers[qIdx] === oIdx"
+                            class="ml-2 text-[10px] font-bold uppercase"
+                            >Tu respuesta</span
+                          >
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="flex justify-end gap-3 pt-1">
+                    <Button
+                      v-if="!quizResult.passed"
+                      size="sm"
+                      class="bg-amber-600 hover:bg-amber-500 font-bold text-white px-5"
+                      @click="
+                        quizResult = null;
+                        selectedAnswers = {};
+                      "
+                    >
+                      <RefreshCw class="mr-1.5 h-3.5 w-3.5" />
+                      Intentar de nuevo
+                    </Button>
+                  </div>
+                </template>
               </div>
             </div>
           </template>
@@ -875,11 +1225,14 @@ watch(courseId, cargarCurso);
 
               <div class="mt-4 flex flex-wrap justify-center gap-3">
                 <Button
+                  v-if="recursosModuloActivo.length"
                   size="sm"
                   variant="outline"
                   class="border-white/20 bg-card/10 text-white hover:bg-card/25"
+                  @click="abrirRecurso(recursosModuloActivo[0])"
                 >
-                  <Download class="mr-1.5 h-4 w-4" /> Descargar Material
+                  <Download class="mr-1.5 h-4 w-4" />
+                  {{ recursosModuloActivo[0].nombre || "Descargar material" }}
                 </Button>
                 <Button
                   size="sm"
@@ -889,7 +1242,12 @@ watch(courseId, cargarCurso);
                       : 'bg-blue-600 hover:bg-primary/100'
                   "
                   class="text-white font-semibold"
-                  @click="toggleItem(activeItem.id)"
+                  :disabled="actividadBloqueada(activeItem.id)"
+                  @click="
+                    completedItems.includes(activeItem.id)
+                      ? undefined
+                      : marcarActividadCompleta(activeItem.id)
+                  "
                 >
                   <CheckCircle2 class="mr-1.5 h-4 w-4" />
                   {{
@@ -1018,16 +1376,42 @@ watch(courseId, cargarCurso);
 
           <!-- Fake control bar at bottom of player -->
           <div
+            v-if="activeItem.type === 'video'"
             class="absolute bottom-0 left-0 right-0 flex items-center justify-between bg-slate-950/85 px-4 py-2.5 text-[11px] text-slate-400"
           >
-            <span>02:14 / 15:00</span>
+            <span>Continúa desde donde lo dejaste</span>
             <div class="h-1 flex-1 mx-4 rounded bg-slate-800 overflow-hidden">
               <div
                 class="h-full bg-primary transition-all duration-500"
                 :style="{ width: `${progressPercent}%` }"
               />
             </div>
-            <span>Calidad HD</span>
+            <span>Curso {{ progressPercent }}%</span>
+          </div>
+        </div>
+
+        <!-- Recursos del módulo activo -->
+        <div
+          v-if="recursosModuloActivo.length"
+          class="border-b border-border bg-muted/30 px-6 py-3"
+        >
+          <p
+            class="mb-2 text-[10px] font-bold uppercase tracking-wider text-muted-foreground"
+          >
+            Material del módulo
+          </p>
+          <div class="flex flex-wrap gap-2">
+            <Button
+              v-for="recurso in recursosModuloActivo"
+              :key="recurso.id"
+              size="sm"
+              variant="outline"
+              class="border-border bg-card text-foreground hover:bg-muted"
+              @click="abrirRecurso(recurso)"
+            >
+              <Download class="mr-1.5 h-3.5 w-3.5" />
+              {{ recurso.nombre }}
+            </Button>
           </div>
         </div>
 
@@ -1449,23 +1833,72 @@ watch(courseId, cargarCurso);
                 type="button"
                 class="w-full flex items-start gap-3 p-3 text-left transition duration-150"
                 :class="[
-                  activeItemId === item.id
-                    ? 'bg-primary/10 font-medium'
-                    : 'hover:bg-muted/50',
+                  actividadBloqueada(item.id)
+                    ? 'opacity-55 cursor-not-allowed'
+                    : activeItemId === item.id
+                      ? 'bg-primary/10 font-medium'
+                      : 'hover:bg-muted/50',
                 ]"
+                :aria-current="activeItemId === item.id ? 'true' : undefined"
+                :aria-disabled="actividadBloqueada(item.id) ? 'true' : undefined"
+                :title="
+                  actividadBloqueada(item.id)
+                    ? 'Completa la actividad anterior para desbloquear'
+                    : undefined
+                "
                 @click="selectItem(item.id)"
               >
-                <!-- Checkbox -->
+                <!-- Checkbox: solo video/lectura se pueden marcar a mano -->
                 <span
-                  class="shrink-0 mt-0.5 z-10"
+                  role="checkbox"
+                  tabindex="0"
+                  class="shrink-0 mt-0.5 z-10 rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+                  :aria-checked="completedItems.includes(item.id)"
+                  :aria-label="
+                    completedItems.includes(item.id)
+                      ? `Completada: ${item.title}`
+                      : `Marcar completada: ${item.title}`
+                  "
+                  :aria-disabled="
+                    item.type === 'quiz' ||
+                    item.type === 'assignment' ||
+                    actividadBloqueada(item.id)
+                      ? 'true'
+                      : undefined
+                  "
+                  :class="
+                    item.type === 'quiz' ||
+                    item.type === 'assignment' ||
+                    actividadBloqueada(item.id)
+                      ? 'pointer-events-none'
+                      : ''
+                  "
+                  :title="
+                    item.type === 'quiz'
+                      ? 'Se completa aprobando el cuestionario'
+                      : item.type === 'assignment'
+                        ? 'Se completa al entregar la tarea'
+                        : undefined
+                  "
                   @click.stop="toggleItem(item.id)"
+                  @keydown.enter.prevent.stop="toggleItem(item.id)"
+                  @keydown.space.prevent.stop="toggleItem(item.id)"
                 >
+                  <Lock
+                    v-if="actividadBloqueada(item.id)"
+                    class="h-5 w-5 text-muted-foreground/50"
+                    aria-hidden="true"
+                  />
                   <CheckCircle2
+                    v-else
                     class="h-5 w-5 transition duration-150"
+                    aria-hidden="true"
                     :class="[
                       completedItems.includes(item.id)
                         ? 'text-primary fill-primary/10'
-                        : 'text-muted-foreground/60 hover:text-muted-foreground',
+                        : item.type === 'quiz' || item.type === 'assignment'
+                          ? 'text-muted-foreground/35'
+                          : 'text-muted-foreground/60 hover:text-muted-foreground',
                     ]"
                   />
                 </span>

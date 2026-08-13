@@ -1,6 +1,9 @@
 -- Fix: obtener contenido hacía INSERT (asegurar quiz) estando STABLE
 -- → "cannot execute INSERT in a read-only transaction".
 -- Ejecutar en el SQL Editor del proyecto SECUNDARIO.
+-- NOTA: las migraciones 1211–1216 recreaban la función como STABLE y
+-- pisaban este fix. Si ya aplicaste 121x, ejecuta también
+-- 20260812190000_contenido_aprendizaje_volatile_again.sql.
 begin;
 
 -- VOLATILE: puede crear quiz demo / leer con side-effects de escritura.
