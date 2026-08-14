@@ -101,7 +101,11 @@ const avisosPendientes = computed(
   () => avisos.value.filter((aviso) => !aviso.leida).length,
 );
 async function cargarAvisos() {
-  avisos.value = await organizacionService.notificaciones.listar();
+  try {
+    avisos.value = await organizacionService.notificaciones.listar();
+  } catch {
+    avisos.value = [];
+  }
 }
 
 onMounted(() => {
@@ -230,11 +234,17 @@ const gruposBase: GrupoNav[] = [
   },
   {
     id: "estructura",
-    etiqueta: "Estructura",
+    etiqueta: "Accesos y estructura",
     icono: Network,
     hijos: [
       {
-        etiqueta: "Estructura y nodos",
+        etiqueta: "Accesos",
+        ruta: "/organizacion/accesos",
+        icono: ShieldCheck,
+        permiso: "equipos.administrar",
+      },
+      {
+        etiqueta: "Estructura",
         ruta: "/organizacion/equipos",
         icono: Network,
         permiso: "equipos.administrar",

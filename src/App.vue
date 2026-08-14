@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, watch } from "vue";
 import { RouterView, useRoute } from "vue-router";
+import Toast from "primevue/toast";
 
 import { useAuth } from "@/composables/useAuth";
 import { useTema } from "@/composables/useTema";
@@ -33,6 +34,7 @@ watch(
 
 <template>
   <div class="min-h-screen bg-background text-foreground">
+    <Toast position="top-right" />
     <RouterView />
   </div>
 </template>

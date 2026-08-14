@@ -39,6 +39,8 @@ export type PreguntaQuiz = {
   options: string[];
   /** Solo en mock/constructor; el alumno califica en servidor. */
   correctIndex?: number;
+  /** Imagen o diagrama de referencia (URL pública o clave S3). */
+  imagenReferencia?: string;
 };
 
 /** Contenido didáctico de un curso (temario + quizzes). `id` = cursoId. */

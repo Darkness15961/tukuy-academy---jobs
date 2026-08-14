@@ -51,6 +51,21 @@ function crearRevision(
           id: `${cursoId}-m1-r${i}`,
         })),
         actividades: ["Cuestionario diagnóstico"],
+        actividadesDetalle: [
+          {
+            id: `${cursoId}-m1-a1`,
+            titulo: "Introducción y alcance",
+            tipo: "lectura",
+            tipoEtiqueta: "Lectura",
+          },
+          {
+            id: `${cursoId}-m1-a2`,
+            titulo: "Cuestionario diagnóstico",
+            tipo: "quiz",
+            tipoEtiqueta: "Cuestionario",
+            totalPreguntas: 4,
+          },
+        ],
       },
       {
         id: `${cursoId}-m2`,
@@ -67,10 +82,25 @@ function crearRevision(
             nombre: "Demostración del procedimiento",
             tipo: "VIDEO",
             tamanio: "18 min",
-            urlDemo: "#video-demo",
+            urlDemo: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
           },
         ],
         actividades: ["Entrega práctica en PDF", "Lista de verificación"],
+        actividadesDetalle: [
+          {
+            id: `${cursoId}-m2-a1`,
+            titulo: "Demostración del procedimiento",
+            tipo: "video",
+            tipoEtiqueta: "Video",
+            urlYoutube: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+          },
+          {
+            id: `${cursoId}-m2-a2`,
+            titulo: "Entrega práctica en PDF",
+            tipo: "assignment",
+            tipoEtiqueta: "Entrega PDF",
+          },
+        ],
       },
       {
         id: `${cursoId}-m3`,

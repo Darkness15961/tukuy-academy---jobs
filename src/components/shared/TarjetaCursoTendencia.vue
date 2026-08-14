@@ -271,6 +271,7 @@ function calculatePanelPosition() {
       </h3>
 
       <p
+        v-if="displayCourse.instructor"
         class="text-sm"
         :class="isDark ? 'text-white/65' : 'text-muted-foreground'"
       >
@@ -303,17 +304,19 @@ function calculatePanelPosition() {
         </Badge>
 
         <div
+          v-if="displayCourse.rating"
           class="flex items-center gap-1 text-sm font-bold text-accent"
         >
           <Star class="h-3.5 w-3.5 fill-current" />
-          <span>{{ formatCourseRating(displayCourse.rating!) }}</span>
+          <span>{{ formatCourseRating(displayCourse.rating) }}</span>
         </div>
 
         <span
+          v-if="displayCourse.reviewCount"
           class="text-xs"
           :class="isDark ? 'text-white/55' : 'text-muted-foreground'"
         >
-          ({{ formatReviewCount(displayCourse.reviewCount!) }} valoraciones)
+          ({{ formatReviewCount(displayCourse.reviewCount) }} valoraciones)
         </span>
       </div>
 

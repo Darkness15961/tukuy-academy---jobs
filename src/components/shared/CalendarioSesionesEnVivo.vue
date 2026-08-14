@@ -578,7 +578,7 @@ function pedirProgramar() {
                     @click.stop="emit('unirse', sesion)"
                   >
                     <Video class="h-3.5 w-3.5" />
-                    Meet
+                    {{ sesion.meetSimulado ? "Meet demo" : "Meet" }}
                   </Button>
                 </div>
               </CardContent>

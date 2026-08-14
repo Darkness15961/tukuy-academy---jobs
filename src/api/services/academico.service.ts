@@ -205,6 +205,31 @@ function base64ABlob(
   return new Blob([bytes], { type: mime });
 }
 
+function esReferenciaAlmacenamiento(referencia: string | null | undefined) {
+  const ref = String(referencia ?? "").trim();
+  if (!ref) return false;
+  // Placeholders del listado / IndexedDB local: no son claves S3.
+  if (ref.startsWith("secundaria/") || ref.startsWith("indexeddb/")) {
+    return false;
+  }
+  return true;
+}
+
+function necesitaDetalleArchivo(archivo?: {
+  contenidoBase64?: string;
+  referencia?: string;
+} | null) {
+  if (!archivo) return true;
+  if (archivo.contenidoBase64) return false;
+  return !esReferenciaAlmacenamiento(archivo.referencia);
+}
+
+async function urlDesdeReferenciaEntrega(referencia: string) {
+  const ref = referencia.trim();
+  if (/^https?:\/\//i.test(ref) || ref.startsWith("blob:")) return ref;
+  return storageAcademia.urlDescargaEntrega(ref);
+}
+
 function abrirBlobEnPestana(blob: Blob, ventana?: Window | null) {
   const url = URL.createObjectURL(blob);
   const destino = ventana ?? window.open(url, "_blank", "noopener,noreferrer");
@@ -218,6 +243,19 @@ function abrirBlobEnPestana(blob: Blob, ventana?: Window | null) {
     destino.location.href = url;
   }
   window.setTimeout(() => URL.revokeObjectURL(url), 120_000);
+}
+
+function abrirUrlEnPestana(url: string, ventana?: Window | null) {
+  if (ventana && !ventana.closed) {
+    ventana.location.href = url;
+    return;
+  }
+  const destino = window.open(url, "_blank", "noopener,noreferrer");
+  if (!destino) {
+    throw new Error(
+      "El navegador bloqueó la vista previa. Permite ventanas emergentes o usa Descargar.",
+    );
+  }
 }
 
 function crearModulosCurso(cursoId: string): ModuloCursoAcademico[] {
@@ -928,10 +966,9 @@ export const academicoService = {
 
   async descargarArchivo(entrega: EntregaActividadAcademica) {
     if (apiConfig.secundariaCursos) {
-      const detalle =
-        entrega.archivo?.contenidoBase64
-          ? entrega
-          : await this.obtenerEntrega(entrega.id);
+      const detalle = necesitaDetalleArchivo(entrega.archivo)
+        ? await this.obtenerEntrega(entrega.id)
+        : entrega;
       if (detalle?.archivo?.contenidoBase64) {
         const blob = base64ABlob(
           detalle.archivo.contenidoBase64,
@@ -943,6 +980,17 @@ export const academicoService = {
         enlace.download = detalle.archivo.nombre || "entrega.pdf";
         enlace.click();
         window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+        return;
+      }
+      const referencia = detalle?.archivo?.referencia;
+      if (esReferenciaAlmacenamiento(referencia)) {
+        const url = await urlDesdeReferenciaEntrega(referencia!);
+        const enlace = document.createElement("a");
+        enlace.href = url;
+        enlace.target = "_blank";
+        enlace.rel = "noopener noreferrer";
+        enlace.download = detalle?.archivo?.nombre || "entrega.pdf";
+        enlace.click();
         return;
       }
       throw new Error("No se encontró el archivo de la entrega");
@@ -983,22 +1031,27 @@ export const academicoService = {
       // Abrir en el gesto del clic; si esperamos el fetch, el popup se bloquea.
       const vistaPrevia = window.open("about:blank", "_blank");
       try {
-        const detalle =
-          entrega.archivo?.contenidoBase64
-            ? entrega
-            : await this.obtenerEntrega(entrega.id);
-        if (!detalle?.archivo?.contenidoBase64) {
-          vistaPrevia?.close();
-          throw new Error("No se encontró el archivo de la entrega");
+        const detalle = necesitaDetalleArchivo(entrega.archivo)
+          ? await this.obtenerEntrega(entrega.id)
+          : entrega;
+        if (detalle?.archivo?.contenidoBase64) {
+          abrirBlobEnPestana(
+            base64ABlob(
+              detalle.archivo.contenidoBase64,
+              detalle.archivo.tipo || "application/pdf",
+            ),
+            vistaPrevia,
+          );
+          return;
         }
-        abrirBlobEnPestana(
-          base64ABlob(
-            detalle.archivo.contenidoBase64,
-            detalle.archivo.tipo || "application/pdf",
-          ),
-          vistaPrevia,
-        );
-        return;
+        const referencia = detalle?.archivo?.referencia;
+        if (esReferenciaAlmacenamiento(referencia)) {
+          const url = await urlDesdeReferenciaEntrega(referencia!);
+          abrirUrlEnPestana(url, vistaPrevia);
+          return;
+        }
+        vistaPrevia?.close();
+        throw new Error("No se encontró el archivo de la entrega");
       } catch (error) {
         vistaPrevia?.close();
         throw error;

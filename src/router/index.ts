@@ -345,7 +345,17 @@ const router = createRouter({
           component: () =>
             import("@/portal-organizacion/views/EquiposOrganizacionView.vue"),
           meta: {
-            titulo: "Estructura y nodos",
+            titulo: "Estructura",
+            requiredPermission: "equipos.administrar",
+          },
+        },
+        {
+          path: "accesos",
+          name: "accesos-organizacion",
+          component: () =>
+            import("@/portal-organizacion/views/AccesosOrganizacionView.vue"),
+          meta: {
+            titulo: "Accesos",
             requiredPermission: "equipos.administrar",
           },
         },

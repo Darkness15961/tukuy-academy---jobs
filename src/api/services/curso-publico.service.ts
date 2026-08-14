@@ -6,9 +6,6 @@ import { resolveMock } from "@/api/mock";
 import { obtenerDetalleCursoPublico } from "@/portal-publico/data/detalles-cursos.mock";
 import type { Course, DetalleCursoPublico } from "@/types/academia";
 
-const VIDEO_FALLBACK =
-  "https://www.youtube.com/embed/dQw4w9WgXcQ?rel=0";
-
 export const cursoPublicoService = {
   async obtenerDetalle(curso: Course): Promise<DetalleCursoPublico> {
     if (apiConfig.secundariaCursos) {
@@ -20,12 +17,10 @@ export const cursoPublicoService = {
             modulos: [],
           })),
         ]);
-        const instructorNombre =
-          curso.instructor ||
-          (typeof detalle.categoria === "string" ? "Docente Tukuy" : "Docente Tukuy");
+        const instructorNombre = curso.instructor?.trim() || "Docente del curso";
         return {
           cursoId: curso.id,
-          videoPresentacion: VIDEO_FALLBACK,
+          videoPresentacion: "",
           instructor: {
             nombre: instructorNombre,
             cargo: "Instructor",

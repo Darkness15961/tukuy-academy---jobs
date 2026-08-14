@@ -731,7 +731,20 @@ export const organizacionPrincipalService = {
       "org_listar_alertas_operativas",
       { p_instalacion_id: instalacionId },
     );
-    if (error) throw new Error(error.message);
+    if (error) {
+      const mensaje = error.message ?? "";
+      const codigo = String((error as { code?: string }).code ?? "");
+      // RPC aún no desplegada en principal: no romper el portal org.
+      if (
+        codigo === "PGRST202" ||
+        /org_listar_alertas_operativas|Could not find the function|schema cache/i.test(
+          mensaje,
+        )
+      ) {
+        return [];
+      }
+      throw new Error(mensaje);
+    }
     const raw = (data ?? {}) as Record<string, unknown>;
     const lista = Array.isArray(raw.alertas)
       ? (raw.alertas as Array<Record<string, unknown>>)
@@ -1641,6 +1654,69 @@ export const organizacionPrincipalService = {
     const { error } = await cliente().rpc("org_eliminar_categoria_curso", {
       p_instalacion_id: instalacionId,
       p_categoria_id: categoriaId,
+    });
+    if (error) throw new Error(error.message);
+  },
+
+  async listarExcepcionesPermiso(instalacionId: string): Promise<
+    Array<{
+      id: string;
+      identidadRef: string;
+      permisoCodigo: string;
+      efecto: "CONCEDER" | "DENEGAR";
+      motivo: string;
+      correo?: string | null;
+      nombre?: string | null;
+      actualizadoEn?: string;
+    }>
+  > {
+    const { data, error } = await cliente().rpc("org_listar_excepciones_permiso", {
+      p_instalacion_id: instalacionId,
+    });
+    if (error) throw new Error(error.message);
+    const payload = (data ?? {}) as { excepciones?: unknown };
+    const lista = Array.isArray(payload.excepciones) ? payload.excepciones : [];
+    return lista.map((item) => {
+      const raw = item as Record<string, unknown>;
+      return {
+        id: String(raw.id ?? ""),
+        identidadRef: String(raw.identidadRef ?? ""),
+        permisoCodigo: String(raw.permisoCodigo ?? ""),
+        efecto: String(raw.efecto ?? "DENEGAR").toUpperCase() === "CONCEDER"
+          ? "CONCEDER"
+          : "DENEGAR",
+        motivo: String(raw.motivo ?? ""),
+        correo: raw.correo == null ? null : String(raw.correo),
+        nombre: raw.nombre == null ? null : String(raw.nombre),
+        actualizadoEn: raw.actualizadoEn
+          ? String(raw.actualizadoEn)
+          : undefined,
+      };
+    });
+  },
+
+  async guardarExcepcionPermiso(
+    instalacionId: string,
+    excepcion: {
+      id?: string;
+      identidadRef: string;
+      permisoCodigo: string;
+      efecto: "CONCEDER" | "DENEGAR";
+      motivo?: string;
+    },
+  ) {
+    const { data, error } = await cliente().rpc("org_guardar_excepcion_permiso", {
+      p_instalacion_id: instalacionId,
+      p_excepcion: excepcion,
+    });
+    if (error) throw new Error(error.message);
+    return data;
+  },
+
+  async eliminarExcepcionPermiso(instalacionId: string, excepcionId: string) {
+    const { error } = await cliente().rpc("org_eliminar_excepcion_permiso", {
+      p_instalacion_id: instalacionId,
+      p_excepcion_id: excepcionId,
     });
     if (error) throw new Error(error.message);
   },

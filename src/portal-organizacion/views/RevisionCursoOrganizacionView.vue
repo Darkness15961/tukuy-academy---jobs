@@ -1,12 +1,19 @@
 <script setup lang="ts">
 import {
   ArrowLeft,
+  BookOpen,
   BookOpenCheck,
   CheckCircle2,
+  ClipboardCheck,
   Download,
+  ExternalLink,
   FileText,
+  HelpCircle,
+  Link2,
   MessageSquareWarning,
+  Paperclip,
   PlayCircle,
+  Video,
 } from "lucide-vue-next";
 import Dialog from "primevue/dialog";
 import Textarea from "primevue/textarea";
@@ -26,9 +33,16 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { obtenerRevisionCursoMock } from "@/portal-organizacion/data/revision-cursos.mock";
 import type { RevisionAcademicaCurso } from "@/portal-organizacion/types/revision-curso.types";
+import {
+  etiquetasRequisitos,
+  normalizarRequisitos,
+} from "@/lib/requisitos-curso";
+import { mapearSeccionesAModulosRevision } from "@/lib/mapear-revision-curso";
+import { useToast } from "primevue/usetoast";
 
 const route = useRoute();
 const router = useRouter();
+const toast = useToast();
 
 const cargando = ref(true);
 const procesando = ref(false);
@@ -58,6 +72,25 @@ const revisionConfirmada = computed(() =>
   Object.values(confirmaciones).every(Boolean),
 );
 
+function esUrlMaterial(url: string) {
+  const valor = String(url ?? "").trim();
+  return (
+    /^https?:\/\//i.test(valor) ||
+    valor.startsWith("blob:") ||
+    valor.startsWith("data:")
+  );
+}
+
+function actividadesDeModulo(modulo: RevisionAcademicaCurso["modulos"][number]) {
+  if (modulo.actividadesDetalle?.length) return modulo.actividadesDetalle;
+  return modulo.clases.map((titulo, i) => ({
+    id: `${modulo.id}-clase-${i}`,
+    titulo,
+    tipo: "lectura" as const,
+    tipoEtiqueta: "Clase",
+  }));
+}
+
 async function cargarRevisionAcademica(
   propuestaActual: PropuestaCursoOrganizacion,
 ): Promise<RevisionAcademicaCurso> {
@@ -86,9 +119,9 @@ async function cargarRevisionAcademica(
       : String(borrador.descripcion ?? curso.resumen ?? "")
         ? [String(borrador.descripcion ?? curso.resumen)]
         : [];
-    const requisitos = Array.isArray(borrador.requisitos)
-      ? borrador.requisitos.map(String)
-      : [];
+    const requisitos = etiquetasRequisitos(
+      normalizarRequisitos(borrador.requisitos),
+    );
 
     return {
       cursoId: propuestaActual.cursoDocenteId,
@@ -101,45 +134,11 @@ async function cargarRevisionAcademica(
         : [`Revisar el contenido de ${propuestaActual.titulo}.`],
       requisitos: requisitos.length
         ? requisitos
-        : ["Acceso a la plataforma Tukuy"],
-      modulos: secciones.map((seccion, indice) => {
-        const clases = Array.isArray(seccion.clases)
-          ? seccion.clases.map(String)
-          : [];
-        const items = Array.isArray(seccion.items)
-          ? (seccion.items as Array<Record<string, unknown>>)
-          : [];
-        const recursosRaw = Array.isArray(seccion.recursos)
-          ? (seccion.recursos as Array<Record<string, unknown>>)
-          : [];
-        return {
-          id: String(seccion.id ?? `${propuestaActual.cursoDocenteId}-m${indice}`),
-          titulo: String(seccion.titulo ?? `Módulo ${indice + 1}`),
-          descripcion: String(seccion.descripcion ?? ""),
-          clases: clases.length
-            ? clases
-            : items.map((item) => String(item.titulo ?? "Actividad")),
-          recursos: recursosRaw.map((recurso, rIdx) => ({
-            id: String(recurso.id ?? `r-${indice}-${rIdx}`),
-            nombre: String(recurso.nombre ?? recurso.titulo ?? "Recurso"),
-            tipo: String(recurso.tipo ?? "PDF").toUpperCase() === "VIDEO"
-              ? ("VIDEO" as const)
-              : String(recurso.tipo ?? "").toUpperCase() === "ENLACE"
-              ? ("ENLACE" as const)
-              : String(recurso.tipo ?? "").toUpperCase() === "PLANTILLA"
-              ? ("PLANTILLA" as const)
-              : ("PDF" as const),
-            tamanio: recurso.tamanio ? String(recurso.tamanio) : undefined,
-            urlDemo: String(recurso.url ?? recurso.urlDemo ?? "#"),
-          })),
-          actividades: items
-            .filter((item) => {
-              const tipo = String(item.tipo ?? "").toLowerCase();
-              return tipo === "assignment" || tipo === "quiz" || tipo === "lectura";
-            })
-            .map((item) => String(item.titulo ?? "Actividad")),
-        };
-      }),
+        : ["Sin requisitos enlazados"],
+      modulos: mapearSeccionesAModulosRevision(
+        secciones,
+        propuestaActual.cursoDocenteId,
+      ),
       horasCertificables: Number(
         borrador.horas ??
           ((curso.versionActual as Record<string, unknown> | undefined)?.horas ??
@@ -190,12 +189,27 @@ async function confirmarRevision() {
           propuesta.value.id,
         );
     }
+    toast.add({
+      severity: "success",
+      summary: "Revisión confirmada",
+      detail: "Contenido revisado. Ya puedes definir precio y acceso.",
+      life: 4000,
+    });
     void router.push({
       path: "/organizacion/cursos",
       query: {
         mensaje:
           "Contenido revisado. Ya puedes definir precio y acceso en la tarjeta.",
       },
+    });
+  } catch (causa) {
+    const mensaje =
+      causa instanceof Error ? causa.message : "No se pudo confirmar la revisión.";
+    toast.add({
+      severity: "error",
+      summary: "No se pudo confirmar",
+      detail: mensaje,
+      life: 8000,
     });
   } finally {
     procesando.value = false;
@@ -364,32 +378,148 @@ async function confirmarObservacion() {
       </article>
 
       <div class="grid gap-4">
+        <div class="flex flex-wrap items-end justify-between gap-2">
+          <div>
+            <h3 class="text-lg font-black">Temario y materiales</h3>
+            <p class="text-sm text-muted-foreground">
+              Inventario por módulo: actividades, enlaces y archivos subidos
+              (vista de revisión, no del alumno).
+            </p>
+          </div>
+          <Badge class="bg-muted text-muted-foreground">
+            {{ revision.modulos.length }} módulo(s)
+          </Badge>
+        </div>
+
         <article
           v-for="(modulo, indice) in revision.modulos"
           :key="modulo.id"
           class="border border-border bg-card p-5"
         >
-          <h3 class="font-black">
-            Módulo {{ indice + 1 }} · {{ modulo.titulo }}
-          </h3>
-          <p class="mt-1 text-sm text-muted-foreground">{{ modulo.descripcion }}</p>
-          <div class="mt-4 grid gap-2">
+          <header class="flex flex-wrap items-start justify-between gap-3 border-b border-border pb-3">
+            <div>
+              <p class="text-xs font-black uppercase tracking-wide text-muted-foreground">
+                Módulo {{ indice + 1 }}
+              </p>
+              <h3 class="mt-1 text-lg font-black">{{ modulo.titulo }}</h3>
+              <p
+                v-if="modulo.descripcion"
+                class="mt-1 text-sm text-muted-foreground"
+              >
+                {{ modulo.descripcion }}
+              </p>
+            </div>
+            <div class="flex flex-wrap gap-2 text-xs">
+              <Badge class="bg-sky-500/10 text-sky-800 dark:text-sky-300">
+                {{ (modulo.actividadesDetalle ?? []).length || modulo.clases.length }}
+                actividad(es)
+              </Badge>
+              <Badge class="bg-violet-500/10 text-violet-800 dark:text-violet-300">
+                {{ modulo.recursos.length }} material(es)
+              </Badge>
+            </div>
+          </header>
+
+          <section class="mt-4 grid gap-2">
+            <p class="text-xs font-black uppercase tracking-wide text-muted-foreground">
+              Actividades del módulo
+            </p>
+            <div
+              v-if="!actividadesDeModulo(modulo).length"
+              class="border border-dashed border-border px-3 py-4 text-sm text-muted-foreground"
+            >
+              Este módulo aún no tiene actividades cargadas.
+            </div>
+            <div
+              v-for="actividad in actividadesDeModulo(modulo)"
+              :key="actividad.id"
+              class="grid gap-2 border border-border bg-muted/15 px-3 py-3 sm:grid-cols-[1fr_auto] sm:items-center"
+            >
+              <div class="flex min-w-0 items-start gap-3">
+                <span
+                  class="mt-0.5 grid h-8 w-8 shrink-0 place-items-center border border-border bg-card"
+                >
+                  <Video
+                    v-if="actividad.tipo === 'video'"
+                    class="h-4 w-4 text-rose-600"
+                  />
+                  <HelpCircle
+                    v-else-if="actividad.tipo === 'quiz'"
+                    class="h-4 w-4 text-amber-600"
+                  />
+                  <ClipboardCheck
+                    v-else-if="actividad.tipo === 'assignment'"
+                    class="h-4 w-4 text-emerald-600"
+                  />
+                  <BookOpen v-else class="h-4 w-4 text-sky-600" />
+                </span>
+                <div class="min-w-0">
+                  <p class="truncate text-sm font-bold">{{ actividad.titulo }}</p>
+                  <p class="text-xs text-muted-foreground">
+                    {{ actividad.tipoEtiqueta }}
+                    <template v-if="actividad.totalPreguntas != null">
+                      · {{ actividad.totalPreguntas }} pregunta(s)
+                    </template>
+                  </p>
+                </div>
+              </div>
+              <a
+                v-if="actividad.urlYoutube"
+                :href="actividad.urlYoutube"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="inline-flex items-center gap-1.5 text-xs font-bold text-primary hover:underline"
+              >
+                <Link2 class="h-3.5 w-3.5" />
+                Abrir YouTube
+                <ExternalLink class="h-3 w-3" />
+              </a>
+            </div>
+          </section>
+
+          <section class="mt-5 grid gap-2">
+            <p class="text-xs font-black uppercase tracking-wide text-muted-foreground">
+              Materiales subidos
+            </p>
+            <div
+              v-if="!modulo.recursos.length"
+              class="border border-dashed border-border px-3 py-4 text-sm text-muted-foreground"
+            >
+              Sin archivos adjuntos en este módulo.
+            </div>
             <a
               v-for="recurso in modulo.recursos"
               :key="recurso.id"
-              href="#"
+              :href="esUrlMaterial(recurso.urlDemo) ? recurso.urlDemo : '#'"
+              :target="esUrlMaterial(recurso.urlDemo) ? '_blank' : undefined"
+              :rel="esUrlMaterial(recurso.urlDemo) ? 'noopener noreferrer' : undefined"
               class="flex items-center gap-2 border border-border bg-muted/20 px-3 py-2 text-sm font-bold hover:bg-muted/40"
-              @click.prevent
+              :class="!esUrlMaterial(recurso.urlDemo) ? 'pointer-events-none opacity-70' : ''"
+              @click="!esUrlMaterial(recurso.urlDemo) && $event.preventDefault()"
             >
-              <PlayCircle v-if="recurso.tipo === 'VIDEO'" class="h-4 w-4" />
-              <FileText v-else class="h-4 w-4" />
-              <span>{{ recurso.nombre }}</span>
-              <span class="font-normal text-muted-foreground">
-                · {{ recurso.tamanio }}
+              <PlayCircle v-if="recurso.tipo === 'VIDEO'" class="h-4 w-4 shrink-0" />
+              <Link2
+                v-else-if="recurso.tipo === 'ENLACE'"
+                class="h-4 w-4 shrink-0"
+              />
+              <Paperclip
+                v-else-if="recurso.tipo === 'PLANTILLA'"
+                class="h-4 w-4 shrink-0"
+              />
+              <FileText v-else class="h-4 w-4 shrink-0" />
+              <span class="min-w-0 flex-1 truncate">{{ recurso.nombre }}</span>
+              <span
+                v-if="recurso.tamanio"
+                class="shrink-0 font-normal text-muted-foreground"
+              >
+                {{ recurso.tamanio }}
               </span>
-              <Download class="h-3.5 w-3.5" />
+              <Download
+                v-if="esUrlMaterial(recurso.urlDemo)"
+                class="h-3.5 w-3.5 shrink-0"
+              />
             </a>
-          </div>
+          </section>
         </article>
       </div>
 

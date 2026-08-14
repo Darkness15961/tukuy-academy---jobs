@@ -317,6 +317,8 @@ export interface PropuestaCursoOrganizacion {
   descuentoArea?: string | null;
   /** Configuración comercial completa del wizard (demo / mock). */
   configuracionPublicacion?: import("@/types/comercializacion-curso.types").ConfiguracionPublicacionCurso;
+  /** El docente propuso precio al enviar a revisión (permiso cursos.definir_precio). */
+  precioPropuestoPorDocente?: boolean;
 }
 
 export interface AprobacionCursoOrganizacion {
@@ -1747,6 +1749,31 @@ function inicialesPersona(nombre: string) {
  * perfil de acceso. En producción este contrato debe resolverse en una única
  * transacción del backend.
  */
+function puedeDesignarGobiernoOrganizacion() {
+  const contexto = contextoActual();
+  return (
+    contexto.permisos.includes("administradores.designar") ||
+    contexto.permisos.includes("entidad.gobernar") ||
+    contexto.rol === "ORGANIZATION_OWNER" ||
+    contexto.rol === "OWNER"
+  );
+}
+
+function esPerfilGobiernoOrganizacion(perfil: {
+  plantilla?: string;
+  tipo?: string;
+  codigo?: string;
+}) {
+  return (
+    perfil.plantilla === "DIRECCION" ||
+    perfil.plantilla === "ADMINISTRACION" ||
+    perfil.tipo === "DIRECCION" ||
+    perfil.tipo === "ADMINISTRADOR" ||
+    perfil.codigo === "ORGANIZATION_OWNER" ||
+    perfil.codigo === "ORGANIZATION_ADMIN"
+  );
+}
+
 async function incorporarPersona(
   entrada: IncorporacionPersonaOrganizacion,
 ): Promise<ResultadoIncorporacionPersona> {
@@ -1767,6 +1794,14 @@ async function incorporarPersona(
               String(entrada.perfilId).trim().toLowerCase(),
           );
         if (perfilOrg) {
+          if (
+            esPerfilGobiernoOrganizacion(perfilOrg) &&
+            !puedeDesignarGobiernoOrganizacion()
+          ) {
+            throw new Error(
+              "Solo Dirección puede designar los perfiles de Dirección o Administración.",
+            );
+          }
           const resultado =
             await organizacionPrincipalService.incorporarPersonaPerfil(
               instalacionId,
@@ -1871,6 +1906,14 @@ async function incorporarPersona(
     if (!perfil) {
       throw new Error(
         "No hay perfiles asignables. Verifica que exista STUDENT u otro perfil de organización.",
+      );
+    }
+    if (
+      esPerfilGobiernoOrganizacion(perfil) &&
+      !puedeDesignarGobiernoOrganizacion()
+    ) {
+      throw new Error(
+        "Solo Dirección puede designar los perfiles de Dirección o Administración.",
       );
     }
     await organizacionPrincipalService.asignarAcceso(
@@ -2001,6 +2044,14 @@ async function incorporarPersona(
     (item) => item.id === entrada.perfilId && item.estado === "ACTIVO",
   );
   if (!perfil) throw new Error("Selecciona un perfil institucional activo.");
+  if (
+    esPerfilGobiernoOrganizacion(perfil) &&
+    !puedeDesignarGobiernoOrganizacion()
+  ) {
+    throw new Error(
+      "Solo Dirección puede designar los perfiles de Dirección o Administración.",
+    );
+  }
   const sede = entrada.sedeId
     ? listaSedes.find((item) => item.id === entrada.sedeId)
     : undefined;
@@ -3258,6 +3309,10 @@ function mapearCatalogoAPropuesta(
     configuracionPublicacion: config.configuracionPublicacion as
       | PropuestaCursoOrganizacion["configuracionPublicacion"]
       | undefined,
+    precioPropuestoPorDocente: Boolean(
+      historicos.precioPropuestoPorDocente ??
+        config.precioPropuestoPorDocente,
+    ),
   };
 }
 

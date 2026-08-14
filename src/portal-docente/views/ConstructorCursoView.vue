@@ -24,8 +24,15 @@ import {
   Video,
   HelpCircle,
   ClipboardCheck,
+  X,
+  BookOpen,
+  Tag,
+  AlignLeft,
+  Users,
+  Target,
+  ListChecks,
 } from "lucide-vue-next";
-import { computed, onMounted, reactive, ref, toRaw } from "vue";
+import { computed, nextTick, onMounted, reactive, ref, toRaw } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -46,23 +53,35 @@ import type {
 import { useContextoSesion } from "@/composables/useContextoSesion";
 import { useAuth } from "@/composables/useAuth";
 import { apiConfig } from "@/api/config";
-import { storageAcademia } from "@/lib/storage-academia";
+import { storageAcademia, urlPublicaMedia } from "@/lib/storage-academia";
 import PersonalizarPortadaModal from "@/components/shared/PersonalizarPortadaModal.vue";
 import {
   organizacionService,
   type UsuarioOrganizacion,
 } from "@/api/services/organizacion.service";
 import type { UnidadOrganizacional } from "@/portal-organizacion/types/estructura-organizacional.types";
+import type {
+  CondicionRequisitoCurso,
+  RequisitoCurso,
+} from "@/lib/requisitos-curso";
+import { etiquetaRequisito } from "@/lib/requisitos-curso";
+import {
+  REQUISITOS_FIRMA_TEXTO,
+  validarFirmaImagenProgresiva,
+  type ChequeoFirma,
+} from "@/lib/validar-firma-imagen";
+import ToggleSwitch from "primevue/toggleswitch";
+import { useToast } from "primevue/usetoast";
 
 const router = useRouter();
 const route = useRoute();
-const { contextoActivo } = useContextoSesion();
+const toast = useToast();
+const { contextoActivo, tienePermiso } = useContextoSesion();
 const { currentUser, restaurarUsuario } = useAuth();
 const paso = ref(1);
 const cargando = ref(true);
 const guardado = ref(false);
 const guardando = ref(false);
-const errorGuardado = ref("");
 const enviado = ref(false);
 const mostrandoVistaPrevia = ref(false);
 const errorImagen = ref("");
@@ -90,12 +109,26 @@ const docenteManual = reactive<DocenteResponsableCurso>({
   origen: "MANUAL",
 });
 const unidadesEntidad = ref<UnidadOrganizacional[]>([]);
+const cursosParaRequisito = ref<Array<{ id: string; titulo: string; estado: string }>>(
+  [],
+);
+const condicionRequisitos = ref<CondicionRequisitoCurso>("COMPLETADO");
+const requisitosAccesoActivos = ref(false);
 const errorMaterial = ref("");
 const modalFirmas = ref(false);
 const busquedaFirma = ref("");
 const errorFirmaPropia = ref("");
 const subiendoFirmaPropia = ref(false);
 const selectorFirmaPropia = ref<HTMLInputElement | null>(null);
+const validandoFirma = ref(false);
+const chequeosFirma = ref<ChequeoFirma[]>([]);
+const progresoFirma = computed(() => {
+  if (!chequeosFirma.value.length) return 0;
+  const hechos = chequeosFirma.value.filter(
+    (item) => item.estado === "ok" || item.estado === "error",
+  ).length;
+  return Math.round((hechos / chequeosFirma.value.length) * 100);
+});
 const modalCategorias = ref(false);
 const nuevaCategoria = ref("");
 const categoriaPendienteEliminar = ref("");
@@ -117,6 +150,16 @@ const esIndependiente = computed(
     contextoActivo.value?.ambitoDocencia === "INDEPENDIENTE" ||
     !contextoActivo.value?.organizacionId,
 );
+/** Org: el admin activó cursos.definir_precio en el perfil (o excepción CONCEDER). */
+const puedeDefinirPrecioOrg = computed(
+  () =>
+    !esIndependiente.value &&
+    !esGestionOrganizacion.value &&
+    tienePermiso("cursos.definir_precio"),
+);
+const muestraPasoPrecio = computed(
+  () => esIndependiente.value || puedeDefinirPrecioOrg.value,
+);
 const nombreAmbito = computed(() =>
   esIndependiente.value
     ? "Curso propio · Docencia independiente"
@@ -128,27 +171,27 @@ const cursoId = computed(() =>
 );
 
 const valoresIniciales = {
-  titulo: "Nuevo curso de formación",
+  titulo: "",
   subtitulo: "",
   descripcion: "",
-  publico: "Profesionales y técnicos de obra",
-  alcanceDirigido: "UNIDADES" as "TODOS" | "ORGANIZACION" | "UNIDADES",
+  publico: "",
+  alcanceDirigido: "ORGANIZACION" as "TODOS" | "ORGANIZACION" | "UNIDADES",
   unidadesDestinoIds: [] as string[],
   unidadesDestinoNombres: [] as string[],
-  objetivos: ["Aplicar los conceptos del curso en situaciones reales de obra"],
-  requisitos: ["Conocimientos básicos de gestión de obras"],
-  categoria: "Gestión de obras",
+  objetivos: [""],
+  requisitos: [] as RequisitoCurso[],
+  categoria: "",
   nivel: "Básico",
   imagen: "",
   imagenPosicion: "50% 50%",
   ambito: esIndependiente.value ? "INDEPENDIENTE" : "ORGANIZACION",
   organizacionId: contextoActivo.value?.organizacionId ?? null,
   acceso: esIndependiente.value ? "PAGO" : "ORGANIZACION",
-  precio: esIndependiente.value ? 89 : 0,
+  precio: 0,
   visibilidad: esIndependiente.value ? "PUBLICO" : "ORGANIZACION",
   permiteEmpresas: esIndependiente.value,
   certificado: true,
-  nombreCertificado: "Certificado de aprobación",
+  nombreCertificado: "",
   notaMinima: 14,
   vigenciaMeses: 0,
   firmasCertificado: [] as FirmaCertificadoCurso[],
@@ -173,14 +216,57 @@ const TIPOS_ITEM: Array<{ value: ItemSeccion["tipo"]; label: string }> = [
   { value: "assignment", label: "Entrega PDF" },
 ];
 
+const OPCIONES_NIVEL = ["Básico", "Intermedio", "Avanzado"];
+
+const OPCIONES_VISIBILIDAD = [
+  { value: "PUBLICO", label: "Catálogo público" },
+  { value: "PRIVADO", label: "Solo por invitación" },
+  { value: "ORGANIZACION", label: "Solo organizaciones" },
+];
+
+const OPCIONES_UNIDAD_VIGENCIA = [
+  { value: "meses", label: "Meses" },
+  { value: "anios", label: "Años" },
+];
+
+const OPCIONES_CONDICION_REQUISITO = [
+  { value: "COMPLETADO", label: "Completar el curso" },
+  { value: "CERTIFICADO", label: "Tener certificado" },
+];
+
+const CLASE_COMBO = "filtro-control w-full";
+const PANEL_COMBO = "tukuy-filtro-panel";
+
+const ESTILO_ACCION = {
+  material:
+    "rounded border-teal-300 bg-teal-50 text-teal-800 hover:bg-teal-100 dark:border-teal-500/40 dark:bg-teal-500/15 dark:text-teal-100 dark:hover:bg-teal-500/25",
+  seccion:
+    "rounded border-dashed border-indigo-400 bg-indigo-50 text-indigo-800 hover:bg-indigo-100 dark:border-indigo-500/50 dark:bg-indigo-500/15 dark:text-indigo-100 dark:hover:bg-indigo-500/25",
+  categoria:
+    "rounded border-fuchsia-300 bg-fuchsia-50 text-fuchsia-800 hover:bg-fuchsia-100 dark:border-fuchsia-500/40 dark:bg-fuchsia-500/15 dark:text-fuchsia-100 dark:hover:bg-fuchsia-500/25",
+  docente:
+    "rounded border-blue-300 bg-blue-50 text-blue-800 hover:bg-blue-100 dark:border-blue-500/40 dark:bg-blue-500/15 dark:text-blue-100 dark:hover:bg-blue-500/25",
+  imagen:
+    "rounded border-cyan-300 bg-cyan-50 text-cyan-800 hover:bg-cyan-100 dark:border-cyan-500/40 dark:bg-cyan-500/15 dark:text-cyan-100 dark:hover:bg-cyan-500/25",
+  agregar:
+    "rounded border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 dark:border-emerald-500/40 dark:bg-emerald-500/15 dark:text-emerald-100 dark:hover:bg-emerald-500/25",
+} as const;
+
 function preguntasSemilla(): NonNullable<ItemSeccion["preguntas"]> {
   return [
     {
-      question: "Nueva pregunta del cuestionario",
-      options: ["Opción A", "Opción B", "Opción C", "Opción D"],
+      question: "",
+      options: ["", "", "", ""],
       correctIndex: 0,
     },
   ];
+}
+
+function placeholderTituloItem(tipo: ItemSeccion["tipo"]) {
+  if (tipo === "quiz") return "Título del cuestionario";
+  if (tipo === "assignment") return "Título de la entrega PDF";
+  if (tipo === "video") return "Título de la clase en video";
+  return "Título de la clase";
 }
 
 function sincronizarClases(seccion: SeccionBorrador) {
@@ -203,43 +289,14 @@ function asegurarItems(seccion: SeccionBorrador) {
 const secciones = ref<BorradorCursoDocente["secciones"]>([
   {
     id: crypto.randomUUID(),
-    titulo: "Introducción y fundamentos",
-    clases: ["Bienvenida al curso", "Conceptos principales"],
+    titulo: "",
+    clases: [""],
     items: [
       {
         id: crypto.randomUUID(),
-        titulo: "Bienvenida al curso",
+        titulo: "",
         tipo: "video",
         urlYoutube: "",
-      },
-      {
-        id: crypto.randomUUID(),
-        titulo: "Conceptos principales",
-        tipo: "lectura",
-      },
-    ],
-    recursos: [],
-  },
-  {
-    id: crypto.randomUUID(),
-    titulo: "Aplicación práctica",
-    clases: ["Caso de estudio en obra", "Cuestionario práctico", "Evidencia PDF"],
-    items: [
-      {
-        id: crypto.randomUUID(),
-        titulo: "Caso de estudio en obra",
-        tipo: "lectura",
-      },
-      {
-        id: crypto.randomUUID(),
-        titulo: "Cuestionario práctico",
-        tipo: "quiz",
-        preguntas: preguntasSemilla(),
-      },
-      {
-        id: crypto.randomUUID(),
-        titulo: "Evidencia PDF",
-        tipo: "assignment",
       },
     ],
     recursos: [],
@@ -256,14 +313,7 @@ function agregarItem(seccion: SeccionBorrador, tipo: ItemSeccion["tipo"] = "lect
   asegurarItems(seccion);
   seccion.items!.push({
     id: crypto.randomUUID(),
-    titulo:
-      tipo === "quiz"
-        ? "Nuevo cuestionario"
-        : tipo === "assignment"
-          ? "Nueva entrega PDF"
-          : tipo === "video"
-            ? "Nueva clase en video"
-            : "Nueva clase",
+    titulo: "",
     tipo,
     ...(tipo === "quiz" ? { preguntas: preguntasSemilla() } : {}),
     ...(tipo === "video" ? { urlYoutube: "" } : {}),
@@ -294,14 +344,71 @@ function alCambiarTipo(item: ItemSeccion) {
 function agregarPregunta(item: ItemSeccion) {
   item.preguntas ??= [];
   item.preguntas.push({
-    question: `Pregunta ${(item.preguntas.length + 1).toString()}`,
-    options: ["Opción A", "Opción B", "Opción C", "Opción D"],
+    question: "",
+    options: ["", "", "", ""],
     correctIndex: 0,
   });
 }
 
 function eliminarPregunta(item: ItemSeccion, indice: number) {
   item.preguntas?.splice(indice, 1);
+}
+
+const subiendoImagenPregunta = ref("");
+const errorImagenPregunta = ref("");
+
+function claveImagenPregunta(si: number, ci: number, pi: number) {
+  return `${si}-${ci}-${pi}`;
+}
+
+async function anclarImagenPregunta(
+  pregunta: NonNullable<ItemSeccion["preguntas"]>[number],
+  si: number,
+  ci: number,
+  pi: number,
+  evento: Event,
+) {
+  const entrada = evento.target as HTMLInputElement;
+  const archivo = entrada.files?.[0];
+  entrada.value = "";
+  if (!archivo) return;
+  errorImagenPregunta.value = "";
+  if (!archivo.type.startsWith("image/")) {
+    errorImagenPregunta.value = "Usa JPG, PNG o WebP.";
+    return;
+  }
+  if (archivo.size > 8_000_000) {
+    errorImagenPregunta.value = "La imagen debe pesar menos de 8 MB.";
+    return;
+  }
+  subiendoImagenPregunta.value = claveImagenPregunta(si, ci, pi);
+  try {
+    if (apiConfig.secundariaCursos) {
+      const subida = await storageAcademia.subirMaterial(archivo);
+      pregunta.imagenReferencia = subida.publicUrl ?? subida.url;
+    } else {
+      pregunta.imagenReferencia = await new Promise<string>((resolve, reject) => {
+        const lector = new FileReader();
+        lector.onload = () => resolve(String(lector.result ?? ""));
+        lector.onerror = () => reject(new Error("No se pudo leer la imagen"));
+        lector.readAsDataURL(archivo);
+      });
+    }
+  } catch (causa) {
+    errorImagenPregunta.value =
+      causa instanceof Error
+        ? causa.message
+        : "No se pudo subir la imagen.";
+  } finally {
+    subiendoImagenPregunta.value = "";
+  }
+}
+
+function quitarImagenPregunta(
+  pregunta: NonNullable<ItemSeccion["preguntas"]>[number],
+) {
+  pregunta.imagenReferencia = "";
+  errorImagenPregunta.value = "";
 }
 onMounted(async () => {
   try {
@@ -391,10 +498,57 @@ onMounted(async () => {
         return null;
       })
       .filter((firma): firma is FirmaCertificadoCurso => firma != null);
-    curso.alcanceDirigido ??= "UNIDADES";
+    curso.alcanceDirigido ??= "ORGANIZACION";
     curso.unidadesDestinoIds ??= [];
     curso.unidadesDestinoNombres ??= [];
     curso.imagenPosicion ??= "50% 50%";
+    curso.requisitos = Array.isArray(curso.requisitos) ? curso.requisitos : [];
+    // Switch apagado = sin requisitos (no exigir cursos previos).
+    requisitosAccesoActivos.value = Boolean(
+      (datosCurso as { requisitosAccesoActivos?: boolean })
+        .requisitosAccesoActivos,
+    );
+    if (!requisitosAccesoActivos.value) {
+      curso.requisitos = [];
+    } else if (curso.requisitos[0]?.condicion) {
+      condicionRequisitos.value = curso.requisitos[0].condicion;
+    }
+    sincronizarUnidadVigencia();
+    try {
+      const listado = await docenteService.cursos.listar();
+      const idActual = cursoId.value;
+      const opciones: Array<{ id: string; titulo: string; estado: string }> =
+        listado
+          .filter(
+            (item) =>
+              item.id !== idActual &&
+              !String(item.id).startsWith("borrador-") &&
+              item.estado !== "ARCHIVADO",
+          )
+          .map((item) => ({
+            id: item.id,
+            titulo: item.titulo,
+            estado: item.estado,
+          }));
+      for (const requisito of curso.requisitos) {
+        if (!opciones.some((item) => item.id === requisito.cursoId)) {
+          opciones.push({
+            id: requisito.cursoId,
+            titulo: requisito.cursoTitulo,
+            estado: "ENLAZADO",
+          });
+        }
+      }
+      cursosParaRequisito.value = opciones.sort((a, b) =>
+        a.titulo.localeCompare(b.titulo, "es"),
+      );
+    } catch {
+      cursosParaRequisito.value = curso.requisitos.map((item) => ({
+        id: item.cursoId,
+        titulo: item.cursoTitulo,
+        estado: "ENLAZADO",
+      }));
+    }
     secciones.value = seccionesGuardadas.map((seccion) => {
       const normalizada: SeccionBorrador = {
         ...seccion,
@@ -403,7 +557,7 @@ onMounted(async () => {
       asegurarItems(normalizada);
       return normalizada;
     });
-    curso.cargadoPorNombre ||= currentUser.value?.name ?? "Carlos Alberto";
+    curso.cargadoPorNombre ||= currentUser.value?.name ?? "";
     if (!esGestionOrganizacion.value) {
       curso.docenteResponsableNombre ||= curso.cargadoPorNombre;
     }
@@ -428,9 +582,9 @@ const titulos = computed(() => [
   esGestionOrganizacion.value ? "Aprobar contenido" : "Enviar a revisión",
 ]);
 const descripciones = computed(() => [
-  "Define a quién está dirigido y qué logrará.",
+  "Empieza por el nombre, la categoría y una breve descripción.",
   "Organiza secciones, clases y recursos.",
-  "Diseña la información que verá el estudiante antes de inscribirse.",
+  "Completa subtítulo, nivel y la portada que verá el estudiante.",
   "Decide quién puede acceder y cómo se comercializa.",
   "Establece las condiciones y datos de certificación.",
   esGestionOrganizacion.value
@@ -440,7 +594,7 @@ const descripciones = computed(() => [
 const pasosVisibles = computed(() =>
   pasos.value
     .map((nombre, indice) => ({ nombre, pasoOriginal: indice + 1 }))
-    .filter((item) => item.pasoOriginal !== 4 || esIndependiente.value),
+    .filter((item) => item.pasoOriginal !== 4 || muestraPasoPrecio.value),
 );
 const firmasDisponibles = computed(() => {
   const termino = busquedaFirma.value.trim().toLocaleLowerCase("es");
@@ -451,16 +605,14 @@ const firmasDisponibles = computed(() => {
         .toLocaleLowerCase("es")
         .includes(termino),
     )
-    .flatMap((persona) =>
-      (["DIGITAL", "ELECTRONICA"] as const).map((tipo) => ({
-        id: `${persona.id}-${tipo}`,
-        personaId: String(persona.id),
-        nombre: persona.nombre,
-        cargo: persona.rol || persona.area || "Representante institucional",
-        tipo,
-        origen: "INSTITUCIONAL" as const,
-      })),
-    );
+    .map((persona) => ({
+      id: String(persona.id),
+      personaId: String(persona.id),
+      nombre: persona.nombre,
+      cargo: persona.rol || persona.area || "",
+      tipo: "DIGITAL" as const,
+      origen: "INSTITUCIONAL" as const,
+    }));
 });
 const firmaPropiaDocente = computed(() =>
   curso.firmasCertificado.find((firma) => firma.origen === "PROPIA"),
@@ -468,16 +620,59 @@ const firmaPropiaDocente = computed(() =>
 const firmasInstitucionales = computed(() =>
   curso.firmasCertificado.filter((firma) => firma.origen !== "PROPIA"),
 );
+
+const unidadVigencia = ref<"meses" | "anios">("meses");
+
+const certificadoConCaducidad = computed({
+  get: () => Number(curso.vigenciaMeses) > 0,
+  set: (conCaducidad: boolean) => {
+    if (!conCaducidad) {
+      curso.vigenciaMeses = 0;
+      return;
+    }
+    if (Number(curso.vigenciaMeses) <= 0) {
+      curso.vigenciaMeses = unidadVigencia.value === "anios" ? 12 : 12;
+    }
+  },
+});
+
+const cantidadVigencia = computed({
+  get: () => {
+    const meses = Number(curso.vigenciaMeses) || 0;
+    if (meses <= 0) return unidadVigencia.value === "anios" ? 1 : 12;
+    if (unidadVigencia.value === "anios") {
+      return Math.max(1, Math.round(meses / 12));
+    }
+    return meses;
+  },
+  set: (valor: number) => {
+    const n = Math.max(1, Math.floor(Number(valor) || 1));
+    curso.vigenciaMeses = unidadVigencia.value === "anios" ? n * 12 : n;
+  },
+});
+
+function sincronizarUnidadVigencia() {
+  const meses = Number(curso.vigenciaMeses) || 0;
+  unidadVigencia.value = meses > 0 && meses % 12 === 0 ? "anios" : "meses";
+}
+
+function alCambiarUnidadVigencia() {
+  const meses = Number(curso.vigenciaMeses) || 0;
+  if (meses <= 0) return;
+  if (unidadVigencia.value === "anios") {
+    curso.vigenciaMeses = Math.max(1, Math.round(meses / 12)) * 12;
+  }
+}
 const opcionesDocenteResponsable = computed<DocenteResponsableCurso[]>(() => [
   ...docentesEntidad.value.map((docente) => ({
     id: String(docente.id),
     nombre: docente.nombre,
     correo: docente.correo,
-    cargo: docente.rol || docente.area || "Docente",
-    especialidad: docente.especialidad || docente.area || "",
+    cargo: docente.rol || docente.area || "",
+    especialidad: docente.especialidad || "",
     foto: "",
-    biografia: `${docente.nombre} es especialista en ${docente.especialidad || docente.area || "formación profesional"}.`,
-    experiencia: [docente.rol, docente.area].filter(Boolean),
+    biografia: "",
+    experiencia: [] as string[],
     origen: "ENTIDAD" as const,
   })),
   ...docentesManuales.value,
@@ -522,12 +717,6 @@ const opcionesAlcanceDirigido = [
     descripcion: "Disponible solo para los nodos seleccionados del organigrama.",
   },
 ];
-const descripcionAlcanceDirigido = computed(
-  () =>
-    opcionesAlcanceDirigido.find(
-      (opcion) => opcion.value === curso.alcanceDirigido,
-    )?.descripcion ?? "",
-);
 const indicePasoVisible = computed(() =>
   pasosVisibles.value.findIndex((item) => item.pasoOriginal === paso.value),
 );
@@ -536,34 +725,70 @@ const hayPasoSiguiente = computed(
 );
 const requisitosRevision = computed(() => [
   {
+    id: "req-docente",
     texto: "Docente responsable identificado",
+    paso: 1,
+    ancla: "campo-docente-responsable",
     listo:
       !esGestionOrganizacion.value ||
       Boolean(curso.docenteResponsableId && curso.docenteResponsableNombre),
   },
   {
+    id: "req-info",
     texto: "Información y público objetivo definidos",
+    paso: 1,
+    ancla: "campo-planifica",
     listo:
+      !!curso.titulo.trim() &&
+      !!curso.categoria &&
+      curso.descripcion.trim().length >= 5 &&
       (esGestionOrganizacion.value
         ? curso.alcanceDirigido !== "UNIDADES" ||
           curso.unidadesDestinoIds.length > 0
-        : !!curso.publico) && curso.objetivos.length > 0,
+        : !!curso.publico.trim()) &&
+      curso.objetivos.some((objetivo) => objetivo.trim().length > 0),
   },
-  {
-    texto: "Programa con secciones y clases",
-    listo:
-      secciones.value.length > 0 &&
-      secciones.value.every((s) => s.clases.length > 0),
-  },
-  {
-    texto: "Página de presentación completa",
-    listo:
-      !!curso.titulo && !!curso.subtitulo && curso.descripcion.length >= 30,
-  },
-  ...(esIndependiente.value
+  // Solo si el switch está ON: exigir al menos un curso previo enlazado.
+  ...(requisitosAccesoActivos.value
     ? [
         {
-          texto: "Precio y acceso configurados",
+          id: "req-acceso",
+          texto: "Requisitos de acceso enlazados",
+          paso: 1,
+          ancla: "campo-requisitos-acceso",
+          listo: curso.requisitos.some((item) => !!item.cursoId),
+        },
+      ]
+    : []),
+  {
+    id: "req-programa",
+    texto: "Programa con secciones y clases",
+    paso: 2,
+    ancla: "campo-programa",
+    listo:
+      secciones.value.length > 0 &&
+      secciones.value.every(
+        (s) =>
+          (s.items?.some((item) => item.titulo.trim().length > 0) ?? false) ||
+          s.clases.some((clase) => clase.trim().length > 0),
+      ),
+  },
+  {
+    id: "req-presentacion",
+    texto: "Página de presentación completa",
+    paso: 3,
+    ancla: "campo-presentacion",
+    listo: !!curso.subtitulo.trim() && !!curso.imagen,
+  },
+  ...(muestraPasoPrecio.value
+    ? [
+        {
+          id: "req-precio",
+          texto: puedeDefinirPrecioOrg.value
+            ? "Precio del curso definido"
+            : "Precio y acceso configurados",
+          paso: 4,
+          ancla: "campo-precio",
           listo:
             curso.acceso === "GRATUITO" ||
             (curso.acceso === "PAGO" && curso.precio > 0),
@@ -571,10 +796,13 @@ const requisitosRevision = computed(() => [
       ]
     : []),
   {
+    id: "req-certificado",
     texto: "Certificado configurado",
+    paso: 5,
+    ancla: "campo-certificado",
     listo:
       !curso.certificado ||
-      (!!curso.nombreCertificado &&
+      (!!curso.titulo.trim() &&
         (!esGestionOrganizacion.value || curso.firmasCertificado.length > 0)),
   },
 ]);
@@ -582,9 +810,27 @@ const listoParaEnviar = computed(() =>
   requisitosRevision.value.every((r) => r.listo),
 );
 
-/** Vue reactive/ref proxies no son clonables con structuredClone. */
+async function irARequisitoPendiente(item: {
+  listo: boolean;
+  paso: number;
+  ancla: string;
+}) {
+  if (item.listo) return;
+  paso.value = item.paso;
+  await nextTick();
+  requestAnimationFrame(() => {
+    const destino = document.getElementById(item.ancla);
+    destino?.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+}
+
+/**
+ * Clona datos planos sin Proxy reactivo.
+ * `toRaw` solo desempaqueta el nivel raíz; anidados siguen siendo Proxy
+ * y `structuredClone` falla con "could not be cloned".
+ */
 function clonPlano<T>(valor: T): T {
-  return structuredClone(toRaw(valor as object)) as T;
+  return JSON.parse(JSON.stringify(toRaw(valor as object))) as T;
 }
 
 function construirBorrador(): BorradorCursoDocente {
@@ -609,16 +855,70 @@ function construirBorrador(): BorradorCursoDocente {
       }),
     };
   });
+  const porId = new Map(
+    cursosParaRequisito.value.map((item) => [item.id, item.titulo]),
+  );
+  const requisitos = requisitosAccesoActivos.value
+    ? curso.requisitos
+        .filter((item) => item.cursoId)
+        .map((item) => ({
+          tipo: "CURSO_PREVIO" as const,
+          cursoId: item.cursoId,
+          cursoTitulo: porId.get(item.cursoId) ?? item.cursoTitulo,
+          condicion: condicionRequisitos.value,
+        }))
+    : [];
   return {
     ...clonPlano(curso),
+    requisitosAccesoActivos: requisitosAccesoActivos.value,
+    requisitos,
+    // El certificado toma el nombre del curso (paso 1).
+    nombreCertificado: curso.titulo.trim(),
     secciones: seccionesNormalizadas,
   };
+}
+
+function mensajeErrorGuardado(causa: unknown): string {
+  const crudo =
+    causa instanceof Error
+      ? causa.message
+      : typeof causa === "string"
+        ? causa
+        : "No se pudo guardar el borrador del curso.";
+
+  if (/modalidad_formacion/i.test(crudo)) {
+    return "Falta un ajuste en la base secundaria. Ejecuta el script 20260813150000_guardar_curso_cast_modalidad.sql y vuelve a intentar.";
+  }
+  if (/estado_curso/i.test(crudo)) {
+    return "Falta un ajuste de estado en la base. Ejecuta 20260805258200_guardar_curso_cast_seguro.sql y vuelve a intentar.";
+  }
+
+  const detalle = crudo.split("—").pop()?.trim() || crudo;
+  if (detalle.length > 180) return `${detalle.slice(0, 177)}…`;
+  return detalle;
+}
+
+function notificarError(causa: unknown, resumen = "No se pudo guardar") {
+  toast.add({
+    severity: "error",
+    summary: resumen,
+    detail: mensajeErrorGuardado(causa),
+    life: 7000,
+  });
+}
+
+function notificarExito(mensaje: string) {
+  toast.add({
+    severity: "success",
+    summary: "Listo",
+    detail: mensaje,
+    life: 3500,
+  });
 }
 
 async function guardar() {
   if (guardando.value) return false;
   guardando.value = true;
-  errorGuardado.value = "";
   try {
     const { curso: guardadoCurso, borrador: borradorPersistido } =
       await docenteService.guardarCursoDesdeBorrador(
@@ -629,6 +929,7 @@ async function guardar() {
     // Rehidratar IDs estables que escribió la secundaria (evita wipe en el 2º save).
     const { secciones: seccionesGuardadas, ...datosCurso } = borradorPersistido;
     Object.assign(curso, datosCurso);
+    sincronizarUnidadVigencia();
     secciones.value = seccionesGuardadas.map((seccion) => {
       const items =
         seccion.items?.map((item) => ({
@@ -656,30 +957,70 @@ async function guardar() {
       });
     }
     guardado.value = true;
+    notificarExito("Borrador guardado correctamente.");
     setTimeout(() => (guardado.value = false), 2000);
     return true;
   } catch (causa) {
-    errorGuardado.value =
-      causa instanceof Error
-        ? causa.message
-        : "No se pudo guardar el borrador del curso.";
+    notificarError(causa);
     return false;
   } finally {
     guardando.value = false;
   }
 }
 function agregarObjetivo() {
-  curso.objetivos.push("Nuevo objetivo de aprendizaje");
+  curso.objetivos.push("");
 }
-function agregarRequisito() {
-  curso.requisitos.push("Nuevo requisito");
+function quitarObjetivo(indice: number) {
+  curso.objetivos.splice(indice, 1);
 }
+
+const idsRequisitosCurso = computed({
+  get: () => curso.requisitos.map((item) => item.cursoId),
+  set: (ids: string[]) => {
+    const unicos = [...new Set(ids.filter(Boolean))];
+    const porId = new Map(
+      cursosParaRequisito.value.map((item) => [item.id, item.titulo]),
+    );
+    const previos = new Map(
+      curso.requisitos.map((item) => [item.cursoId, item]),
+    );
+    curso.requisitos = unicos.map((id) => {
+      const existente = previos.get(id);
+      return {
+        tipo: "CURSO_PREVIO" as const,
+        cursoId: id,
+        cursoTitulo:
+          porId.get(id) ?? existente?.cursoTitulo ?? "Curso previo",
+        condicion: condicionRequisitos.value,
+      };
+    });
+  },
+});
+
+function aplicarCondicionRequisitos() {
+  for (const requisito of curso.requisitos) {
+    requisito.condicion = condicionRequisitos.value;
+  }
+}
+
+function alCambiarRequisitosAcceso(activo: boolean) {
+  requisitosAccesoActivos.value = activo;
+  if (!activo) {
+    curso.requisitos = [];
+  }
+}
+
+const etiquetasRequisitosVista = computed(() =>
+  requisitosAccesoActivos.value
+    ? curso.requisitos.map(etiquetaRequisito)
+    : [],
+);
 function agregarSeccion() {
   const seccion: SeccionBorrador = {
     id: crypto.randomUUID(),
-    titulo: "Nueva sección",
-    clases: ["Nueva clase"],
-    items: [{ id: crypto.randomUUID(), titulo: "Nueva clase", tipo: "lectura" }],
+    titulo: "",
+    clases: [""],
+    items: [{ id: crypto.randomUUID(), titulo: "", tipo: "lectura" }],
     recursos: [],
   };
   secciones.value.push(seccion);
@@ -691,7 +1032,7 @@ function asignarDocente() {
   );
   curso.docenteResponsableNombre = docente?.nombre ?? "";
   curso.docenteResponsablePerfil = docente
-    ? structuredClone(docente)
+    ? clonPlano(docente)
     : undefined;
 }
 
@@ -957,19 +1298,30 @@ async function seleccionarFirmaPropia(evento: Event) {
   const archivo = entrada.files?.[0];
   if (!archivo) return;
   errorFirmaPropia.value = "";
-  if (!archivo.type.startsWith("image/")) {
-    errorFirmaPropia.value = "Sube una imagen PNG, JPG o WebP de tu firma.";
-    entrada.value = "";
-    return;
-  }
-  if (archivo.size > 2_000_000) {
-    errorFirmaPropia.value = "La firma debe pesar menos de 2 MB.";
-    entrada.value = "";
-    return;
-  }
+  chequeosFirma.value = [];
+  validandoFirma.value = true;
+  subiendoFirmaPropia.value = false;
 
-  subiendoFirmaPropia.value = true;
   try {
+    const validacion = await validarFirmaImagenProgresiva(
+      archivo,
+      (pasos) => {
+        chequeosFirma.value = pasos;
+      },
+    );
+    if (!validacion.ok) {
+      const fallido = validacion.chequeos.find((item) => item.estado === "error");
+      errorFirmaPropia.value =
+        fallido?.mensaje ||
+        "La firma no cumple los requisitos técnicos. Corrígela e inténtalo de nuevo.";
+      notificarError(
+        errorFirmaPropia.value,
+        "Firma no válida",
+      );
+      return;
+    }
+
+    subiendoFirmaPropia.value = true;
     let urlImagen = "";
     if (apiConfig.secundariaCursos) {
       const subida = await storageAcademia.subirMaterial(archivo);
@@ -1006,10 +1358,13 @@ async function seleccionarFirmaPropia(evento: Event) {
       ...curso.firmasCertificado.filter((firma) => firma.origen !== "PROPIA"),
       propia,
     ];
+    notificarExito("Firma validada y cargada correctamente.");
   } catch (causa) {
     errorFirmaPropia.value =
       causa instanceof Error ? causa.message : "No se pudo subir tu firma.";
+    notificarError(errorFirmaPropia.value, "Firma no válida");
   } finally {
+    validandoFirma.value = false;
     subiendoFirmaPropia.value = false;
     entrada.value = "";
   }
@@ -1017,44 +1372,53 @@ async function seleccionarFirmaPropia(evento: Event) {
 
 async function enviarRevision() {
   if (!listoParaEnviar.value) return;
-  const borrador = construirBorrador();
-  if (esGestionOrganizacion.value) {
-    const { curso: guardado } = await docenteService.guardarCursoDesdeBorrador(
-      membresiaId,
-      cursoId.value,
-      borrador,
-    );
-    const propuesta =
-      await organizacionService.catalogoCursos.registrarParaRevision({
-        cursoDocenteId: guardado.id,
-        titulo: borrador.titulo,
-        imagen: borrador.imagen,
-        docenteResponsableId: borrador.docenteResponsableId,
-        docenteResponsableNombre:
-          borrador.docenteResponsableNombre || "Docente responsable",
-        cargadoPor: borrador.cargadoPorNombre,
-        origenCarga: "ADMINISTRACION",
-        categoria: borrador.categoria,
-        lecciones: borrador.secciones.reduce(
-          (total, seccion) => total + seccion.clases.length,
-          0,
-        ),
+  try {
+    const borrador = construirBorrador();
+    if (esGestionOrganizacion.value) {
+      const { curso: guardado } = await docenteService.guardarCursoDesdeBorrador(
+        membresiaId,
+        cursoId.value,
+        borrador,
+      );
+      const propuesta =
+        await organizacionService.catalogoCursos.registrarParaRevision({
+          cursoDocenteId: guardado.id,
+          titulo: borrador.titulo,
+          imagen: borrador.imagen,
+          docenteResponsableId: borrador.docenteResponsableId,
+          docenteResponsableNombre:
+            borrador.docenteResponsableNombre || "Docente responsable",
+          cargadoPor: borrador.cargadoPorNombre,
+          origenCarga: "ADMINISTRACION",
+          categoria: borrador.categoria,
+          lecciones: borrador.secciones.reduce(
+            (total, seccion) => total + seccion.clases.length,
+            0,
+          ),
+        });
+      await organizacionService.catalogoCursos.aprobar(propuesta.id, {
+        publicar: false,
+        alcance:
+          borrador.alcanceDirigido === "TODOS" ? "TODOS" : "ORGANIZACION",
+        precio: 0,
+        moneda: "PEN",
       });
-    await organizacionService.catalogoCursos.aprobar(propuesta.id, {
-      publicar: false,
-      alcance:
-        borrador.alcanceDirigido === "TODOS" ? "TODOS" : "ORGANIZACION",
-      precio: 0,
-      moneda: "PEN",
-    });
-  } else {
-    await docenteService.enviarBorradorRevision(
-      membresiaId,
-      cursoId.value,
-      borrador,
+    } else {
+      await docenteService.enviarBorradorRevision(
+        membresiaId,
+        cursoId.value,
+        borrador,
+      );
+    }
+    enviado.value = true;
+    notificarExito(
+      esGestionOrganizacion.value
+        ? "Contenido aprobado correctamente."
+        : "Curso enviado a revisión.",
     );
+  } catch (causa) {
+    notificarError(causa, "No se pudo completar el envío");
   }
-  enviado.value = true;
 }
 async function siguiente() {
   const ok = await guardar();
@@ -1139,7 +1503,7 @@ async function confirmarPortadaRecortada(archivo: File) {
 </script>
 
 <template>
-  <section class="mx-auto grid max-w-350 gap-6">
+  <section class="constructor-curso mx-auto grid max-w-350 gap-6">
     <div v-if="cargando" class="grid gap-6 lg:grid-cols-[270px_minmax(0,1fr)]">
       <Skeleton class="h-[520px] w-full" />
       <Skeleton class="h-[620px] w-full" />
@@ -1157,7 +1521,7 @@ async function confirmarPortadaRecortada(archivo: File) {
             <p class="text-xs font-bold uppercase text-primary">
               Constructor de curso
             </p>
-            <h1 class="text-xl font-black">{{ curso.titulo }}</h1>
+            <h1 class="text-xl font-black">{{ curso.titulo.trim() || "Nuevo curso" }}</h1>
             <p class="mt-1 text-xs font-semibold text-muted-foreground">
               {{ nombreAmbito }}
             </p>
@@ -1183,12 +1547,6 @@ async function confirmarPortadaRecortada(archivo: File) {
               ><Eye class="h-4 w-4" />Vista previa</Button
             >
           </div>
-          <p
-            v-if="errorGuardado"
-            class="max-w-md text-right text-xs text-red-600 dark:text-red-400"
-          >
-            {{ errorGuardado }}
-          </p>
         </div>
       </div>
 
@@ -1206,12 +1564,12 @@ async function confirmarPortadaRecortada(archivo: File) {
       </div>
 
       <div class="grid gap-6 lg:grid-cols-[270px_minmax(0,1fr)]">
-        <Card class="h-fit border-border bg-card"
+        <Card class="h-fit rounded-md border-border bg-card"
           ><CardContent class="p-3"
             ><button
               v-for="(item, indice) in pasosVisibles"
               :key="item.pasoOriginal"
-              class="flex w-full items-center gap-3 rounded-lg p-3 text-left text-sm font-semibold"
+              class="flex w-full items-center gap-3 rounded p-3 text-left text-sm font-semibold"
               :class="
                 paso === item.pasoOriginal
                   ? 'bg-primary/10 text-primary'
@@ -1227,7 +1585,7 @@ async function confirmarPortadaRecortada(archivo: File) {
               ><ChevronRight class="h-4 w-4" /></button></CardContent
         ></Card>
 
-        <Card class="border-border bg-card"
+        <Card class="rounded-md border-border bg-card"
           ><CardContent class="p-6 sm:p-8">
             <Badge class="bg-primary/10 text-primary"
               >Paso {{ indicePasoVisible + 1 }} de {{ pasosVisibles.length }}</Badge
@@ -1237,19 +1595,117 @@ async function confirmarPortadaRecortada(archivo: File) {
               {{ descripciones[paso - 1] }}
             </p>
 
-            <div v-if="paso === 1" class="mt-7 grid gap-6">
-              <label
+            <div
+              id="campo-planifica"
+              v-if="paso === 1"
+              class="paso-campos mt-7 grid gap-6"
+            >
+              <label class="grid gap-2 text-sm font-bold">
+                <span class="flex items-center gap-2">
+                  <BookOpen class="h-4 w-4 text-sky-600" />Nombre del curso
+                </span>
+                <Input
+                  v-model="curso.titulo"
+                  placeholder="Ej. Seguridad en obra civil"
+                />
+              </label>
+              <label class="grid gap-2 text-sm font-bold">
+                <span class="flex items-center gap-2">
+                  <Tag class="h-4 w-4 text-indigo-600" />Categoría
+                </span>
+                <div class="flex gap-2">
+                  <Select
+                    v-model="curso.categoria"
+                    :options="categoriasCurso"
+                    class="filtro-control min-w-0 flex-1"
+                    :panel-class="PANEL_COMBO"
+                    placeholder="Selecciona una categoría"
+                  />
+                  <Button
+                    v-if="esGestionOrganizacion"
+                    type="button"
+                    variant="outline"
+                    @click="modalCategorias = true"
+                  >
+                    Gestionar
+                  </Button>
+                </div>
+              </label>
+              <label class="grid gap-2 text-sm font-bold">
+                <span class="flex items-center gap-2">
+                  <AlignLeft class="h-4 w-4 text-sky-600" />Descripción breve
+                </span>
+                <textarea
+                  v-model="curso.descripcion"
+                  class="min-h-28 border border-input bg-card p-3 font-normal"
+                  placeholder="Resume de qué trata el curso"
+                />
+              </label>
+              <div
                 v-if="esGestionOrganizacion"
                 class="grid gap-2 text-sm font-bold"
               >
-                Docente responsable
+                <span class="flex items-center gap-2">
+                  <Users class="h-4 w-4 text-indigo-600" />Dirigido a
+                </span>
+                <Select
+                  v-model="curso.alcanceDirigido"
+                  :options="opcionesAlcanceDirigido"
+                  option-label="label"
+                  option-value="value"
+                  :class="CLASE_COMBO"
+                  :panel-class="PANEL_COMBO"
+                  placeholder="Selecciona el alcance del curso"
+                  fluid
+                  @change="actualizarAlcanceDirigido"
+                />
+                <div
+                  v-if="curso.alcanceDirigido === 'UNIDADES'"
+                  class="mt-2 grid gap-2"
+                >
+                  <span>Unidades habilitadas</span>
+                  <MultiSelect
+                    v-model="curso.unidadesDestinoIds"
+                    :options="opcionesUnidadesDestino"
+                    option-label="ruta"
+                    option-value="id"
+                    display="chip"
+                    :class="CLASE_COMBO"
+                    :panel-class="PANEL_COMBO"
+                    placeholder="Selecciona unidades del organigrama"
+                    :max-selected-labels="4"
+                    selected-items-label="{0} unidades seleccionadas"
+                    fluid
+                    @change="actualizarUnidadesDestino"
+                  />
+                </div>
+              </div>
+              <label v-else class="grid gap-2 text-sm font-bold">
+                <span class="flex items-center gap-2">
+                  <Users class="h-4 w-4 text-sky-600" />Dirigido a
+                </span>
+                <textarea
+                  v-model="curso.publico"
+                  class="min-h-24 border border-input bg-card p-3 font-normal"
+                  placeholder="¿Quién debería tomar este curso?"
+                />
+              </label>
+              <label
+                id="campo-docente-responsable"
+                v-if="esGestionOrganizacion"
+                class="grid gap-2 text-sm font-bold"
+              >
+                <span class="flex items-center gap-2">
+                  <UserRoundCheck class="h-4 w-4 text-indigo-600" />Docente responsable
+                </span>
                 <div class="flex gap-2">
                   <Select
                     v-model="curso.docenteResponsableId"
                     :options="opcionesDocenteResponsable"
                     option-label="nombre"
                     option-value="id"
-                    class="min-w-0 flex-1 font-normal"
+                    class="filtro-control min-w-0 flex-1"
+                    :panel-class="PANEL_COMBO"
                     placeholder="Selecciona al autor académico"
                     @change="asignarDocente"
                   >
@@ -1274,104 +1730,119 @@ async function confirmarPortadaRecortada(archivo: File) {
                       </div>
                     </template>
                   </Select>
-                  <Button type="button" variant="outline" @click="abrirNuevoDocente">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    @click="abrirNuevoDocente"
+                  >
                     <Plus class="h-4 w-4" />Añadir docente
                   </Button>
                 </div>
               </label>
-              <label
-                v-if="esGestionOrganizacion"
-                class="grid gap-2 text-sm font-bold"
-              >
-                Categoría
-                <div class="flex gap-2">
-                  <Select
-                    v-model="curso.categoria"
-                    :options="categoriasCurso"
-                    class="min-w-0 flex-1 font-normal"
-                    placeholder="Selecciona una categoría"
-                  />
-                  <Button type="button" variant="outline" @click="modalCategorias = true">
-                    Gestionar
-                  </Button>
-                </div>
-              </label>
-              <div
-                v-if="esGestionOrganizacion"
-                class="grid gap-2 text-sm font-bold"
-              >
-                Dirigido a
-                <Select
-                  v-model="curso.alcanceDirigido"
-                  :options="opcionesAlcanceDirigido"
-                  option-label="label"
-                  option-value="value"
-                  class="w-full font-normal"
-                  placeholder="Selecciona el alcance del curso"
-                  @change="actualizarAlcanceDirigido"
-                />
-                <span class="font-normal text-muted-foreground">
-                  {{ descripcionAlcanceDirigido }}
-                </span>
-                <div
-                  v-if="curso.alcanceDirigido === 'UNIDADES'"
-                  class="mt-2 grid gap-2"
-                >
-                  <span>Unidades habilitadas</span>
-                  <MultiSelect
-                    v-model="curso.unidadesDestinoIds"
-                    :options="opcionesUnidadesDestino"
-                    option-label="ruta"
-                    option-value="id"
-                    display="chip"
-                    class="w-full font-normal"
-                    placeholder="Selecciona unidades del organigrama"
-                    :max-selected-labels="4"
-                    selected-items-label="{0} unidades seleccionadas"
-                    @change="actualizarUnidadesDestino"
-                  />
-                  <span class="font-normal text-muted-foreground">
-                    Se muestran todos los nodos activos ubicados debajo de Administración.
-                  </span>
-                </div>
-              </div>
-              <label v-else class="grid gap-2 text-sm font-bold"
-                >Dirigido a<textarea
-                  v-model="curso.publico"
-                  class="min-h-24 rounded-md border p-3 font-normal"
-                />
-              </label>
               <div>
                 <div class="flex justify-between">
-                  <h3 class="font-bold">Objetivos de aprendizaje</h3>
-                  <Button size="sm" variant="ghost" @click="agregarObjetivo"
+                  <h3 class="flex items-center gap-2 font-bold">
+                    <Target class="h-4 w-4 text-sky-600" />Objetivos de aprendizaje
+                  </h3>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    @click="agregarObjetivo"
                     ><Plus class="h-4 w-4" />Agregar</Button
                   >
                 </div>
-                <Input
+                <div
                   v-for="(_, i) in curso.objetivos"
                   :key="i"
-                  v-model="curso.objetivos[i]"
-                  class="mt-2"
-                />
+                  class="mt-2 flex items-center gap-2"
+                >
+                  <Input
+                    v-model="curso.objetivos[i]"
+                    class="min-w-0 flex-1"
+                    placeholder="Ej. Aplicar lo aprendido en situaciones reales"
+                  />
+                  <Button
+                    v-if="i > 0"
+                    size="icon"
+                    variant="ghost"
+                    type="button"
+                    class="btn-borrar"
+                    aria-label="Quitar objetivo"
+                    @click="quitarObjetivo(i)"
+                  >
+                    <X class="h-4 w-4 text-red-600" />
+                  </Button>
+                </div>
               </div>
               <div>
-                <div class="flex justify-between">
-                  <h3 class="font-bold">Requisitos</h3>
-                  <Button size="sm" variant="ghost" @click="agregarRequisito"
-                    ><Plus class="h-4 w-4" />Agregar</Button
+                <label
+                  id="campo-requisitos-acceso"
+                  class="flex items-start gap-3 rounded border border-border bg-muted/20 p-4"
+                >
+                  <ToggleSwitch
+                    :model-value="requisitosAccesoActivos"
+                    @update:model-value="alCambiarRequisitosAcceso"
+                  />
+                  <span>
+                    <b class="block text-sm">Añadir requisitos de acceso al curso</b>
+                    <small class="text-muted-foreground">
+                      Actívalo solo si el alumno debe cumplir cursos previos
+                      verificables para inscribirse. Si está apagado, no se
+                      exigen requisitos.
+                    </small>
+                  </span>
+                </label>
+                <div v-if="requisitosAccesoActivos" class="mt-4">
+                  <h3 class="flex items-center gap-2 font-bold">
+                    <ListChecks class="h-4 w-4 text-sky-600" />Cursos previos requeridos
+                  </h3>
+                  <div class="mt-3 grid gap-3 sm:grid-cols-[220px_1fr]">
+                    <Select
+                      v-model="condicionRequisitos"
+                      :options="OPCIONES_CONDICION_REQUISITO"
+                      option-label="label"
+                      option-value="value"
+                      placeholder="Condición"
+                      :class="CLASE_COMBO"
+                      :panel-class="PANEL_COMBO"
+                      fluid
+                      @update:model-value="aplicarCondicionRequisitos"
+                    />
+                    <MultiSelect
+                      v-model="idsRequisitosCurso"
+                      :options="cursosParaRequisito"
+                      option-label="titulo"
+                      option-value="id"
+                      display="chip"
+                      filter
+                      placeholder="Selecciona cursos previos"
+                      empty-message="No hay otros cursos para enlazar"
+                      empty-filter-message="Sin coincidencias"
+                      :class="CLASE_COMBO"
+                      :panel-class="PANEL_COMBO"
+                      fluid
+                    />
+                  </div>
+                  <ul
+                    v-if="etiquetasRequisitosVista.length"
+                    class="mt-3 space-y-1 text-sm text-muted-foreground"
                   >
+                    <li
+                      v-for="etiqueta in etiquetasRequisitosVista"
+                      :key="etiqueta"
+                    >
+                      · {{ etiqueta }}
+                    </li>
+                  </ul>
                 </div>
-                <Input
-                  v-for="(_, i) in curso.requisitos"
-                  :key="i"
-                  v-model="curso.requisitos[i]"
-                  class="mt-2"
-                />
               </div>
             </div>
 
-            <div v-else-if="paso === 2" class="mt-7 grid gap-4">
+            <div
+              id="campo-programa"
+              v-else-if="paso === 2"
+              class="paso-campos mt-7 grid gap-4"
+            >
               <input
                 ref="selectorMaterial"
                 type="file"
@@ -1394,6 +1865,7 @@ async function confirmarPortadaRecortada(archivo: File) {
                   <GripVertical class="h-5 w-5 text-muted-foreground" /><Input
                     v-model="seccion.titulo"
                     class="flex-1 border-0 bg-transparent font-bold shadow-none"
+                    placeholder="Nombre de la sección"
                   />
                 </div>
                 <div class="divide-y">
@@ -1405,29 +1877,27 @@ async function confirmarPortadaRecortada(archivo: File) {
                     <div class="flex flex-wrap items-center gap-3">
                       <component
                         :is="iconoTipo(item.tipo)"
-                        class="h-4 w-4 shrink-0 text-primary"
+                        class="h-4 w-4 shrink-0 text-muted-foreground"
                       />
                       <Input
                         v-model="item.titulo"
-                        class="min-w-40 flex-1 border-0 shadow-none"
+                        class="min-w-40 flex-1 border-0 bg-transparent shadow-none"
+                        :placeholder="placeholderTituloItem(item.tipo)"
                         @update:model-value="sincronizarClases(seccion)"
                       />
-                      <select
+                      <Select
                         v-model="item.tipo"
-                        class="rounded-md border border-border bg-background px-2 py-1.5 text-xs font-semibold"
+                        :options="TIPOS_ITEM"
+                        option-label="label"
+                        option-value="value"
+                        class="filtro-control w-40 shrink-0"
+                        :panel-class="PANEL_COMBO"
                         @change="alCambiarTipo(item)"
-                      >
-                        <option
-                          v-for="tipo in TIPOS_ITEM"
-                          :key="tipo.value"
-                          :value="tipo.value"
-                        >
-                          {{ tipo.label }}
-                        </option>
-                      </select>
+                      />
                       <Button
                         size="icon"
                         variant="ghost"
+                        class="btn-borrar"
                         aria-label="Eliminar actividad"
                         @click="eliminarItem(seccion, ci)"
                       >
@@ -1436,7 +1906,7 @@ async function confirmarPortadaRecortada(archivo: File) {
                     </div>
                     <div
                       v-if="item.tipo === 'video'"
-                      class="ml-7 grid gap-2 rounded-lg border border-border bg-muted/40 p-3"
+                      class="ml-7 grid gap-2 border border-border bg-muted/30 p-3"
                     >
                       <label
                         class="text-xs font-bold uppercase tracking-wide text-muted-foreground"
@@ -1444,16 +1914,12 @@ async function confirmarPortadaRecortada(archivo: File) {
                       >
                       <Input
                         v-model="item.urlYoutube"
-                        placeholder="https://www.youtube.com/watch?v=… o youtu.be/…"
+                        placeholder="https://www.youtube.com/watch?v=…"
                       />
-                      <p class="text-xs text-muted-foreground">
-                        Solo se usan enlaces anclados de YouTube; no se sube el
-                        archivo de video.
-                      </p>
                     </div>
                     <div
                       v-if="item.tipo === 'quiz'"
-                      class="ml-7 grid gap-3 rounded-lg border border-border bg-muted/40 p-3"
+                      class="ml-7 grid gap-3 border border-border bg-muted/30 p-3"
                     >
                       <p class="text-xs font-bold uppercase tracking-wide text-muted-foreground">
                         Preguntas del cuestionario
@@ -1472,10 +1938,82 @@ async function confirmarPortadaRecortada(archivo: File) {
                           <Button
                             size="icon"
                             variant="ghost"
+                            class="btn-borrar"
                             @click="eliminarPregunta(item, pi)"
                           >
                             <Trash2 class="h-4 w-4 text-red-600" />
                           </Button>
+                        </div>
+                        <div
+                          class="grid gap-2 rounded-md border border-dashed border-border bg-muted/20 p-3"
+                        >
+                          <p class="text-xs font-bold text-foreground">
+                            Imagen de referencia
+                            <span class="font-medium text-muted-foreground">
+                              · opcional
+                            </span>
+                          </p>
+                          <div
+                            v-if="pregunta.imagenReferencia"
+                            class="overflow-hidden border border-border bg-background"
+                          >
+                            <img
+                              :src="urlPublicaMedia(pregunta.imagenReferencia)"
+                              alt="Referencia de la pregunta"
+                              class="max-h-44 w-full object-contain"
+                            />
+                          </div>
+                          <div class="flex flex-wrap items-center gap-2">
+                            <label class="inline-flex">
+                              <input
+                                class="sr-only"
+                                type="file"
+                                accept="image/jpeg,image/png,image/webp,image/gif"
+                                :disabled="
+                                  subiendoImagenPregunta ===
+                                  claveImagenPregunta(si, ci, pi)
+                                "
+                                @change="
+                                  anclarImagenPregunta(
+                                    pregunta,
+                                    si,
+                                    ci,
+                                    pi,
+                                    $event,
+                                  )
+                                "
+                              />
+                              <span
+                                class="control-boton inline-flex h-9 cursor-pointer items-center gap-1.5 border px-3 text-xs font-semibold"
+                              >
+                                <Image class="h-3.5 w-3.5" />
+                                {{
+                                  subiendoImagenPregunta ===
+                                  claveImagenPregunta(si, ci, pi)
+                                    ? "Subiendo…"
+                                    : pregunta.imagenReferencia
+                                      ? "Cambiar imagen"
+                                      : "Agregar imagen"
+                                }}
+                              </span>
+                            </label>
+                            <Button
+                              v-if="pregunta.imagenReferencia"
+                              size="sm"
+                              variant="ghost"
+                              type="button"
+                              class="btn-borrar"
+                              @click="quitarImagenPregunta(pregunta)"
+                            >
+                              Quitar
+                            </Button>
+                          </div>
+                          <p
+                            v-if="errorImagenPregunta"
+                            class="text-[11px] font-medium text-red-600"
+                          >
+                            {{ errorImagenPregunta }}
+                          </p>
                         </div>
                         <div
                           v-for="(opcion, oi) in pregunta.options"
@@ -1492,7 +2030,7 @@ async function confirmarPortadaRecortada(archivo: File) {
                           <Input
                             v-model="pregunta.options[oi]"
                             class="flex-1"
-                            :placeholder="`Opción ${oi + 1}`"
+                            :placeholder="`Opción ${String.fromCharCode(65 + oi)}`"
                           />
                         </div>
                       </div>
@@ -1507,61 +2045,29 @@ async function confirmarPortadaRecortada(archivo: File) {
                   </div>
                   <div class="m-3 flex flex-wrap gap-2">
                     <Button
-                      variant="ghost"
+                      variant="outline"
+                      @click="agregarItem(seccion, 'video')"
+                    >
+                      <Video class="h-4 w-4" />Video
+                    </Button>
+                    <Button
+                      variant="outline"
                       @click="agregarItem(seccion, 'lectura')"
                     >
-                      <Plus class="h-4 w-4" />Clase / lectura
+                      <FileText class="h-4 w-4" />Clase / lectura
                     </Button>
                     <Button
-                      variant="ghost"
+                      variant="outline"
                       @click="agregarItem(seccion, 'quiz')"
                     >
-                      <Plus class="h-4 w-4" />Cuestionario
+                      <HelpCircle class="h-4 w-4" />Cuestionario
                     </Button>
                     <Button
-                      variant="ghost"
+                      variant="outline"
                       @click="agregarItem(seccion, 'assignment')"
                     >
-                      <Plus class="h-4 w-4" />Entrega PDF
+                      <ClipboardCheck class="h-4 w-4" />Entrega PDF
                     </Button>
-                  </div>
-                  <div
-                    class="m-3 grid gap-3 border border-amber-300 bg-amber-50 p-4 text-slate-900 sm:grid-cols-[auto_1fr_auto] sm:items-center dark:border-amber-400/30 dark:bg-amber-400/10 dark:text-white"
-                  >
-                    <span
-                      class="grid h-10 w-10 place-items-center bg-[#071F52] text-white"
-                    >
-                      <FileText class="h-5 w-5" />
-                    </span>
-                    <div>
-                      <p
-                        class="text-[10px] font-black uppercase tracking-[.16em] text-[#B87A00] dark:text-amber-300"
-                      >
-                        Tip académico
-                      </p>
-                      <strong class="mt-1 block text-sm">
-                        Incluye un cuestionario y/o entrega PDF por módulo
-                      </strong>
-                      <p
-                        class="mt-1 text-xs text-slate-600 dark:text-slate-300"
-                      >
-                        Los cuestionarios se guardan en secundaria y alimentan
-                        notas del reproductor. Las entregas PDF siguen el flujo
-                        de calificaciones.
-                      </p>
-                    </div>
-                    <div class="text-left text-xs sm:text-right">
-                      <strong class="block">Nota máxima 20</strong>
-                      <span class="text-slate-500 dark:text-slate-300">
-                        {{
-                          Math.max(
-                            2,
-                            (seccion.items?.length || seccion.clases.length) * 2,
-                          )
-                        }}
-                        horas
-                      </span>
-                    </div>
                   </div>
                   <div class="m-3 border border-dashed border-border bg-muted/30 p-4">
                     <div class="flex flex-wrap items-center justify-between gap-3">
@@ -1585,7 +2091,7 @@ async function confirmarPortadaRecortada(archivo: File) {
                         :key="recurso.id"
                         class="flex items-center gap-3 border border-border bg-card p-3"
                       >
-                        <Paperclip class="h-4 w-4 shrink-0 text-primary" />
+                        <Paperclip class="h-4 w-4 shrink-0 text-muted-foreground" />
                         <div class="min-w-0 flex-1">
                           <p class="truncate text-sm font-bold">{{ recurso.nombre }}</p>
                           <p class="text-[11px] text-muted-foreground">
@@ -1595,6 +2101,7 @@ async function confirmarPortadaRecortada(archivo: File) {
                         <Button
                           size="icon"
                           variant="ghost"
+                          class="btn-borrar"
                           aria-label="Eliminar material"
                           @click="eliminarMaterial(si, recurso.id)"
                         >
@@ -1607,54 +2114,42 @@ async function confirmarPortadaRecortada(archivo: File) {
               </article>
               <Button
                 variant="outline"
-                class="border-dashed"
                 @click="agregarSeccion"
                 ><Plus class="h-4 w-4" />Agregar sección</Button
               >
             </div>
 
-            <div v-else-if="paso === 3" class="mt-7 grid gap-5">
+            <div
+              id="campo-presentacion"
+              v-else-if="paso === 3"
+              class="paso-campos mt-7 grid gap-5"
+            >
               <div class="grid gap-4 sm:grid-cols-2">
                 <label class="grid gap-2 text-sm font-bold sm:col-span-2"
-                  >Título público<Input v-model="curso.titulo" /></label
-                ><label class="grid gap-2 text-sm font-bold sm:col-span-2"
                   >Subtítulo<Input
                     v-model="curso.subtitulo"
                     placeholder="Una promesa clara para el estudiante" /></label
-                ><label v-if="!esGestionOrganizacion" class="grid gap-2 text-sm font-bold"
-                  >Categoría<select
-                    v-model="curso.categoria"
-                    class="h-10 rounded-md border px-3 font-normal"
-                  >
-                    <option>Gestión de obras</option>
-                    <option>Seguridad</option>
-                    <option>Logística</option>
-                  </select></label
                 ><label class="grid gap-2 text-sm font-bold"
-                  >Nivel<select
+                  >Nivel
+                  <Select
                     v-model="curso.nivel"
-                    class="h-10 rounded-md border px-3 font-normal"
-                  >
-                    <option>Básico</option>
-                    <option>Intermedio</option>
-                    <option>Avanzado</option>
-                  </select></label
-                ><label class="grid gap-2 text-sm font-bold sm:col-span-2"
-                  >Descripción<textarea
-                    v-model="curso.descripcion"
-                    class="min-h-32 rounded-md border p-3 font-normal"
-                    placeholder="Mínimo 30 caracteres"
+                    :options="OPCIONES_NIVEL"
+                    :class="CLASE_COMBO"
+                    :panel-class="PANEL_COMBO"
+                    placeholder="Selecciona el nivel"
+                    fluid
                   />
-                </label>
+                </label
+                >
               </div>
               <div
-                class="rounded-xl border-2 border-dashed border-blue-200 bg-primary/10/50 p-7 text-center"
+                class="border-2 border-dashed border-border bg-muted/30 p-7 text-center"
               >
                 <img
                   v-if="curso.imagen"
                   :src="curso.imagen"
                   alt="Vista previa de la portada"
-                  class="mx-auto mb-4 aspect-video max-h-56 w-full rounded-lg object-cover"
+                  class="mx-auto mb-4 aspect-video max-h-56 w-full rounded object-cover"
                 />
                 <Image v-else class="mx-auto h-8 w-8 text-primary" />
                 <p class="mt-2 font-bold">Imagen de portada</p>
@@ -1693,17 +2188,29 @@ async function confirmarPortadaRecortada(archivo: File) {
             </div>
 
             <div
-              v-else-if="paso === 4 && esIndependiente"
-              class="mt-7 grid gap-6"
+              id="campo-precio"
+              v-else-if="paso === 4 && muestraPasoPrecio"
+              class="paso-campos mt-7 grid gap-6"
             >
+              <div
+                v-if="puedeDefinirPrecioOrg"
+                class="border-l-4 border-l-primary bg-primary/5 p-4 text-sm"
+              >
+                <b>Tu organización te autoriza a proponer el precio.</b>
+                <p class="mt-1 text-xs text-muted-foreground">
+                  Solo el monto (o gratuito). Descuentos y acceso público los
+                  define Administración al aprobar.
+                </p>
+              </div>
               <div class="grid gap-3 sm:grid-cols-2">
                 <button
                   v-for="tipo in ['GRATUITO', 'PAGO']"
                   :key="tipo"
-                  class="rounded-xl border-2 p-5 text-left"
+                  type="button"
+                  class="btn-opcion border-2 p-5 text-left"
                   :class="
                     curso.acceso === tipo
-                      ? 'border-blue-600 bg-primary/10'
+                      ? 'border-primary bg-primary/10'
                       : 'border-border'
                   "
                   @click="curso.acceso = tipo"
@@ -1726,29 +2233,38 @@ async function confirmarPortadaRecortada(archivo: File) {
                 >Precio en soles<Input
                   v-model.number="curso.precio"
                   type="number"
-                  min="1" /></label
-              ><label class="grid max-w-sm gap-2 text-sm font-bold"
-                >Visibilidad<select
-                  v-model="curso.visibilidad"
-                  class="h-10 rounded-md border px-3 font-normal"
+                  min="1"
+              /></label>
+              <template v-if="esIndependiente">
+                <label class="grid max-w-sm gap-2 text-sm font-bold"
+                  >Visibilidad
+                  <Select
+                    v-model="curso.visibilidad"
+                    :options="OPCIONES_VISIBILIDAD"
+                    option-label="label"
+                    option-value="value"
+                    :class="CLASE_COMBO"
+                    :panel-class="PANEL_COMBO"
+                    placeholder="Selecciona visibilidad"
+                    fluid
+                  />
+                </label>
+                <label class="flex items-center gap-3 rounded-xl border p-4"
+                  ><input v-model="curso.permiteEmpresas" type="checkbox" /><span
+                    ><b class="block text-sm"
+                      >Permitir licencias empresariales</b
+                    ><span class="text-xs text-muted-foreground"
+                      >Las organizaciones podrán asignarlo a sus equipos.</span
+                    ></span
+                  ></label
                 >
-                  <option value="PUBLICO">Catálogo público</option>
-                  <option value="PRIVADO">Solo por invitación</option>
-                  <option value="ORGANIZACION">Solo organizaciones</option>
-                </select></label
-              ><label class="flex items-center gap-3 rounded-xl border p-4"
-                ><input v-model="curso.permiteEmpresas" type="checkbox" /><span
-                  ><b class="block text-sm">Permitir licencias empresariales</b
-                  ><span class="text-xs text-muted-foreground"
-                    >Las organizaciones podrán asignarlo a sus equipos.</span
-                  ></span
-                ></label
-              >
+              </template>
             </div>
 
             <div
+              id="campo-certificado"
               v-else-if="paso === 5"
-              class="mt-7 grid gap-6 lg:grid-cols-[1fr_360px]"
+              class="paso-campos mt-7 grid gap-6 lg:grid-cols-[1fr_360px]"
             >
               <div class="grid content-start gap-5">
                 <label class="flex items-center gap-3 rounded-xl border p-4"
@@ -1759,42 +2275,74 @@ async function confirmarPortadaRecortada(archivo: File) {
                     ></span
                   ></label
                 ><template v-if="curso.certificado"
-                  ><label class="grid gap-2 text-sm font-bold"
-                    >Nombre del certificado<Input
-                      v-model="curso.nombreCertificado" /></label
-                  ><label class="grid gap-2 text-sm font-bold"
+                  ><div class="grid gap-2 rounded border border-border bg-muted/20 p-4 text-sm">
+                    <p class="font-bold">Nombre del certificado</p>
+                    <p class="text-muted-foreground">
+                      Se usa el nombre del curso:
+                      <strong class="text-foreground">{{
+                        curso.titulo.trim() || "Completa el nombre en el paso 1"
+                      }}</strong>
+                    </p>
+                  </div>
+                  <label class="grid gap-2 text-sm font-bold"
                     >Nota mínima (sobre 20)<Input
                       v-model.number="curso.notaMinima"
                       type="number"
                       min="0"
                       max="20" /></label
-                  ><label class="grid gap-2 text-sm font-bold"
-                    >Vigencia en meses<Input
-                      v-model.number="curso.vigenciaMeses"
-                      type="number"
-                      min="0"
-                    /><span class="font-normal text-muted-foreground"
-                      >0 significa que no vence.</span
-                    ></label
+                  ><div class="grid gap-3">
+                    <p class="text-sm font-bold">Vigencia del certificado</p>
+                    <div class="grid gap-2 sm:grid-cols-2">
+                      <button
+                        type="button"
+                        class="btn-opcion border-2 p-4 text-left"
+                        :class="
+                          !certificadoConCaducidad
+                            ? 'border-primary bg-primary/10'
+                            : 'border-border'
+                        "
+                        @click="certificadoConCaducidad = false"
+                      >
+                        <strong class="block text-sm">Sin fecha de caducidad</strong>
+                      </button>
+                      <button
+                        type="button"
+                        class="btn-opcion border-2 p-4 text-left"
+                        :class="
+                          certificadoConCaducidad
+                            ? 'border-primary bg-primary/10'
+                            : 'border-border'
+                        "
+                        @click="certificadoConCaducidad = true"
+                      >
+                        <strong class="block text-sm">Con fecha de caducidad</strong>
+                      </button>
+                    </div>
+                    <div
+                      v-if="certificadoConCaducidad"
+                      class="flex max-w-sm items-center gap-2"
+                    >
+                      <Input
+                        v-model.number="cantidadVigencia"
+                        type="number"
+                        min="1"
+                        class="w-24"
+                      />
+                      <Select
+                        v-model="unidadVigencia"
+                        :options="OPCIONES_UNIDAD_VIGENCIA"
+                        option-label="label"
+                        option-value="value"
+                        class="filtro-control min-w-0 flex-1"
+                        :panel-class="PANEL_COMBO"
+                        @change="alCambiarUnidadVigencia"
+                      />
+                    </div>
+                  </div
                   ><div class="border border-border bg-muted/20 p-4">
                     <div class="flex flex-wrap items-center justify-between gap-3">
                       <div>
                         <p class="text-sm font-black">Firmas del certificado</p>
-                        <p class="mt-1 text-xs text-muted-foreground">
-                          <template v-if="esGestionOrganizacion">
-                            {{ curso.firmasCertificado.length }}
-                            {{
-                              curso.firmasCertificado.length === 1
-                                ? "firma configurada"
-                                : "firmas configuradas"
-                            }}
-                          </template>
-                          <template v-else>
-                            Solo puedes añadir tu propia firma (imagen). Las
-                            firmas institucionales adicionales las configura el
-                            administrador de la organización.
-                          </template>
-                        </p>
                       </div>
                       <Button
                         v-if="esGestionOrganizacion"
@@ -1838,6 +2386,7 @@ async function confirmarPortadaRecortada(archivo: File) {
                         <Button
                           size="icon"
                           variant="ghost"
+                          class="btn-borrar"
                           aria-label="Quitar tu firma"
                           @click="quitarFirma(firmaPropiaDocente.id)"
                         >
@@ -1845,36 +2394,120 @@ async function confirmarPortadaRecortada(archivo: File) {
                         </Button>
                       </div>
                       <div
-                        class="rounded-lg border-2 border-dashed border-border p-4 text-center"
+                        class="rounded border-2 border-dashed border-border p-4"
                       >
                         <input
                           ref="selectorFirmaPropia"
                           class="hidden"
                           type="file"
-                          accept="image/png,image/jpeg,image/webp"
+                          accept="image/png,image/jpeg"
                           @change="seleccionarFirmaPropia"
                         />
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          :disabled="subiendoFirmaPropia"
-                          @click="selectorFirmaPropia?.click()"
+                        <div class="text-center">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            :disabled="validandoFirma || subiendoFirmaPropia"
+                            @click="selectorFirmaPropia?.click()"
+                          >
+                            <Upload class="h-4 w-4" />
+                            {{
+                              validandoFirma
+                                ? "Validando requisitos…"
+                                : subiendoFirmaPropia
+                                  ? "Subiendo…"
+                                  : firmaPropiaDocente
+                                    ? "Cambiar mi firma"
+                                    : "Subir mi firma"
+                            }}
+                          </Button>
+                        </div>
+
+                        <div class="mt-4 rounded border border-border bg-card/60 p-3 text-left">
+                          <p class="text-xs font-black uppercase tracking-wide text-muted-foreground">
+                            Requisitos de la imagen
+                          </p>
+                          <ul class="mt-2 space-y-1 text-xs text-muted-foreground">
+                            <li
+                              v-for="req in REQUISITOS_FIRMA_TEXTO"
+                              :key="req"
+                            >
+                              · {{ req }}
+                            </li>
+                          </ul>
+                        </div>
+
+                        <div
+                          v-if="chequeosFirma.length"
+                          class="mt-4 grid gap-2 text-left"
                         >
-                          <Upload class="h-4 w-4" />
-                          {{
-                            subiendoFirmaPropia
-                              ? "Subiendo…"
-                              : firmaPropiaDocente
-                                ? "Cambiar mi firma"
-                                : "Subir mi firma"
-                          }}
-                        </Button>
-                        <p class="mt-2 text-[11px] text-muted-foreground">
-                          PNG o JPG transparente recomendado · máx. 2 MB
-                        </p>
+                          <div class="flex items-center justify-between gap-2">
+                            <p class="text-xs font-bold">
+                              Verificación técnica
+                            </p>
+                            <span class="text-xs text-muted-foreground"
+                              >{{ progresoFirma }}%</span
+                            >
+                          </div>
+                          <div class="h-1.5 overflow-hidden rounded-full bg-muted">
+                            <div
+                              class="h-full bg-primary transition-all duration-300"
+                              :style="{ width: `${progresoFirma}%` }"
+                            />
+                          </div>
+                          <div
+                            v-for="chequeo in chequeosFirma"
+                            :key="chequeo.id"
+                            class="flex items-start gap-2 rounded border border-border/70 px-2.5 py-2"
+                            :class="{
+                              'bg-emerald-500/5': chequeo.estado === 'ok',
+                              'bg-red-500/5': chequeo.estado === 'error',
+                              'bg-primary/5': chequeo.estado === 'revisando',
+                            }"
+                          >
+                            <span class="mt-0.5 grid h-5 w-5 shrink-0 place-items-center">
+                              <Check
+                                v-if="chequeo.estado === 'ok'"
+                                class="h-3.5 w-3.5 text-emerald-600"
+                              />
+                              <X
+                                v-else-if="chequeo.estado === 'error'"
+                                class="h-3.5 w-3.5 text-red-600"
+                              />
+                              <span
+                                v-else-if="chequeo.estado === 'revisando'"
+                                class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-primary border-t-transparent"
+                              />
+                              <span
+                                v-else
+                                class="h-2 w-2 rounded-full bg-border"
+                              />
+                            </span>
+                            <div class="min-w-0 flex-1">
+                              <p class="text-xs font-semibold">
+                                {{ chequeo.titulo }}
+                                <span class="font-normal text-muted-foreground">
+                                  · {{ chequeo.detalle }}
+                                </span>
+                              </p>
+                              <p
+                                v-if="chequeo.mensaje"
+                                class="mt-0.5 text-[11px]"
+                                :class="
+                                  chequeo.estado === 'error'
+                                    ? 'text-red-600'
+                                    : 'text-muted-foreground'
+                                "
+                              >
+                                {{ chequeo.mensaje }}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+
                         <p
                           v-if="errorFirmaPropia"
-                          class="mt-2 text-xs font-semibold text-red-600"
+                          class="mt-3 text-center text-xs font-semibold text-red-600"
                         >
                           {{ errorFirmaPropia }}
                         </p>
@@ -1883,9 +2516,6 @@ async function confirmarPortadaRecortada(archivo: File) {
                         v-if="firmasInstitucionales.length"
                         class="grid gap-2 border-t border-border pt-3"
                       >
-                        <p class="text-xs font-bold text-muted-foreground">
-                          Firmas institucionales (solo admin de organización)
-                        </p>
                         <div
                           v-for="firma in firmasInstitucionales"
                           :key="firma.id"
@@ -1901,7 +2531,7 @@ async function confirmarPortadaRecortada(archivo: File) {
                               {{ firma.nombre }}
                             </p>
                             <p class="text-xs text-muted-foreground">
-                              {{ firma.cargo }} · Configurada por administración
+                              {{ firma.cargo }}
                             </p>
                           </div>
                         </div>
@@ -1947,6 +2577,7 @@ async function confirmarPortadaRecortada(archivo: File) {
                           v-if="firma.origen !== 'PROPIA'"
                           size="icon"
                           variant="ghost"
+                          class="btn-borrar"
                           :aria-label="`Quitar firma de ${firma.nombre}`"
                           @click="quitarFirma(firma.id)"
                         >
@@ -1954,32 +2585,26 @@ async function confirmarPortadaRecortada(archivo: File) {
                         </Button>
                       </div>
                     </div>
-                    <p
-                      v-else-if="esGestionOrganizacion"
-                      class="mt-4 border-l-4 border-l-amber-500 bg-amber-500/10 p-3 text-xs text-muted-foreground"
-                    >
-                      Agrega al menos una firma institucional para aprobar el
-                      curso. El docente solo aporta la suya; tú defines las
-                      demás.
-                    </p>
-                  </div
+                  </div>
                   ></template
                 >
               </div>
               <div
-                class="rounded-xl border bg-linear-to-br from-[#071F52] to-[#0B3A78] p-6 text-center text-white"
+                class="border bg-linear-to-br from-[#071F52] to-[#0B3A78] p-6 text-center text-white"
               >
                 <Award class="mx-auto h-10 w-10 text-amber-300" />
-                <p class="mt-4 text-xs uppercase tracking-widest text-blue-200">
-                  Tukuy Academy certifica que
+                <p class="mt-4 text-[10px] font-black uppercase tracking-widest text-blue-200">
+                  Vista previa
                 </p>
-                <strong class="mt-4 block text-xl"
-                  >Nombre del estudiante</strong
-                >
                 <p class="mt-3 text-xs text-blue-100">
-                  completó satisfactoriamente
+                  {{ curso.titulo.trim() || "Certificado del curso" }}
                 </p>
-                <p class="mt-2 font-bold">{{ curso.titulo }}</p>
+                <strong class="mt-4 block text-xl">
+                  {{ curso.titulo.trim() || "Título del curso" }}
+                </strong>
+                <p class="mt-3 text-xs text-blue-200/70">
+                  El nombre de quien apruebe aparecerá al emitirse
+                </p>
                 <div
                   v-if="curso.firmasCertificado.length"
                   class="mt-7 grid gap-4"
@@ -1992,14 +2617,11 @@ async function confirmarPortadaRecortada(archivo: File) {
                       :alt="firma.nombre"
                       class="mx-auto h-10 max-w-[7rem] object-contain"
                     />
-                    <Signature v-else class="mx-auto h-7 w-7 text-amber-300" />
                     <div class="mx-auto mt-2 h-px w-28 bg-white/50" />
                     <p class="mt-1 text-[10px] font-bold">{{ firma.nombre }}</p>
-                    <p class="text-[9px] text-blue-100">{{ firma.cargo }}</p>
+                    <p v-if="firma.cargo" class="text-[9px] text-blue-100">{{ firma.cargo }}</p>
                   </div>
                 </div>
-                <div class="mx-auto mt-5 h-px w-28 bg-white/40" />
-                <p class="mt-2 text-[10px]">Código verificable</p>
               </div>
             </div>
 
@@ -2029,10 +2651,26 @@ async function confirmarPortadaRecortada(archivo: File) {
               </div>
               <template v-else
                 ><div class="space-y-3">
-                  <div
+                  <p class="text-sm text-muted-foreground">
+                    Si falta algo, haz clic en el pendiente para ir directo a completarlo.
+                  </p>
+                  <button
                     v-for="item in requisitosRevision"
-                    :key="item.texto"
-                    class="flex items-center gap-3 rounded-lg border p-4"
+                    :key="item.id"
+                    type="button"
+                    class="flex w-full items-center gap-3 rounded border p-4 text-left transition"
+                    :class="
+                      item.listo
+                        ? 'border-border bg-card'
+                        : 'cursor-pointer border-amber-400/50 bg-amber-500/5 hover:border-amber-500 hover:bg-amber-500/10'
+                    "
+                    :disabled="item.listo"
+                    :aria-label="
+                      item.listo
+                        ? item.texto
+                        : `Ir a completar: ${item.texto}`
+                    "
+                    @click="irARequisitoPendiente(item)"
                   >
                     <span
                       class="grid h-7 w-7 place-items-center rounded-full"
@@ -2053,9 +2691,9 @@ async function confirmarPortadaRecortada(archivo: File) {
                           ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
                           : 'bg-accent/15 text-[#B87A00] dark:text-accent'
                       "
-                      >{{ item.listo ? "Listo" : "Pendiente" }}</Badge
+                      >{{ item.listo ? "Listo" : "Ir a completar" }}</Badge
                     >
-                  </div>
+                  </button>
                 </div>
                 <div class="mt-6 rounded-xl bg-muted p-4">
                   <div class="flex gap-3">
@@ -2082,12 +2720,6 @@ async function confirmarPortadaRecortada(archivo: File) {
               v-if="!enviado"
               class="mt-8 flex flex-col gap-3 border-t pt-5"
             >
-              <p
-                v-if="errorGuardado"
-                class="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-300"
-              >
-                {{ errorGuardado }}
-              </p>
               <div class="flex justify-between gap-3">
                 <Button
                   variant="outline"
@@ -2177,7 +2809,12 @@ async function confirmarPortadaRecortada(archivo: File) {
             placeholder="Nombre de la nueva categoría"
             @keyup.enter="agregarCategoriaCurso"
           />
-          <Button :disabled="!nuevaCategoria.trim()" @click="agregarCategoriaCurso">
+          <Button
+            variant="outline"
+            :class="ESTILO_ACCION.categoria"
+            :disabled="!nuevaCategoria.trim()"
+            @click="agregarCategoriaCurso"
+          >
             <Plus class="h-4 w-4" />Añadir
           </Button>
         </div>
@@ -2249,9 +2886,6 @@ async function confirmarPortadaRecortada(archivo: File) {
             placeholder="Buscar por nombre, cargo, área o especialidad"
           />
         </div>
-        <p class="text-xs text-muted-foreground">
-          Selecciona firmantes institucionales. La firma del docente (imagen) la
-          aporta el propio docente; aquí solo se agregan las de la organización.</p>
         <div class="max-h-96 grid gap-2 overflow-y-auto pr-1">
           <button
             v-for="firma in firmasDisponibles"
@@ -2266,11 +2900,8 @@ async function confirmarPortadaRecortada(archivo: File) {
             </span>
             <span class="min-w-0 flex-1">
               <b class="block truncate text-sm">{{ firma.nombre }}</b>
-              <small class="text-muted-foreground">{{ firma.cargo }}</small>
+              <small v-if="firma.cargo" class="text-muted-foreground">{{ firma.cargo }}</small>
             </span>
-            <Badge :class="firma.tipo === 'DIGITAL' ? 'bg-primary text-white' : 'bg-amber-500 text-slate-950'">
-              Firma {{ firma.tipo === "DIGITAL" ? "digital" : "electrónica" }}
-            </Badge>
             <Check v-if="curso.firmasCertificado.some((item) => item.id === firma.id)" class="h-5 w-5 text-emerald-600" />
             <Plus v-else class="h-5 w-5 text-primary" />
           </button>
@@ -2280,9 +2911,7 @@ async function confirmarPortadaRecortada(archivo: File) {
         </div>
       </div>
       <template #footer>
-        <Button @click="modalFirmas = false">
-          Listo · {{ firmasInstitucionales.length }} institucionales
-        </Button>
+        <Button @click="modalFirmas = false">Listo</Button>
       </template>
     </Dialog>
     <div
@@ -2308,11 +2937,8 @@ async function confirmarPortadaRecortada(archivo: File) {
               curso.nivel
             }}</Badge>
             <h2 class="max-w-2xl text-3xl font-black">{{ curso.titulo }}</h2>
-            <p class="mt-3 max-w-2xl text-sm text-slate-200">
-              {{
-                curso.subtitulo ||
-                "Agrega un subtítulo para presentar el valor del curso."
-              }}
+            <p v-if="curso.subtitulo.trim()" class="mt-3 max-w-2xl text-sm text-slate-200">
+              {{ curso.subtitulo }}
             </p>
           </div>
         </div>
@@ -2320,10 +2946,24 @@ async function confirmarPortadaRecortada(archivo: File) {
           <div>
             <h3 class="font-black">Lo que aprenderás</h3>
             <ul class="mt-3 grid gap-2 text-sm text-muted-foreground">
-              <li v-for="objetivo in curso.objetivos" :key="objetivo">
+              <li
+                v-for="(objetivo, indice) in curso.objetivos.filter((item) => item.trim())"
+                :key="`${indice}-${objetivo}`"
+              >
                 ✓ {{ objetivo }}
               </li>
             </ul>
+            <template v-if="etiquetasRequisitosVista.length">
+              <h3 class="mt-6 font-black">Requisitos</h3>
+              <ul class="mt-3 grid gap-2 text-sm text-muted-foreground">
+                <li
+                  v-for="etiqueta in etiquetasRequisitosVista"
+                  :key="etiqueta"
+                >
+                  · {{ etiqueta }}
+                </li>
+              </ul>
+            </template>
           </div>
           <div class="border-l border-border pl-5 text-sm">
             <p class="font-black">{{ curso.categoria }}</p>
@@ -2387,3 +3027,91 @@ async function confirmarPortadaRecortada(archivo: File) {
     />
   </section>
 </template>
+
+<style scoped>
+/* Radio suave en todo el constructor (5 pasos), no solo botones. */
+.constructor-curso {
+  --constructor-radio: 0.3125rem;
+}
+
+.constructor-curso :deep(button:not(.rounded-full)),
+.constructor-curso :deep(input:not([type="radio"]):not([type="checkbox"]):not([type="file"])),
+.constructor-curso :deep(textarea),
+.constructor-curso :deep(select),
+.constructor-curso :deep(article),
+.constructor-curso :deep(img),
+.constructor-curso :deep(label),
+.constructor-curso :deep(.p-select),
+.constructor-curso :deep(.p-select-label),
+.constructor-curso :deep(.p-multiselect),
+.constructor-curso :deep(.p-multiselect-label),
+.constructor-curso :deep(.p-dialog),
+.constructor-curso :deep([class*="rounded"]:not([class*="rounded-full"])),
+.constructor-curso :deep([class~="border"]),
+.constructor-curso :deep([class*="border-2"]),
+.constructor-curso :deep([class*="border-dashed"]),
+.constructor-curso :deep([class*="bg-card"]),
+.constructor-curso :deep([class*="bg-muted"]),
+.constructor-curso :deep([class*="bg-primary"]),
+.constructor-curso :deep([class*="bg-rose"]),
+.constructor-curso :deep([class*="bg-sky"]),
+.constructor-curso :deep([class*="bg-violet"]),
+.constructor-curso :deep([class*="bg-amber"]),
+.constructor-curso :deep([class*="bg-teal"]),
+.constructor-curso :deep([class*="bg-indigo"]),
+.constructor-curso :deep([class*="bg-fuchsia"]),
+.constructor-curso :deep([class*="bg-emerald"]),
+.constructor-curso :deep([class*="bg-cyan"]),
+.constructor-curso :deep([class*="bg-red-"]),
+.constructor-curso :deep([class*="bg-linear"]) {
+  border-radius: var(--constructor-radio) !important;
+}
+
+.constructor-curso :deep(.rounded-full) {
+  border-radius: 9999px !important;
+}
+
+.constructor-curso :deep(input::placeholder),
+.constructor-curso :deep(textarea::placeholder) {
+  color: currentColor !important;
+  opacity: 0.38 !important;
+}
+
+.constructor-curso :deep(.p-select-label.p-placeholder),
+.constructor-curso :deep(.p-multiselect-label.p-placeholder) {
+  color: currentColor !important;
+  opacity: 0.38 !important;
+}
+
+/* Todos los pasos: un color por tipo de control. */
+.paso-campos :deep(input:not([type="radio"]):not([type="checkbox"]):not([type="file"])),
+.paso-campos :deep(textarea) {
+  border-color: #7dd3fc !important;
+  background-color: #f0f9ff !important;
+}
+
+/* Combos: un solo estilo (filtro-control). Sin tinte índigo aparte. */
+.paso-campos :deep(.filtro-control.p-select),
+.paso-campos :deep(.filtro-control.p-multiselect) {
+  border-color: #cfd9e7 !important;
+  background-color: #ffffff !important;
+}
+
+.dark .paso-campos :deep(.filtro-control.p-select),
+.dark .paso-campos :deep(.filtro-control.p-multiselect) {
+  border-color: #273246 !important;
+  background-color: #121a28 !important;
+}
+
+.paso-campos :deep(button:not(.btn-borrar):not(.btn-opcion)),
+.paso-campos :deep(.control-boton) {
+  border-color: #6ee7b7 !important;
+  background-color: #ecfdf5 !important;
+  color: #065f46 !important;
+}
+
+.paso-campos :deep(button:not(.btn-borrar):not(.btn-opcion):hover),
+.paso-campos :deep(.control-boton:hover) {
+  background-color: #d1fae5 !important;
+}
+</style>

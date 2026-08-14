@@ -49,10 +49,22 @@ const emit = defineEmits<{
   cancelar: [];
   confirmar: [configuracion: ConfiguracionPublicacionCurso];
   "aprobar-sin-publicar": [configuracion: ConfiguracionPublicacionCurso];
+  "rechazar-precio": [];
 }>();
 
 const paso = ref(1);
 const categorias = ref<CategoriaCursoEntidad[]>([]);
+const precioPropuestoAceptado = ref(false);
+
+const precioPropuestoPorDocente = computed(
+  () => Boolean(props.curso.precioPropuestoPorDocente),
+);
+
+const precioPropuestoMonto = computed(() => {
+  const monto = Number(props.curso.precio ?? 0);
+  if (props.curso.gratuito || monto <= 0) return 0;
+  return monto;
+});
 
 const config = reactive<ConfiguracionPublicacionCurso>({
   categoriaPrincipalId: "",
@@ -64,9 +76,16 @@ const config = reactive<ConfiguracionPublicacionCurso>({
   modalidadMatricula: "LIBRE",
   visibleParaExternos: true,
   precio: {
-    modalidad: "CURSO_COMPLETO",
+    modalidad:
+      props.curso.precioPropuestoPorDocente &&
+      (props.curso.gratuito || !(Number(props.curso.precio ?? 0) > 0))
+        ? "GRATUITO"
+        : "CURSO_COMPLETO",
     moneda: "PEN",
-    precioCompleto: props.curso.precio ?? 100,
+    precioCompleto:
+      props.curso.precioPropuestoPorDocente
+        ? Math.max(0, Number(props.curso.precio ?? 0))
+        : (props.curso.precio ?? 100),
     modulos: [],
   },
   certificacion: {
@@ -105,6 +124,9 @@ onMounted(async () => {
   const guardada = props.curso.configuracionPublicacion;
   if (guardada) {
     Object.assign(config, JSON.parse(JSON.stringify(guardada)));
+    if (precioPropuestoPorDocente.value) {
+      precioPropuestoAceptado.value = true;
+    }
   }
   if (!config.categoriaPrincipalId) {
     config.categoriaPrincipalId =
@@ -237,6 +259,9 @@ const pasoValido = computed(() => {
     return config.alcance === "PUBLICO" || config.nodoIds.length > 0;
   }
   if (paso.value === 3) {
+    if (precioPropuestoPorDocente.value && !precioPropuestoAceptado.value) {
+      return false;
+    }
     if (
       config.precio.modalidad === "CURSO_COMPLETO" &&
       config.precio.precioCompleto <= 0
@@ -551,6 +576,21 @@ function tituloRegla(regla: ReglaDescuentoCurso) {
     return regla.codigo ? `Código ${regla.codigo}` : "Cupón";
   }
   return regla.nombre || "Descuento automático";
+}
+
+function aceptarPrecioPropuesto() {
+  if (precioPropuestoMonto.value <= 0) {
+    config.precio.modalidad = "GRATUITO";
+    config.precio.precioCompleto = 0;
+  } else {
+    config.precio.modalidad = "CURSO_COMPLETO";
+    config.precio.precioCompleto = precioPropuestoMonto.value;
+  }
+  precioPropuestoAceptado.value = true;
+}
+
+function rechazarPrecioPropuesto() {
+  emit("rechazar-precio");
 }
 
 function siguiente() {
@@ -896,6 +936,47 @@ watch(paso, (actual) => {
         />
       </div>
 
+      <div
+        v-if="precioPropuestoPorDocente && !precioPropuestoAceptado"
+        class="grid gap-4 border border-border border-l-4 border-l-primary bg-primary/5 p-4"
+      >
+        <div>
+          <p class="font-black">Precio propuesto por el docente</p>
+          <p class="mt-1 text-sm text-muted-foreground">
+            Solo puedes aceptarlo o rechazarlo. Si lo rechazas, deja
+            observaciones en la revisión de contenido.
+          </p>
+          <p class="mt-3 text-2xl font-black">
+            {{
+              precioPropuestoMonto <= 0
+                ? "Gratuito"
+                : `S/ ${precioPropuestoMonto.toFixed(2)}`
+            }}
+          </p>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <Button class="bg-primary hover:bg-primary/90" @click="aceptarPrecioPropuesto">
+            Aceptar precio
+          </Button>
+          <Button variant="outline" @click="rechazarPrecioPropuesto">
+            Rechazar y observar
+          </Button>
+        </div>
+      </div>
+
+      <div
+        v-else-if="precioPropuestoPorDocente && precioPropuestoAceptado"
+        class="border border-border border-l-4 border-l-emerald-500 bg-emerald-500/10 p-4 text-sm"
+      >
+        <b>Precio del docente aceptado.</b>
+        {{
+          precioPropuestoMonto <= 0
+            ? "Curso gratuito."
+            : `S/ ${precioPropuestoMonto.toFixed(2)} (no editable).`
+        }}
+        Puedes seguir con certificado y descuentos.
+      </div>
+
       <div class="grid gap-4 lg:grid-cols-2">
         <!-- Bloque Curso -->
         <article class="grid gap-4 border border-border border-t-4 border-t-primary p-4">
@@ -907,30 +988,57 @@ watch(paso, (actual) => {
             />
           </div>
 
-          <label class="flex items-start gap-3 border border-border bg-muted/20 p-3">
-            <ToggleSwitch v-model="cursoGratuito" class="mt-0.5" />
-            <span>
-              <b class="block text-sm">Curso gratuito</b>
-              <small class="text-muted-foreground">
-                Quien cumple el acceso se inscribe sin pagar el contenido.
-              </small>
-            </span>
-          </label>
+          <template v-if="!precioPropuestoPorDocente || !precioPropuestoAceptado">
+            <label
+              v-if="!precioPropuestoPorDocente"
+              class="flex items-start gap-3 border border-border bg-muted/20 p-3"
+            >
+              <ToggleSwitch v-model="cursoGratuito" class="mt-0.5" />
+              <span>
+                <b class="block text-sm">Curso gratuito</b>
+                <small class="text-muted-foreground">
+                  Quien cumple el acceso se inscribe sin pagar el contenido.
+                </small>
+              </span>
+            </label>
 
-          <label v-if="!cursoGratuito" class="grid gap-2">
-            <span class="filtro-label">Precio del curso</span>
-            <InputNumber
-              v-model="config.precio.precioCompleto"
-              class="filtro-control w-full"
-              mode="currency"
-              currency="PEN"
-              locale="es-PE"
-              :min="0"
-              fluid
-            />
-          </label>
-          <p v-else class="text-sm font-bold text-emerald-700 dark:text-emerald-300">
-            Acceso al contenido: S/ 0.00
+            <label
+              v-if="!precioPropuestoPorDocente && !cursoGratuito"
+              class="grid gap-2"
+            >
+              <span class="filtro-label">Precio del curso</span>
+              <InputNumber
+                v-model="config.precio.precioCompleto"
+                class="filtro-control w-full"
+                mode="currency"
+                currency="PEN"
+                locale="es-PE"
+                :min="0"
+                fluid
+              />
+            </label>
+            <p
+              v-else-if="!precioPropuestoPorDocente && cursoGratuito"
+              class="text-sm font-bold text-emerald-700 dark:text-emerald-300"
+            >
+              Acceso al contenido: S/ 0.00
+            </p>
+            <p
+              v-else
+              class="text-sm text-muted-foreground"
+            >
+              Acepta o rechaza la propuesta del docente para continuar.
+            </p>
+          </template>
+          <p
+            v-else
+            class="text-sm font-bold text-emerald-700 dark:text-emerald-300"
+          >
+            {{
+              precioPropuestoMonto <= 0
+                ? "Acceso al contenido: S/ 0.00"
+                : `Precio fijado: S/ ${precioPropuestoMonto.toFixed(2)}`
+            }}
           </p>
         </article>
 

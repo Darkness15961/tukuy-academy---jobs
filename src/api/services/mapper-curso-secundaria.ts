@@ -17,10 +17,12 @@ import type {
 } from "@/portal-docente/types/docente.types";
 import type { ContextoSesion } from "@/types/membresia.types";
 import type { SesionEnVivoSecundaria } from "@/lib/contrato-secundaria";
+import { cursoEstadoVisibleEnCatalogoAlumno } from "@/lib/catalogo-alumno";
 import {
   normalizarPosicionPortada,
   urlPublicaMedia,
 } from "@/lib/storage-academia";
+import { normalizarRequisitos } from "@/lib/requisitos-curso";
 
 const ESTADOS_DOCENTE = new Set<EstadoCursoDocente>([
   "BORRADOR",
@@ -34,6 +36,23 @@ const ESTADOS_DOCENTE = new Set<EstadoCursoDocente>([
 
 const IMAGEN_FALLBACK =
   "https://images.unsplash.com/photo-1503387762-592deb58ef4e?auto=format&fit=crop&w=900&q=80";
+
+type TipoItemConstructor = "lectura" | "video" | "quiz" | "assignment";
+
+/** Normaliza tipos de secundaria (cuestionario, entrega_pdf) al constructor. */
+export function tipoItemConstructor(
+  tipoRaw: string,
+  tienePreguntas = false,
+): TipoItemConstructor {
+  const tipo = tipoRaw.trim().toLowerCase();
+  if (tipo === "quiz" || tipo === "cuestionario") return "quiz";
+  if (tipo === "assignment" || tipo === "entrega_pdf" || tipo === "entrega") {
+    return "assignment";
+  }
+  if (tipo === "video") return "video";
+  if (tienePreguntas) return "quiz";
+  return "lectura";
+}
 
 function mapearEstado(estado: string): EstadoCursoDocente {
   const normalizado = estado.trim().toUpperCase();
@@ -135,8 +154,9 @@ export function mapearDocumentoABorrador(
       ? documento.objetivos.map(String)
       : semilla.objetivos,
     requisitos: Array.isArray(documento.requisitos)
-      ? documento.requisitos.map(String)
-      : semilla.requisitos,
+      ? normalizarRequisitos(documento.requisitos)
+      : normalizarRequisitos(semilla.requisitos),
+    requisitosAccesoActivos: documento.requisitosAccesoActivos === true,
     categoria: String(documento.categoria ?? semilla.categoria ?? ""),
     nivel: String(documento.nivel ?? semilla.nivel ?? ""),
     imagen: urlPublicaMedia(
@@ -188,12 +208,10 @@ export function mapearDocumentoABorrador(
                 preguntas?: unknown;
               };
               const tipoRaw = String(fila.tipo ?? "").toLowerCase();
-              const tipo =
-                tipoRaw === "video" ||
-                tipoRaw === "quiz" ||
-                tipoRaw === "assignment"
-                  ? tipoRaw
-                  : ("lectura" as const);
+              const tienePreguntas = Array.isArray(fila.preguntas)
+                ? fila.preguntas.length > 0
+                : false;
+              const tipo = tipoItemConstructor(tipoRaw, tienePreguntas);
               const urlYoutube = String(
                 fila.urlYoutube ?? fila.videoUrl ?? "",
               ).trim();
@@ -204,13 +222,25 @@ export function mapearDocumentoABorrador(
                         question?: string;
                         options?: unknown;
                         correctIndex?: number;
+                        imagenReferencia?: string;
+                        imagen_referencia?: string;
+                        imagen?: string;
+                        imageUrl?: string;
                       };
+                      const imagenReferencia = String(
+                        p.imagenReferencia ??
+                          p.imagen_referencia ??
+                          p.imagen ??
+                          p.imageUrl ??
+                          "",
+                      ).trim();
                       return {
                         question: String(p.question ?? ""),
                         options: Array.isArray(p.options)
                           ? p.options.map(String)
                           : [],
                         correctIndex: Number(p.correctIndex ?? 0),
+                        ...(imagenReferencia ? { imagenReferencia } : {}),
                       };
                     })
                     .filter((p) => p.question && p.options.length > 0)
@@ -227,13 +257,8 @@ export function mapearDocumentoABorrador(
                           ? preguntas
                           : [
                               {
-                                question: "Nueva pregunta",
-                                options: [
-                                  "Opción A",
-                                  "Opción B",
-                                  "Opción C",
-                                  "Opción D",
-                                ],
+                                question: "",
+                                options: ["", "", "", ""],
                                 correctIndex: 0,
                               },
                             ],
@@ -292,6 +317,8 @@ export function mapearCursoSecundariaAPortal(
     image: urlPublicaMedia(curso.portadaClave, IMAGEN_FALLBACK),
     origen: "tukuy",
     alcance: "PUBLICO",
+    estadoPublicacion: curso.estado,
+    visibleEnCatalogo: cursoEstadoVisibleEnCatalogoAlumno(curso.estado),
   };
 }
 
@@ -315,6 +342,7 @@ export function mapearMatriculaAPortal(item: MatriculaCursoSecundaria): Course {
     ),
     origen: "tukuy",
     alcance: "PUBLICO",
+    visibleEnCatalogo: false,
   };
 }
 
@@ -379,12 +407,18 @@ export function mapearContenidoAprendizajeSecundaria(
           typeof correctRaw === "number" && Number.isFinite(correctRaw)
             ? correctRaw
             : undefined;
+        const imagenReferencia = String(
+          pregunta.imagenReferencia ??
+            (pregunta as { imagen_referencia?: string }).imagen_referencia ??
+            "",
+        ).trim();
         return {
           question: String(pregunta.question ?? ""),
           options: Array.isArray(pregunta.options)
             ? pregunta.options.map((opcion) => String(opcion))
             : [],
           ...(correctIndex !== undefined ? { correctIndex } : {}),
+          ...(imagenReferencia ? { imagenReferencia } : {}),
         };
       })
       .filter((pregunta) => pregunta.question && pregunta.options.length > 0);

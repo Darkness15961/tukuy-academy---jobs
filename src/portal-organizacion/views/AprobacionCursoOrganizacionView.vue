@@ -16,6 +16,11 @@ import AprobacionCursoWizard from "@/portal-organizacion/components/AprobacionCu
 import { obtenerRevisionCursoMock } from "@/portal-organizacion/data/revision-cursos.mock";
 import type { RevisionAcademicaCurso } from "@/portal-organizacion/types/revision-curso.types";
 import type { ConfiguracionPublicacionCurso } from "@/types/comercializacion-curso.types";
+import {
+  etiquetasRequisitos,
+  normalizarRequisitos,
+} from "@/lib/requisitos-curso";
+import { mapearSeccionesAModulosRevision } from "@/lib/mapear-revision-curso";
 
 const route = useRoute();
 const router = useRouter();
@@ -80,9 +85,9 @@ onMounted(async () => {
         const objetivos = Array.isArray(borrador.objetivos)
           ? borrador.objetivos.map(String)
           : [];
-        const requisitos = Array.isArray(borrador.requisitos)
-          ? borrador.requisitos.map(String)
-          : [];
+        const requisitos = etiquetasRequisitos(
+          normalizarRequisitos(borrador.requisitos),
+        );
         revision.value = {
           cursoId: propuesta.value.cursoDocenteId,
           version: Number(curso.totalVersiones ?? 1),
@@ -94,29 +99,11 @@ onMounted(async () => {
             : [`Revisar el contenido de ${propuesta.value.titulo}.`],
           requisitos: requisitos.length
             ? requisitos
-            : ["Acceso a la plataforma Tukuy"],
-          modulos: secciones.map((seccion, indice) => {
-            const clases = Array.isArray(seccion.clases)
-              ? seccion.clases.map(String)
-              : [];
-            const items = Array.isArray(seccion.items)
-              ? (seccion.items as Array<Record<string, unknown>>)
-              : [];
-            return {
-              id: String(
-                seccion.id ?? `${propuesta.value!.cursoDocenteId}-m${indice}`,
-              ),
-              titulo: String(seccion.titulo ?? `Módulo ${indice + 1}`),
-              descripcion: String(seccion.descripcion ?? ""),
-              clases: clases.length
-                ? clases
-                : items.map((item) => String(item.titulo ?? "Actividad")),
-              recursos: [],
-              actividades: items.map((item) =>
-                String(item.titulo ?? "Actividad"),
-              ),
-            };
-          }),
+            : ["Sin requisitos enlazados"],
+          modulos: mapearSeccionesAModulosRevision(
+            secciones,
+            propuesta.value.cursoDocenteId,
+          ),
           horasCertificables: Number(
             (curso.versionActual as { horas?: number } | undefined)?.horas ??
               propuesta.value.horas ??
@@ -292,6 +279,7 @@ async function confirmar(
       @cancelar="router.push('/organizacion/cursos')"
       @confirmar="(config) => confirmar(config, true)"
       @aprobar-sin-publicar="(config) => confirmar(config, false)"
+      @rechazar-precio="volverARevision"
     />
   </section>
 </template>

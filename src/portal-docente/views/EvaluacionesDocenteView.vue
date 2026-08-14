@@ -20,7 +20,9 @@ import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import Skeleton from "primevue/skeleton";
+import { useToast } from "primevue/usetoast";
 
+const toast = useToast();
 const filtro = ref<"PENDIENTES" | "REVISADAS">("PENDIENTES");
 const cargando = ref(true);
 const guardando = ref(false);
@@ -75,6 +77,32 @@ function abrirCalificacion(entrega: EntregaActividadAcademica) {
   seleccionada.value = entrega;
   nota.value = entrega.nota ?? 14;
   retroalimentacion.value = entrega.retroalimentacion ?? "";
+}
+
+async function verArchivo(entrega: EntregaActividadAcademica) {
+  try {
+    await academicoService.abrirArchivo(entrega);
+  } catch (error) {
+    toast.add({
+      severity: "error",
+      summary: "No se pudo abrir el PDF",
+      detail: error instanceof Error ? error.message : "Error desconocido",
+      life: 5000,
+    });
+  }
+}
+
+async function bajarArchivo(entrega: EntregaActividadAcademica) {
+  try {
+    await academicoService.descargarArchivo(entrega);
+  } catch (error) {
+    toast.add({
+      severity: "error",
+      summary: "No se pudo descargar el PDF",
+      detail: error instanceof Error ? error.message : "Error desconocido",
+      life: 5000,
+    });
+  }
 }
 
 async function guardarCalificacion() {
@@ -206,12 +234,14 @@ async function guardarCalificacion() {
               <Button
                 variant="ghost"
                 size="icon"
-                @click="academicoService.abrirArchivo(entrega)"
+                title="Ver PDF"
+                @click="verArchivo(entrega)"
                 ><Eye class="h-4 w-4" /></Button
               ><Button
                 variant="ghost"
                 size="icon"
-                @click="academicoService.descargarArchivo(entrega)"
+                title="Descargar PDF"
+                @click="bajarArchivo(entrega)"
                 ><Download class="h-4 w-4" /></Button
               ><Button
                 :variant="
@@ -258,12 +288,12 @@ async function guardarCalificacion() {
             ><Button
               variant="outline"
               size="sm"
-              @click="academicoService.abrirArchivo(seleccionada)"
+              @click="verArchivo(seleccionada)"
               ><Eye class="h-4 w-4" />Ver PDF</Button
             ><Button
               variant="outline"
               size="sm"
-              @click="academicoService.descargarArchivo(seleccionada)"
+              @click="bajarArchivo(seleccionada)"
               ><Download class="h-4 w-4" />Descargar</Button
             >
           </div>

@@ -29,6 +29,10 @@ export type Course = {
   alcance?: CourseAlcance;
   organizacionId?: string;
   organizacionNombre?: string;
+  /** Estado de publicación en secundaria (PUBLICADO, BORRADOR, …). */
+  estadoPublicacion?: string;
+  /** Si es false, no aparece en el catálogo (sí en Mi aprendizaje). */
+  visibleEnCatalogo?: boolean;
 };
 
 export type CourseLesson = {

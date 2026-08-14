@@ -207,7 +207,16 @@ const resumenFiltros = computed(() => {
         v-if="!portal.catalogCourses.value.length"
         class="border border-border bg-card py-12 text-center text-sm text-muted-foreground"
       >
-        No encontramos cursos con ese filtro. Prueba otra combinación.
+        {{
+          portal.coursesLoading.value
+            ? "Cargando catálogo…"
+            : portal.searchTerm.value ||
+                portal.fuenteFilter.value !== "all" ||
+                portal.accesoFilter.value !== "all" ||
+                portal.pricingFilter.value !== "all"
+              ? "No encontramos cursos con ese filtro. Prueba otra combinación."
+              : "Aún no hay cursos publicados. Cuando la entidad los publique aparecerán aquí."
+        }}
       </div>
     </section>
   </PortalSection>

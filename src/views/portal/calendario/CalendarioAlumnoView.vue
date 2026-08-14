@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useContextoSesion } from "@/composables/useContextoSesion";
 import type { SesionEnVivoOrganizacion } from "@/portal-organizacion/types/sesiones-en-vivo.types";
+import { asegurarCursosCargados } from "@/composables/useCursos";
 import { usePortalContext } from "../composables/usePortalContext";
 
 const { contextoActivo } = useContextoSesion();
@@ -30,6 +31,7 @@ async function cargar() {
     sesiones.value = [];
     return;
   }
+  await asegurarCursosCargados();
   sesiones.value = await sesionesEnVivoCompartidas.listarParaContexto(
     contextoActivo.value,
     portal.enrolledCourses.value,
@@ -126,15 +128,31 @@ function etiquetaEstado(estado: SesionEnVivoOrganizacion["estado"]) {
           </div>
           <p class="mt-4 break-all text-sm">
             <Link2 class="mr-1 inline h-4 w-4" />
-            {{ sesionDetalle.meetUrl }}
+            {{ sesionDetalle.meetUrl || "Sin enlace todavía" }}
+          </p>
+          <p
+            v-if="sesionDetalle.meetSimulado"
+            class="mt-2 text-xs text-amber-700 dark:text-amber-400"
+          >
+            {{
+              sesionDetalle.meetAviso ||
+              "Meet de demostración: aún no hay Google Calendar configurado."
+            }}
           </p>
           <div class="mt-5 flex justify-end gap-2">
             <Button variant="outline" @click="sesionDetalle = undefined"
               >Cerrar</Button
             >
-            <Button @click="unirse(sesionDetalle)">
+            <Button
+              :disabled="!sesionDetalle.meetUrl"
+              @click="unirse(sesionDetalle)"
+            >
               <Video class="h-4 w-4" />
-              Unirme a Meet
+              {{
+                sesionDetalle.meetSimulado
+                  ? "Abrir Meet (demo)"
+                  : "Unirme a Meet"
+              }}
             </Button>
           </div>
         </CardContent>

@@ -34,7 +34,9 @@ import {
   cursoRequiereCompra,
   matricularCurso,
   matricularCursos,
+  mensajeErrorMatricula,
 } from "@/lib/acceso-curso";
+import { cursoVisibleEnCatalogoAlumno } from "@/lib/catalogo-alumno";
 import { cursosPerfilesEntidadesMock } from "@/modulos/comunidad/data/entidades-publicas.mock";
 import { entidadesComunidadService } from "@/modulos/comunidad/services/entidades.service";
 import { portalPathByView, resolvePortalView } from "@/lib/portal-routes";
@@ -51,7 +53,12 @@ const router = useRouter();
 const { logout } = useAuth();
 const { navItems, loading: contentLoading } = useContent();
 const { contextoActivo } = useContextoSesion();
-const { courses, completedCourses, loading: coursesLoading } = useCursos();
+const {
+  courses,
+  completedCourses,
+  loading: coursesLoading,
+  refetch: refetchCursos,
+} = useCursos();
 const { searchTerm, filteredCourses } = useFiltroCursos(() => courses.value);
 const { jobs, loading: jobsLoading } = useEmpleos();
 const {
@@ -123,8 +130,12 @@ const enrolledCourses = computed(() =>
   ),
 );
 
+const cursosCatalogoBase = computed(() =>
+  filteredCourses.value.filter(cursoVisibleEnCatalogoAlumno),
+);
+
 const catalogCourses = computed(() => {
-  return filteredCourses.value.filter((course) => {
+  return cursosCatalogoBase.value.filter((course) => {
     const coincidePrecio =
       pricingFilter.value === "all" ||
       course.pricing === pricingFilter.value;
@@ -141,24 +152,29 @@ const catalogCourses = computed(() => {
 });
 
 const featuredCourses = computed(() => {
-  const tukuy = courses.value.filter((c) => (c.origen ?? "tukuy") === "tukuy");
-  const entidades = courses.value.filter(
+  const publicados = courses.value.filter(cursoVisibleEnCatalogoAlumno);
+  const tukuy = publicados.filter((c) => (c.origen ?? "tukuy") === "tukuy");
+  const entidades = publicados.filter(
     (c) => c.origen === "entidad" && (c.alcance ?? "PUBLICO") === "PUBLICO",
   );
   return [...tukuy.slice(0, 3), ...entidades.slice(0, 3)].slice(0, 6);
 });
 
-const contadoresCatalogo = computed(() => ({
-  total: courses.value.length,
-  tukuy: courses.value.filter((c) => (c.origen ?? "tukuy") === "tukuy").length,
-  entidad: courses.value.filter((c) => c.origen === "entidad").length,
-  publico: courses.value.filter((c) => (c.alcance ?? "PUBLICO") === "PUBLICO")
-    .length,
-  restringido: courses.value.filter((c) => c.alcance === "INTERNO").length,
-}));
+const contadoresCatalogo = computed(() => {
+  const publicados = courses.value.filter(cursoVisibleEnCatalogoAlumno);
+  return {
+    total: publicados.length,
+    tukuy: publicados.filter((c) => (c.origen ?? "tukuy") === "tukuy").length,
+    entidad: publicados.filter((c) => c.origen === "entidad").length,
+    publico: publicados.filter((c) => (c.alcance ?? "PUBLICO") === "PUBLICO")
+      .length,
+    restringido: publicados.filter((c) => c.alcance === "INTERNO").length,
+  };
+});
 
 const topCourses = computed(() => {
-  const enriched = courses.value.map((course) => ({
+  const publicados = courses.value.filter(cursoVisibleEnCatalogoAlumno);
+  const enriched = publicados.map((course) => ({
     ...course,
     _bestseller: course.bestseller ?? false,
   }));
@@ -260,9 +276,14 @@ watch(
   () => void sincronizarProgresosCursos(),
 );
 
+async function refrescarCursosTrasMatricula() {
+  await refetchCursos({ silencioso: true, forzar: true });
+  await sincronizarProgresosCursos();
+}
+
 async function matricularTrasCompra(cursoIds: string[]) {
   await matricularCursos(cursoIds, courses.value);
-  await sincronizarProgresosCursos();
+  await refrescarCursosTrasMatricula();
 }
 
 async function openSimuladorCurso(course: Course) {
@@ -285,70 +306,78 @@ async function openSimuladorCurso(course: Course) {
     return;
   }
 
-  if (course.origen === "entidad" && course.alcance === "INTERNO") {
-    const cursoEntidad = cursosPerfilesEntidadesMock.find(
-      (item) => item.id === course.id,
-    );
-    if (cursoEntidad) {
-      const acceso =
-        await entidadesComunidadService.evaluarAccesoCurso(cursoEntidad);
-      if (!acceso.disponible) {
-        mensajeAccesoCurso.value = `${acceso.motivo} Puedes solicitar acceso desde el perfil de la entidad.`;
-        void router.push(`/comunidad/entidades/${cursoEntidad.organizacionId}`);
-        return;
-      }
-      if (acceso.origenAcceso === "APROBACION") {
+  try {
+    if (course.origen === "entidad" && course.alcance === "INTERNO") {
+      const cursoEntidad = cursosPerfilesEntidadesMock.find(
+        (item) => item.id === course.id,
+      );
+      if (cursoEntidad) {
+        const acceso =
+          await entidadesComunidadService.evaluarAccesoCurso(cursoEntidad);
+        if (!acceso.disponible) {
+          mensajeAccesoCurso.value = `${acceso.motivo} Puedes solicitar acceso desde el perfil de la entidad.`;
+          void router.push(`/comunidad/entidades/${cursoEntidad.organizacionId}`);
+          return;
+        }
+        if (acceso.origenAcceso === "APROBACION") {
+          await entidadesComunidadService.matricularEnCurso(cursoEntidad);
+          mensajeAccesoCurso.value =
+            "Solicitud de matrícula enviada. La entidad debe aprobarla antes de habilitar el curso.";
+          return;
+        }
         await entidadesComunidadService.matricularEnCurso(cursoEntidad);
-        mensajeAccesoCurso.value =
-          "Solicitud de matrícula enviada. La entidad debe aprobarla antes de habilitar el curso.";
+        await matricularCurso(course.id, courses.value);
+        await refrescarCursosTrasMatricula();
+        await router.push(`/tukuy-academy/aprendizaje/${course.id}`);
         return;
       }
-      await entidadesComunidadService.matricularEnCurso(cursoEntidad);
-      await matricularCurso(course.id, courses.value);
-      await router.push(`/tukuy-academy/aprendizaje/${course.id}`);
-      return;
     }
-  }
 
-  if (
-    course.status === "Disponible" &&
-    esEstudianteInstitucional &&
-    contexto?.personaEntidadId
-  ) {
-    const evaluacion = await organizacionService.estructura.evaluarAccesoCurso(
-      contexto.personaEntidadId,
-      course.id,
-    );
-    if (!evaluacion.disponible) {
-      mensajeAccesoCurso.value = evaluacion.motivo;
-      return;
-    }
-    if (evaluacion.requiereAprobacion) {
-      await organizacionService.solicitarMatriculaCurso({
+    if (
+      course.status === "Disponible" &&
+      esEstudianteInstitucional &&
+      contexto?.personaEntidadId
+    ) {
+      const evaluacion = await organizacionService.estructura.evaluarAccesoCurso(
+        contexto.personaEntidadId,
+        course.id,
+      );
+      if (!evaluacion.disponible) {
+        mensajeAccesoCurso.value = evaluacion.motivo;
+        return;
+      }
+      if (evaluacion.requiereAprobacion) {
+        await organizacionService.solicitarMatriculaCurso({
+          usuarioId: contexto.personaEntidadId,
+          cursoId: course.id,
+          curso: course.title,
+          unidadOrigenId: evaluacion.unidadOrigenId,
+        });
+        mensajeAccesoCurso.value =
+          "Solicitud enviada. La entidad debe aprobarla antes de habilitar el curso.";
+        return;
+      }
+      await organizacionService.matricularUsuarioEnCurso({
         usuarioId: contexto.personaEntidadId,
         cursoId: course.id,
         curso: course.title,
         unidadOrigenId: evaluacion.unidadOrigenId,
+        modalidad: "LIBRE",
       });
-      mensajeAccesoCurso.value =
-        "Solicitud enviada. La entidad debe aprobarla antes de habilitar el curso.";
+      await matricularCurso(course.id, courses.value);
+      await refrescarCursosTrasMatricula();
+      await router.push(`/tukuy-academy/aprendizaje/${course.id}`);
       return;
     }
-    await organizacionService.matricularUsuarioEnCurso({
-      usuarioId: contexto.personaEntidadId,
-      cursoId: course.id,
-      curso: course.title,
-      unidadOrigenId: evaluacion.unidadOrigenId,
-      modalidad: "LIBRE",
-    });
-    await matricularCurso(course.id, courses.value);
-    await router.push(`/tukuy-academy/aprendizaje/${course.id}`);
-    return;
-  }
 
-  if (cursoPuedeInscribirseGratis(course)) {
-    await matricularCurso(course.id, courses.value);
-    await router.push(`/tukuy-academy/aprendizaje/${course.id}`);
+    if (cursoPuedeInscribirseGratis(course)) {
+      await matricularCurso(course.id, courses.value);
+      await refrescarCursosTrasMatricula();
+      await router.push(`/tukuy-academy/aprendizaje/${course.id}`);
+      return;
+    }
+  } catch (causa) {
+    mensajeAccesoCurso.value = mensajeErrorMatricula(causa);
     return;
   }
 

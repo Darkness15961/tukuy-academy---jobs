@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {
   BookOpen,
+  Check,
   CheckCircle2,
   ChevronDown,
   ChevronLeft,
@@ -11,13 +12,14 @@ import {
   Eye,
   FileCheck2,
   FileText,
-  GraduationCap,
   HelpCircle,
   Lock,
   MessageSquare,
+  MoreVertical,
   Play,
   RefreshCw,
   Send,
+  Share2,
   Star,
   Upload,
   UserRound,
@@ -34,7 +36,6 @@ import {
 } from "@/api/services/academico.service";
 import { Button } from "@/components/ui/button";
 import { useContextoSesion } from "@/composables/useContextoSesion";
-import { Progress } from "@/components/ui/progress";
 import {
   cursoEstaMatriculado,
   cursoRequiereCompra,
@@ -49,6 +50,7 @@ import type { Course } from "@/types/academia";
 import type {
   ContenidoCursoAprendizaje,
   ItemAprendizaje,
+  ModuloAprendizaje,
   PreguntaQuiz,
   RecursoAprendizaje,
 } from "@/types/aprendizaje.types";
@@ -57,6 +59,7 @@ import { asegurarCursosCargados } from "@/composables/useCursos";
 import { apiConfig } from "@/api/config";
 import { secundariaGatewayService } from "@/api/services/secundaria-gateway.service";
 import { mapearContenidoAprendizajeSecundaria } from "@/api/services/mapper-curso-secundaria";
+import { urlPublicaMedia } from "@/lib/storage-academia";
 
 const route = useRoute();
 const router = useRouter();
@@ -84,6 +87,7 @@ const activeItemId = ref("v1.1");
 const completedItems = ref<string[]>([]);
 const userGrades = ref<Record<string, number>>({});
 const selectedAnswers = ref<Record<number, number>>({});
+const quizPreguntaIndice = ref(0);
 const quizResult = ref<{
   score: number;
   passed: boolean;
@@ -295,7 +299,7 @@ const gradeStatus = computed(() => {
 });
 
 const collapsedSections = ref<Record<string, boolean>>({});
-const activeTab = ref<"descripcion" | "preguntas" | "notas" | "resenas">(
+const activeTab = ref<"descripcion" | "preguntas" | "notas">(
   "descripcion",
 );
 
@@ -320,7 +324,10 @@ const cargandoChat = ref(false);
 const enviandoMensaje = ref(false);
 const errorChat = ref("");
 
-const sidebarOpen = ref(false);
+const sidebarOpen = ref(true);
+const menuMasAbierto = ref(false);
+const avisoCompartir = ref("");
+const recursosItemId = ref<string | null>(null);
 const selectorPdf = ref<HTMLInputElement | null>(null);
 const archivoSeleccionado = ref<File>();
 const entregaActual = ref<EntregaActividadAcademica>();
@@ -463,8 +470,50 @@ async function cargarCurso() {
   }
 }
 
+const preguntasQuizActivo = computed(
+  () => quizQuestionsDatabase.value[activeItem.value.id] ?? [],
+);
+const preguntaQuizActual = computed(
+  () => preguntasQuizActivo.value[quizPreguntaIndice.value],
+);
+const totalPreguntasQuiz = computed(() => preguntasQuizActivo.value.length);
+const esUltimaPreguntaQuiz = computed(
+  () =>
+    totalPreguntasQuiz.value > 0 &&
+    quizPreguntaIndice.value >= totalPreguntasQuiz.value - 1,
+);
+const respuestaPreguntaActual = computed(() => {
+  const valor = selectedAnswers.value[quizPreguntaIndice.value];
+  return typeof valor === "number";
+});
+
+function irAPreguntaQuiz(indice: number) {
+  if (indice < 0 || indice >= totalPreguntasQuiz.value) return;
+  quizPreguntaIndice.value = indice;
+}
+
+function quizAnterior() {
+  irAPreguntaQuiz(quizPreguntaIndice.value - 1);
+}
+
+function quizSiguienteOEnviar() {
+  if (!respuestaPreguntaActual.value) return;
+  if (esUltimaPreguntaQuiz.value) {
+    void submitQuiz(activeItem.value.id);
+    return;
+  }
+  irAPreguntaQuiz(quizPreguntaIndice.value + 1);
+}
+
+function reiniciarIntentoQuiz() {
+  quizResult.value = null;
+  selectedAnswers.value = {};
+  quizPreguntaIndice.value = 0;
+}
+
 function restaurarEstadoQuizActivo() {
   selectedAnswers.value = {};
+  quizPreguntaIndice.value = 0;
   if (completedItems.value.includes(activeItemId.value)) {
     const savedGrade = userGrades.value[activeItemId.value] ?? notaMinimaCurso.value;
     quizResult.value = {
@@ -635,7 +684,82 @@ async function submitQuiz(itemId: string) {
 }
 
 function goBack() {
-  router.push("/tukuy-academy/cursos");
+  router.push("/tukuy-academy/mi-aprendizaje");
+}
+
+const CIRCUNFERENCIA_PROGRESO = 2 * Math.PI * 13;
+
+const trazoProgreso = computed(() => {
+  const pct = Math.min(100, Math.max(0, progressPercent.value)) / 100;
+  return CIRCUNFERENCIA_PROGRESO * (1 - pct);
+});
+
+const indiceItemActivo = computed(() =>
+  itemsEnOrden.value.findIndex((item) => item.id === activeItem.value.id),
+);
+
+const itemAnteriorId = computed(() => {
+  const indice = indiceItemActivo.value;
+  if (indice <= 0) return null;
+  return itemsEnOrden.value[indice - 1]?.id ?? null;
+});
+
+const itemSiguienteId = computed(() => {
+  const indice = indiceItemActivo.value;
+  const siguiente = itemsEnOrden.value[indice + 1];
+  if (!siguiente || actividadBloqueada(siguiente.id)) return null;
+  return siguiente.id;
+});
+
+function irAItemVecino(itemId: string | null) {
+  if (!itemId) return;
+  selectItem(itemId);
+}
+
+async function compartirCurso() {
+  try {
+    await navigator.clipboard.writeText(window.location.href);
+    avisoCompartir.value = "Enlace copiado";
+  } catch {
+    avisoCompartir.value = "No se pudo copiar el enlace";
+  }
+  window.setTimeout(() => {
+    avisoCompartir.value = "";
+  }, 1600);
+}
+
+function minutosDesdeDuracion(valor?: string) {
+  if (!valor) return 0;
+  const mmss = valor.trim().match(/^(\d+):(\d{2})$/);
+  if (mmss?.[1] && mmss[2]) {
+    return Number(mmss[1]) + Number(mmss[2]) / 60;
+  }
+  const min = valor.match(/(\d+)\s*min/i);
+  return min?.[1] ? Number(min[1]) : 0;
+}
+
+function resumenSeccion(section: ModuloAprendizaje) {
+  const total = section.items.length;
+  const hechas = section.items.filter((item) =>
+    completedItems.value.includes(item.id),
+  ).length;
+  const minutos = section.items.reduce(
+    (suma, item) => suma + minutosDesdeDuracion(item.duration),
+    0,
+  );
+  return {
+    total,
+    hechas,
+    tiempo: minutos > 0 ? `${Math.max(1, Math.round(minutos))} min` : "",
+  };
+}
+
+function recursosDeSeccion(section: ModuloAprendizaje) {
+  return section.recursos ?? [];
+}
+
+function toggleRecursosItem(itemId: string) {
+  recursosItemId.value = recursosItemId.value === itemId ? null : itemId;
 }
 
 function toggleSection(sectionId: string) {
@@ -645,7 +769,9 @@ function toggleSection(sectionId: string) {
 function selectItem(itemId: string) {
   if (actividadBloqueada(itemId)) return;
   activeItemId.value = itemId;
-  sidebarOpen.value = false;
+  if (typeof window !== "undefined" && window.innerWidth < 1024) {
+    sidebarOpen.value = false;
+  }
   restaurarEstadoQuizActivo();
   archivoSeleccionado.value = undefined;
   errorEntrega.value = "";
@@ -740,7 +866,12 @@ function getItemIcon(type: ItemAprendizaje["type"]) {
   }
 }
 
-onMounted(cargarCurso);
+onMounted(() => {
+  if (typeof window !== "undefined" && window.innerWidth < 1024) {
+    sidebarOpen.value = false;
+  }
+  void cargarCurso();
+});
 watch(courseId, cargarCurso);
 </script>
 
@@ -783,75 +914,141 @@ watch(courseId, cargarCurso);
     v-else-if="course && contenido"
     class="flex h-screen flex-col bg-background font-sans text-foreground"
   >
-    <!-- Top bar -->
     <header
-      class="flex h-16 shrink-0 items-center justify-between border-b border-border bg-card px-4 shadow-sm sm:px-6 z-10 dark:border-border dark:bg-card"
+      class="z-20 flex h-14 shrink-0 items-center justify-between gap-3 border-b border-border bg-card px-3 sm:px-4"
     >
       <div class="flex min-w-0 items-center gap-3">
+        <button
+          type="button"
+          class="hidden h-8 w-8 shrink-0 place-items-center sm:grid"
+          aria-label="Volver a mi aprendizaje"
+          @click="goBack"
+        >
+          <img
+            class="h-8 w-8 object-contain"
+            src="/img/iconoTukuyAcademy.png"
+            alt="Tukuy Academy"
+          />
+        </button>
         <Button
           variant="ghost"
           size="icon"
-          class="shrink-0 text-muted-foreground hover:bg-muted hover:text-foreground"
+          class="shrink-0 text-muted-foreground sm:hidden"
+          aria-label="Volver"
           @click="goBack"
         >
           <ChevronLeft class="h-5 w-5" />
         </Button>
-        <div class="hidden h-8 w-px bg-border sm:block" />
-        <span
-          class="hidden h-9 w-9 shrink-0 place-items-center rounded-full sm:grid dark:bg-white dark:p-1.5"
-        >
-          <img
-            class="h-full w-full object-contain"
-            src="/img/iconoTukuyAcademy.png"
-            alt="Tukuy Academy"
-          />
-        </span>
-        <div class="min-w-0">
-          <span
-            class="block text-[10px] font-extrabold uppercase tracking-wider text-primary"
-          >
-            Simulador de Aprendizaje
-          </span>
-          <h1 class="min-w-0 truncate text-sm font-bold text-foreground">
-            {{ course.title }}
-          </h1>
-          <p
-            v-if="docenteCurso"
-            class="mt-0.5 truncate text-[11px] text-muted-foreground"
-          >
-            Docente: {{ docenteCurso.nombre }}
-          </p>
-        </div>
+        <div class="hidden h-6 w-px bg-border sm:block" />
+        <h1 class="min-w-0 truncate text-sm font-semibold text-foreground">
+          {{ course.title }}
+        </h1>
       </div>
 
-      <div class="flex items-center gap-3">
-        <!-- Progress pill -->
-        <div
-          class="hidden items-center gap-2 rounded-full border border-border bg-primary/10 px-3.5 py-1.5 sm:flex"
-        >
-          <CirclePlay class="h-4 w-4 text-primary" />
-          <span class="text-xs font-semibold text-muted-foreground"
-            >Progreso General</span
+      <div class="flex shrink-0 items-center gap-1 sm:gap-2">
+        <div class="hidden items-center gap-2 sm:flex">
+          <svg
+            class="h-8 w-8 -rotate-90"
+            viewBox="0 0 32 32"
+            aria-hidden="true"
           >
-          <strong class="text-xs text-primary">{{ progressPercent }}%</strong>
+            <circle
+              cx="16"
+              cy="16"
+              r="13"
+              fill="none"
+              class="stroke-muted"
+              stroke-width="2.5"
+            />
+            <circle
+              cx="16"
+              cy="16"
+              r="13"
+              fill="none"
+              class="stroke-primary"
+              stroke-width="2.5"
+              stroke-linecap="round"
+              :stroke-dasharray="CIRCUNFERENCIA_PROGRESO"
+              :stroke-dashoffset="trazoProgreso"
+            />
+          </svg>
+          <span class="text-sm font-medium text-foreground">Tu progreso</span>
         </div>
+        <span class="text-xs font-semibold text-primary sm:hidden">
+          {{ progressPercent }}%
+        </span>
 
-        <!-- Exit button -->
-        <Button
-          variant="outline"
-          size="sm"
-          class="border-border bg-card text-muted-foreground hover:bg-muted"
-          @click="goBack"
-        >
-          Salir del curso
-        </Button>
-
-        <!-- Mobile sidebar toggle -->
         <Button
           variant="ghost"
+          size="sm"
+          class="hidden text-foreground sm:inline-flex"
+          @click="compartirCurso"
+        >
+          <Share2 class="h-4 w-4" />
+          Compartir
+        </Button>
+        <span
+          v-if="avisoCompartir"
+          class="hidden text-xs text-muted-foreground sm:inline"
+        >
+          {{ avisoCompartir }}
+        </span>
+
+        <div class="relative">
+          <Button
+            variant="ghost"
+            size="icon"
+            class="text-muted-foreground"
+            aria-label="Más opciones"
+            @click="menuMasAbierto = !menuMasAbierto"
+          >
+            <MoreVertical class="h-5 w-5" />
+          </Button>
+          <div
+            v-if="menuMasAbierto"
+            class="absolute right-0 top-full z-30 mt-1 w-48 border border-border bg-card py-1 shadow-lg"
+          >
+            <button
+              type="button"
+              class="block w-full px-3 py-2 text-left text-sm hover:bg-muted"
+              @click="
+                menuMasAbierto = false;
+                compartirCurso();
+              "
+            >
+              Copiar enlace
+            </button>
+            <button
+              type="button"
+              class="block w-full px-3 py-2 text-left text-sm hover:bg-muted"
+              @click="
+                menuMasAbierto = false;
+                goBack();
+              "
+            >
+              Salir del curso
+            </button>
+            <button
+              v-if="course.mode === 'Mixto' || course.mode === 'Presencial'"
+              type="button"
+              class="block w-full px-3 py-2 text-left text-sm hover:bg-muted"
+              @click="
+                menuMasAbierto = false;
+                router.push('/tukuy-academy/calendario');
+              "
+            >
+              Ver calendario
+            </button>
+          </div>
+        </div>
+
+        <Button
+          v-if="!sidebarOpen"
+          variant="ghost"
           size="icon"
-          class="text-muted-foreground hover:bg-muted hover:text-foreground lg:hidden"
-          @click="sidebarOpen = !sidebarOpen"
+          class="text-muted-foreground"
+          aria-label="Contenido del curso"
+          @click="sidebarOpen = true"
         >
           <BookOpen class="h-5 w-5" />
         </Button>
@@ -860,12 +1057,34 @@ watch(courseId, cargarCurso);
 
     <!-- Main content -->
     <div class="flex flex-1 overflow-hidden">
-      <!-- Left: Player + details -->
-      <div class="flex flex-1 flex-col overflow-y-auto bg-card">
+      <div class="flex min-w-0 flex-1 flex-col overflow-y-auto bg-card">
         <!-- Main player workspace depending on type -->
         <div
-          class="relative aspect-video w-full bg-slate-950 border-b border-border"
+          class="relative w-full"
+          :class="
+            activeItem.type === 'video'
+              ? 'aspect-video max-h-[min(70vh,720px)] bg-black'
+              : 'min-h-[min(62vh,680px)] max-h-[min(78vh,860px)] overflow-y-auto bg-background'
+          "
         >
+          <button
+            v-if="itemAnteriorId && activeItem.type !== 'quiz'"
+            type="button"
+            class="absolute left-3 top-1/2 z-20 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full bg-primary text-primary-foreground shadow-lg transition hover:opacity-90"
+            aria-label="Clase anterior"
+            @click="irAItemVecino(itemAnteriorId)"
+          >
+            <ChevronLeft class="h-6 w-6" />
+          </button>
+          <button
+            v-if="itemSiguienteId && activeItem.type !== 'quiz'"
+            type="button"
+            class="absolute right-3 top-1/2 z-20 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full bg-primary text-primary-foreground shadow-lg transition hover:opacity-90"
+            aria-label="Siguiente clase"
+            @click="irAItemVecino(itemSiguienteId)"
+          >
+            <ChevronRight class="h-6 w-6" />
+          </button>
           <!-- Video Player State -->
           <template v-if="activeItem.type === 'video'">
             <iframe
@@ -925,270 +1144,264 @@ watch(courseId, cargarCurso);
             </div>
           </template>
 
-          <!-- Quiz State -->
           <template v-else-if="activeItem.type === 'quiz'">
-            <!-- When NOT submitted -->
             <div
               v-if="!quizResult || !quizResult.submitted"
-              class="absolute inset-0 flex flex-col bg-slate-900 text-white p-6 overflow-y-auto"
+              class="px-4 py-6 sm:px-8"
             >
-              <div class="max-w-2xl mx-auto w-full space-y-5 py-4">
-                <div class="flex items-center gap-3">
-                  <div class="rounded-full bg-amber-500/10 p-2.5">
-                    <HelpCircle class="h-6 w-6 text-amber-400" />
+              <div class="mx-auto w-full max-w-3xl">
+                <p class="text-sm text-muted-foreground">
+                  {{ activeItem.title }} · nota mínima
+                  {{ notaMinimaCurso }}/20
+                </p>
+
+                <div v-if="preguntaQuizActual" class="mt-6">
+                  <p class="text-sm text-muted-foreground">
+                    Pregunta {{ quizPreguntaIndice + 1 }}:
+                  </p>
+                  <h3 class="mt-1 text-xl font-semibold text-foreground">
+                    {{ preguntaQuizActual.question }}
+                  </h3>
+
+                  <div
+                    v-if="preguntaQuizActual.imagenReferencia"
+                    class="mt-5 overflow-hidden border border-border bg-muted/30"
+                  >
+                    <img
+                      :src="urlPublicaMedia(preguntaQuizActual.imagenReferencia)"
+                      :alt="`Referencia de la pregunta ${quizPreguntaIndice + 1}`"
+                      class="mx-auto max-h-72 w-full object-contain"
+                    />
                   </div>
-                  <div>
-                    <span
-                      class="text-[10px] font-bold text-amber-400 tracking-wider uppercase"
-                      >Evaluación interactiva</span
+
+                  <div class="mt-5 grid gap-3">
+                    <label
+                      v-for="(opt, oIdx) in preguntaQuizActual.options"
+                      :key="oIdx"
+                      class="flex cursor-pointer items-start gap-3 rounded-lg border px-4 py-3.5 text-sm transition"
+                      :class="
+                        selectedAnswers[quizPreguntaIndice] === oIdx
+                          ? 'border-primary bg-muted font-medium text-foreground'
+                          : 'border-border bg-card text-foreground hover:bg-muted/60'
+                      "
                     >
-                    <h3 class="text-base font-bold text-white leading-snug">
-                      {{ activeItem.title }}
-                    </h3>
+                      <input
+                        type="radio"
+                        class="mt-0.5 accent-primary"
+                        :name="'pregunta-quiz-' + quizPreguntaIndice"
+                        :value="oIdx"
+                        v-model="selectedAnswers[quizPreguntaIndice]"
+                      />
+                      <span class="leading-6">{{ opt }}</span>
+                    </label>
+                  </div>
+
+                  <p
+                    v-if="quizResult?.error"
+                    class="mt-4 text-sm text-red-600"
+                  >
+                    {{ quizResult.error }}
+                  </p>
+
+                  <div class="mt-6 flex items-center justify-between gap-3">
+                    <Button
+                      variant="outline"
+                      :disabled="quizPreguntaIndice === 0"
+                      @click="quizAnterior"
+                    >
+                      <ChevronLeft class="h-4 w-4" />
+                      Anterior
+                    </Button>
+                    <span class="text-xs text-muted-foreground">
+                      {{ quizPreguntaIndice + 1 }} /
+                      {{ totalPreguntasQuiz }}
+                    </span>
+                    <Button
+                      :disabled="
+                        !respuestaPreguntaActual || quizResult?.enviando
+                      "
+                      @click="quizSiguienteOEnviar"
+                    >
+                      {{
+                        quizResult?.enviando
+                          ? "Calificando…"
+                          : esUltimaPreguntaQuiz
+                            ? "Enviar cuestionario"
+                            : "Siguiente"
+                      }}
+                      <ChevronRight
+                        v-if="!esUltimaPreguntaQuiz && !quizResult?.enviando"
+                        class="h-4 w-4"
+                      />
+                    </Button>
                   </div>
                 </div>
 
                 <p
-                  class="border-b border-slate-800 pb-4 text-xs leading-relaxed text-slate-300"
+                  v-else
+                  class="mt-8 rounded-lg border border-border bg-muted/40 p-5 text-sm text-muted-foreground"
                 >
-                  Responde las siguientes preguntas de opción múltiple basadas
-                  en el material de este módulo. Se requiere una nota mínima
-                  aprobatoria de
-                  <strong>{{ notaMinimaCurso }}/20</strong> para completar esta
-                  lección.
+                  Este cuestionario aún no tiene preguntas. Cuando el docente
+                  las publique podrás evaluarte aquí.
                 </p>
-
-                <!-- Questions List -->
-                <div
-                  v-if="quizQuestionsDatabase[activeItem.id]"
-                  class="space-y-6"
-                >
-                  <div
-                    v-for="(q, qIdx) in quizQuestionsDatabase[activeItem.id]"
-                    :key="qIdx"
-                    class="space-y-2.5 bg-slate-950/40 p-4 rounded-lg border border-slate-800"
-                  >
-                    <h4 class="text-xs font-bold text-slate-200">
-                      {{ qIdx + 1 }}. {{ q.question }}
-                    </h4>
-                    <div class="grid gap-2">
-                      <label
-                        v-for="(opt, oIdx) in q.options"
-                        :key="oIdx"
-                        class="flex items-start gap-3 rounded-md p-2.5 text-xs cursor-pointer border transition-all"
-                        :class="
-                          selectedAnswers[qIdx] === oIdx
-                            ? 'bg-primary/30 border-primary text-white font-medium'
-                            : 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-800/50'
-                        "
-                      >
-                        <input
-                          type="radio"
-                          :name="'q-' + qIdx"
-                          :value="oIdx"
-                          v-model="selectedAnswers[qIdx]"
-                          class="mt-0.5 accent-blue-500 shrink-0"
-                        />
-                        <span>{{ opt }}</span>
-                      </label>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="flex flex-col items-end gap-2 pt-2">
-                  <p
-                    v-if="quizResult?.error"
-                    class="text-xs text-red-400 max-w-md text-right"
-                  >
-                    {{ quizResult.error }}
-                  </p>
-                  <Button
-                    size="sm"
-                    class="bg-amber-600 hover:bg-amber-500 font-bold text-white px-6 py-2.5 h-10"
-                    :disabled="
-                      quizResult?.enviando ||
-                      Object.keys(selectedAnswers).length <
-                        (quizQuestionsDatabase[activeItem.id]?.length || 0)
-                    "
-                    @click="submitQuiz(activeItem.id)"
-                  >
-                    {{
-                      quizResult?.enviando
-                        ? "Calificando…"
-                        : "Enviar y Calificar cuestionario"
-                    }}
-                  </Button>
-                </div>
               </div>
             </div>
 
-            <!-- When Submitted (Results screen) -->
-            <div
-              v-else
-              class="absolute inset-0 flex flex-col bg-slate-900 text-white p-6 overflow-y-auto"
-            >
-              <div
-                class="max-w-2xl mx-auto w-full space-y-6"
-                :class="quizResult.mostrandoRevision ? '' : 'text-center'"
-              >
+            <div v-else class="px-4 py-6 sm:px-8">
+              <div class="mx-auto w-full max-w-3xl">
                 <template v-if="!quizResult.mostrandoRevision">
-                  <!-- Result icon -->
-                  <div class="flex justify-center">
-                    <div
-                      class="rounded-full p-5 ring-8"
-                      :class="
-                        quizResult.passed
-                          ? 'bg-emerald-500/10 ring-emerald-500/15 text-emerald-400'
-                          : 'bg-red-500/10 ring-red-500/15 text-red-400'
-                      "
-                    >
-                      <CheckCircle2
-                        v-if="quizResult.passed"
-                        class="h-10 w-10 text-emerald-400"
-                      />
-                      <X v-else class="h-10 w-10 text-red-400" />
+                  <div class="text-center">
+                    <div class="flex justify-center">
+                      <div
+                        class="rounded-full p-5 ring-8"
+                        :class="
+                          quizResult.passed
+                            ? 'bg-emerald-500/10 ring-emerald-500/15 text-emerald-600'
+                            : 'bg-red-500/10 ring-red-500/15 text-red-600'
+                        "
+                      >
+                        <CheckCircle2
+                          v-if="quizResult.passed"
+                          class="h-10 w-10"
+                        />
+                        <X v-else class="h-10 w-10" />
+                      </div>
                     </div>
-                  </div>
-
-                  <div class="space-y-2">
-                    <span
-                      class="text-xs font-bold tracking-wider uppercase"
+                    <p
+                      class="mt-4 text-xs font-bold uppercase tracking-wider"
                       :class="
-                        quizResult.passed ? 'text-emerald-400' : 'text-red-400'
+                        quizResult.passed ? 'text-emerald-600' : 'text-red-600'
                       "
                     >
                       {{
                         quizResult.passed
-                          ? "¡Cuestionario Aprobado!"
-                          : "Cuestionario Desaprobado"
+                          ? "Cuestionario aprobado"
+                          : "Cuestionario desaprobado"
                       }}
-                    </span>
-                    <h3 class="text-lg font-bold text-white">
+                    </p>
+                    <h3 class="mt-1 text-xl font-bold text-foreground">
                       {{ activeItem.title }}
                     </h3>
-                  </div>
-
-                  <div
-                    class="bg-slate-950/50 rounded-xl p-4 border border-slate-800 max-w-xs mx-auto"
-                  >
-                    <p
-                      class="text-xs font-bold uppercase tracking-wide text-slate-400"
-                    >
-                      Calificación obtenida
-                    </p>
-                    <strong
-                      class="text-4xl font-black block mt-1"
-                      :class="
-                        quizResult.passed ? 'text-emerald-400' : 'text-red-400'
-                      "
-                    >
+                    <p class="mt-4 text-4xl font-black text-foreground">
                       {{ quizResult.score }} / 20
-                    </strong>
-                    <p class="mt-1 text-[10px] text-slate-400">
+                    </p>
+                    <p class="mt-1 text-sm text-muted-foreground">
                       {{
                         quizResult.passed
                           ? "Nota aprobada para acreditación."
                           : `Requiere un mínimo de ${notaMinimaCurso} para aprobar.`
                       }}
                     </p>
-                  </div>
-
-                  <div class="flex justify-center gap-3 pt-2">
-                    <Button
-                      v-if="!quizResult.passed"
-                      size="sm"
-                      class="bg-amber-600 hover:bg-amber-500 font-bold text-white px-5"
-                      @click="
-                        quizResult = null;
-                        selectedAnswers = {};
-                      "
-                    >
-                      <RefreshCw class="mr-1.5 h-3.5 w-3.5" />
-                      Intentar de nuevo
-                    </Button>
-                    <Button
-                      v-if="quizResult.correctIndexes?.length"
-                      size="sm"
-                      variant="outline"
-                      class="border-slate-700 bg-slate-800 text-white hover:bg-slate-700"
-                      @click="quizResult = { ...quizResult, mostrandoRevision: true }"
-                    >
-                      Ver mis respuestas
-                    </Button>
+                    <div class="mt-6 flex justify-center gap-3">
+                      <Button
+                        v-if="!quizResult.passed"
+                        variant="outline"
+                        @click="reiniciarIntentoQuiz"
+                      >
+                        <RefreshCw class="mr-1.5 h-3.5 w-3.5" />
+                        Intentar de nuevo
+                      </Button>
+                      <Button
+                        v-if="quizResult.correctIndexes?.length"
+                        @click="
+                          quizPreguntaIndice = 0;
+                          quizResult = {
+                            ...quizResult,
+                            mostrandoRevision: true,
+                          };
+                        "
+                      >
+                        Ver mis respuestas
+                      </Button>
+                    </div>
                   </div>
                 </template>
 
-                <template v-else>
+                <template v-else-if="preguntaQuizActual">
                   <div class="flex items-center justify-between gap-3">
-                    <div>
-                      <p
-                        class="text-[10px] font-bold uppercase tracking-wider text-amber-400"
-                      >
-                        Revisión del intento
-                      </p>
-                      <h3 class="text-base font-bold text-white">
-                        {{ activeItem.title }}
-                      </h3>
-                    </div>
+                    <p class="text-sm text-muted-foreground">
+                      Revisión · pregunta {{ quizPreguntaIndice + 1 }}
+                    </p>
                     <Button
                       size="sm"
                       variant="outline"
-                      class="border-slate-700 bg-slate-800 text-white hover:bg-slate-700"
                       @click="
-                        quizResult = { ...quizResult, mostrandoRevision: false }
+                        quizResult = {
+                          ...quizResult,
+                          mostrandoRevision: false,
+                        }
                       "
                     >
                       Volver al resultado
                     </Button>
                   </div>
-
-                  <div class="space-y-4">
+                  <h3 class="mt-3 text-xl font-semibold text-foreground">
+                    {{ preguntaQuizActual.question }}
+                  </h3>
+                  <div
+                    v-if="preguntaQuizActual.imagenReferencia"
+                    class="mt-5 overflow-hidden border border-border bg-muted/30"
+                  >
+                    <img
+                      :src="urlPublicaMedia(preguntaQuizActual.imagenReferencia)"
+                      alt="Referencia de la pregunta"
+                      class="mx-auto max-h-72 w-full object-contain"
+                    />
+                  </div>
+                  <div class="mt-5 grid gap-3">
                     <div
-                      v-for="(q, qIdx) in quizQuestionsDatabase[activeItem.id]"
-                      :key="qIdx"
-                      class="space-y-2.5 bg-slate-950/40 p-4 rounded-lg border border-slate-800 text-left"
+                      v-for="(opt, oIdx) in preguntaQuizActual.options"
+                      :key="oIdx"
+                      class="rounded-lg border px-4 py-3.5 text-sm"
+                      :class="
+                        oIdx === quizResult.correctIndexes?.[quizPreguntaIndice]
+                          ? 'border-emerald-500/50 bg-emerald-500/10 text-foreground'
+                          : selectedAnswers[quizPreguntaIndice] === oIdx
+                            ? 'border-red-500/50 bg-red-500/10 text-foreground'
+                            : 'border-border bg-card text-muted-foreground'
+                      "
                     >
-                      <h4 class="text-xs font-bold text-slate-200">
-                        {{ qIdx + 1 }}. {{ q.question }}
-                      </h4>
-                      <div class="grid gap-2">
-                        <div
-                          v-for="(opt, oIdx) in q.options"
-                          :key="oIdx"
-                          class="rounded-md p-2.5 text-xs border"
-                          :class="
-                            oIdx === quizResult.correctIndexes?.[qIdx]
-                              ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-200'
-                              : selectedAnswers[qIdx] === oIdx
-                                ? 'bg-red-500/15 border-red-500/40 text-red-200'
-                                : 'bg-slate-900 border-slate-800 text-slate-400'
-                          "
-                        >
-                          {{ opt }}
-                          <span
-                            v-if="oIdx === quizResult.correctIndexes?.[qIdx]"
-                            class="ml-2 text-[10px] font-bold uppercase"
-                            >Correcta</span
-                          >
-                          <span
-                            v-else-if="selectedAnswers[qIdx] === oIdx"
-                            class="ml-2 text-[10px] font-bold uppercase"
-                            >Tu respuesta</span
-                          >
-                        </div>
-                      </div>
+                      {{ opt }}
+                      <span
+                        v-if="
+                          oIdx ===
+                          quizResult.correctIndexes?.[quizPreguntaIndice]
+                        "
+                        class="ml-2 text-[11px] font-bold uppercase text-emerald-700"
+                        >Correcta</span
+                      >
+                      <span
+                        v-else-if="
+                          selectedAnswers[quizPreguntaIndice] === oIdx
+                        "
+                        class="ml-2 text-[11px] font-bold uppercase text-red-700"
+                        >Tu respuesta</span
+                      >
                     </div>
                   </div>
-
-                  <div class="flex justify-end gap-3 pt-1">
+                  <div class="mt-6 flex items-center justify-between gap-3">
                     <Button
-                      v-if="!quizResult.passed"
-                      size="sm"
-                      class="bg-amber-600 hover:bg-amber-500 font-bold text-white px-5"
-                      @click="
-                        quizResult = null;
-                        selectedAnswers = {};
-                      "
+                      variant="outline"
+                      :disabled="quizPreguntaIndice === 0"
+                      @click="quizAnterior"
+                    >
+                      <ChevronLeft class="h-4 w-4" />
+                      Anterior
+                    </Button>
+                    <span class="text-xs text-muted-foreground">
+                      {{ quizPreguntaIndice + 1 }} / {{ totalPreguntasQuiz }}
+                    </span>
+                    <Button
+                      v-if="!esUltimaPreguntaQuiz"
+                      @click="irAPreguntaQuiz(quizPreguntaIndice + 1)"
+                    >
+                      Siguiente
+                      <ChevronRight class="h-4 w-4" />
+                    </Button>
+                    <Button
+                      v-else-if="!quizResult.passed"
+                      variant="outline"
+                      @click="reiniciarIntentoQuiz"
                     >
                       <RefreshCw class="mr-1.5 h-3.5 w-3.5" />
                       Intentar de nuevo
@@ -1374,56 +1587,16 @@ watch(courseId, cargarCurso);
             </div>
           </template>
 
-          <!-- Fake control bar at bottom of player -->
-          <div
-            v-if="activeItem.type === 'video'"
-            class="absolute bottom-0 left-0 right-0 flex items-center justify-between bg-slate-950/85 px-4 py-2.5 text-[11px] text-slate-400"
-          >
-            <span>Continúa desde donde lo dejaste</span>
-            <div class="h-1 flex-1 mx-4 rounded bg-slate-800 overflow-hidden">
-              <div
-                class="h-full bg-primary transition-all duration-500"
-                :style="{ width: `${progressPercent}%` }"
-              />
-            </div>
-            <span>Curso {{ progressPercent }}%</span>
-          </div>
         </div>
 
-        <!-- Recursos del módulo activo -->
-        <div
-          v-if="recursosModuloActivo.length"
-          class="border-b border-border bg-muted/30 px-6 py-3"
-        >
-          <p
-            class="mb-2 text-[10px] font-bold uppercase tracking-wider text-muted-foreground"
-          >
-            Material del módulo
-          </p>
-          <div class="flex flex-wrap gap-2">
-            <Button
-              v-for="recurso in recursosModuloActivo"
-              :key="recurso.id"
-              size="sm"
-              variant="outline"
-              class="border-border bg-card text-foreground hover:bg-muted"
-              @click="abrirRecurso(recurso)"
-            >
-              <Download class="mr-1.5 h-3.5 w-3.5" />
-              {{ recurso.nombre }}
-            </Button>
-          </div>
-        </div>
-
-        <!-- Navigation Tabs -->
         <div class="border-b border-border bg-card">
-          <nav class="flex gap-0 overflow-x-auto px-6">
+          <nav class="flex gap-0 overflow-x-auto px-4 sm:px-6">
             <button
               type="button"
-              class="whitespace-nowrap px-4 py-4 text-sm font-bold transition border-b-2"
+              class="whitespace-nowrap px-3 py-3.5 text-sm font-medium transition border-b-2 sm:px-4"
               :class="
                 activeTab === 'descripcion'
-                  ? 'border-primary text-primary'
+                  ? 'border-foreground text-foreground'
                   : 'border-transparent text-muted-foreground hover:text-foreground'
               "
               @click="activeTab = 'descripcion'"
@@ -1432,39 +1605,27 @@ watch(courseId, cargarCurso);
             </button>
             <button
               type="button"
-              class="whitespace-nowrap px-4 py-4 text-sm font-bold transition border-b-2"
+              class="whitespace-nowrap px-3 py-3.5 text-sm font-medium transition border-b-2 sm:px-4"
               :class="
                 activeTab === 'preguntas'
-                  ? 'border-primary text-primary'
+                  ? 'border-foreground text-foreground'
                   : 'border-transparent text-muted-foreground hover:text-foreground'
               "
               @click="activeTab = 'preguntas'"
             >
-              Mensaje al docente
+              Preguntas y respuestas
             </button>
             <button
               type="button"
-              class="whitespace-nowrap px-4 py-4 text-sm font-bold transition border-b-2"
+              class="whitespace-nowrap px-3 py-3.5 text-sm font-medium transition border-b-2 sm:px-4"
               :class="
                 activeTab === 'notas'
-                  ? 'border-primary text-primary'
+                  ? 'border-foreground text-foreground'
                   : 'border-transparent text-muted-foreground hover:text-foreground'
               "
               @click="activeTab = 'notas'"
             >
               Notas
-            </button>
-            <button
-              type="button"
-              class="whitespace-nowrap px-4 py-4 text-sm font-bold transition border-b-2"
-              :class="
-                activeTab === 'resenas'
-                  ? 'border-primary text-primary'
-                  : 'border-transparent text-muted-foreground hover:text-foreground'
-              "
-              @click="activeTab = 'resenas'"
-            >
-              Reseñas
             </button>
           </nav>
         </div>
@@ -1472,64 +1633,39 @@ watch(courseId, cargarCurso);
         <!-- Tab content -->
         <div class="p-6 sm:p-8 bg-card">
           <template v-if="activeTab === 'descripcion'">
-            <h2 class="text-xl font-black text-foreground">
+            <h2 class="text-2xl font-bold tracking-tight text-foreground">
               {{ activeItem.title }}
             </h2>
-            <p class="mt-2.5 text-sm leading-relaxed text-muted-foreground">
+            <div
+              class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground"
+            >
+              <span v-if="course.rating" class="inline-flex items-center gap-1">
+                <Star class="h-3.5 w-3.5 fill-current text-accent" />
+                {{ course.rating.toFixed(1).replace(".", ",") }}
+              </span>
+              <span>{{ course.mode }}</span>
+              <span>{{ course.duration }}</span>
+              <span
+                >{{ completedItemsCount }} / {{ totalItemsCount }} clases</span
+              >
+              <span
+                :class="
+                  gradeStatus === 'En riesgo'
+                    ? 'text-amber-600'
+                    : 'text-foreground'
+                "
+                >{{ gradeStatus }}</span
+              >
+              <span v-if="averageGrade"
+                >Promedio {{ averageGrade }}/20</span
+              >
+            </div>
+            <p
+              v-if="activeItem.description"
+              class="mt-4 max-w-3xl text-sm leading-7 text-muted-foreground"
+            >
               {{ activeItem.description }}
             </p>
-
-            <!-- Cards section -->
-            <div class="mt-6 grid gap-4 sm:grid-cols-3">
-              <div
-                class="rounded-xl border border-border bg-muted p-4 shadow-sm"
-              >
-                <div
-                  class="flex items-center gap-2 text-xs font-bold uppercase text-muted-foreground"
-                >
-                  <ClipboardCheck class="h-4 w-4 text-primary" />
-                  Avance
-                </div>
-                <strong class="mt-2 block text-3xl font-black text-foreground"
-                  >{{ completedItemsCount }}/{{ totalItemsCount }}</strong
-                >
-              </div>
-
-              <div
-                class="rounded-xl border border-border bg-muted p-4 shadow-sm"
-              >
-                <div
-                  class="flex items-center gap-2 text-xs font-bold uppercase text-muted-foreground"
-                >
-                  <Star class="h-4 w-4 text-[#F5B400]" />
-                  Promedio de notas
-                </div>
-                <strong class="mt-2 block text-3xl font-black text-foreground">
-                  {{ averageGrade || "--" }}
-                </strong>
-              </div>
-
-              <div
-                class="rounded-xl border border-border bg-muted p-4 shadow-sm"
-              >
-                <div
-                  class="flex items-center gap-2 text-xs font-bold uppercase text-muted-foreground"
-                >
-                  <GraduationCap class="h-4 w-4 text-emerald-600" />
-                  Estado
-                </div>
-                <strong
-                  class="mt-2 block text-3xl font-black text-foreground"
-                  :class="
-                    gradeStatus === 'En riesgo'
-                      ? 'text-amber-500'
-                      : 'text-foreground'
-                  "
-                >
-                  {{ gradeStatus }}
-                </strong>
-              </div>
-            </div>
 
             <!-- Docente del curso -->
             <div
@@ -1622,7 +1758,7 @@ watch(courseId, cargarCurso);
               <div class="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h3 class="text-base font-bold text-foreground">
-                    Mensaje directo al docente
+                    Preguntas y respuestas
                   </h3>
                   <p class="mt-1 text-sm text-muted-foreground">
                     Conversación privada con
@@ -1707,7 +1843,7 @@ watch(courseId, cargarCurso);
               <div>
                 <h3 class="text-base font-bold text-foreground">Tus apuntes</h3>
                 <p class="mt-1 text-sm text-muted-foreground">
-                  Se guardan en tu matrícula del curso (secundaria).
+                  Se guardan automáticamente.
                 </p>
               </div>
               <textarea
@@ -1737,212 +1873,181 @@ watch(courseId, cargarCurso);
               </div>
             </div>
           </template>
-
-          <template v-else-if="activeTab === 'resenas'">
-            <div class="flex flex-col items-center gap-4 py-12 text-center">
-              <Star class="h-12 w-12 text-muted-foreground/60" />
-              <h3 class="text-base font-bold text-foreground">
-                Reseñas del curso
-              </h3>
-              <p class="max-w-md text-sm text-muted-foreground">
-                Al completar el curso podrás dejar tu valoración y ayudar a
-                otros estudiantes.
-              </p>
-            </div>
-          </template>
         </div>
       </div>
 
-      <!-- Right: Course content sidebar -->
       <aside
-        class="shrink-0 flex-col border-l border-border bg-card"
+        class="flex shrink-0 flex-col border-l border-border bg-card"
         :class="[
           sidebarOpen
-            ? 'fixed inset-y-16 right-0 z-40 flex w-80 shadow-2xl lg:relative lg:inset-auto lg:z-auto lg:w-96 lg:shadow-none'
-            : 'hidden lg:flex lg:w-96',
+            ? 'fixed inset-y-14 right-0 z-40 w-[min(100%,22rem)] shadow-2xl lg:relative lg:inset-auto lg:z-auto lg:w-[380px] lg:shadow-none'
+            : 'hidden',
         ]"
       >
-        <!-- Sidebar header -->
         <div
-          class="flex items-center justify-between border-b border-border px-4 py-4"
+          class="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-border px-4"
         >
-          <h2
-            class="text-sm font-bold text-foreground uppercase tracking-wider"
-          >
-            Temario del Curso
+          <h2 class="text-base font-bold text-foreground">
+            Contenido del curso
           </h2>
           <Button
             variant="ghost"
             size="icon"
-            class="text-muted-foreground hover:bg-muted hover:text-foreground lg:hidden"
+            class="text-muted-foreground"
+            aria-label="Cerrar contenido"
             @click="sidebarOpen = false"
           >
-            <ChevronRight class="h-5 w-5" />
+            <X class="h-5 w-5" />
           </Button>
         </div>
 
-        <!-- Progress bar -->
-        <div class="border-b border-border px-4 py-4 bg-muted/50">
-          <div class="flex items-center justify-between text-xs mb-2">
-            <span class="text-muted-foreground font-semibold"
-              >{{ completedItemsCount }} de
-              {{ totalItemsCount }} completadas</span
-            >
-            <strong class="text-primary font-bold"
-              >{{ progressPercent }}%</strong
-            >
-          </div>
-          <Progress
-            :model-value="progressPercent"
-            class="h-2 bg-muted [&>div]:bg-primary"
-          />
-        </div>
-
-        <!-- Sections list -->
-        <div class="flex-1 overflow-y-auto p-4 space-y-4">
-          <div
-            v-for="section in syllabusSections"
+        <div class="flex-1 overflow-y-auto">
+          <section
+            v-for="(section, indiceSeccion) in syllabusSections"
             :key="section.id"
-            class="border border-border rounded-lg overflow-hidden shadow-sm bg-card"
+            class="border-b border-border"
           >
-            <!-- Collapsible header -->
             <button
               type="button"
-              class="w-full flex items-center justify-between px-4 py-3 bg-muted/70 border-b border-border text-left transition hover:bg-muted/70"
+              class="flex w-full items-start gap-3 px-4 py-3.5 text-left hover:bg-muted/40"
               @click="toggleSection(section.id)"
             >
-              <span
-                class="text-xs font-bold text-foreground uppercase tracking-wide truncate pr-2"
-              >
-                {{ section.title }}
-              </span>
+              <div class="min-w-0 flex-1">
+                <p class="text-sm font-bold leading-snug text-foreground">
+                  Sección {{ indiceSeccion + 1 }}:
+                  {{ section.title }}
+                </p>
+                <p class="mt-1 text-xs text-muted-foreground">
+                  {{ resumenSeccion(section).hechas }} /
+                  {{ resumenSeccion(section).total }}
+                  <span v-if="resumenSeccion(section).tiempo">
+                    · {{ resumenSeccion(section).tiempo }}
+                  </span>
+                </p>
+              </div>
               <ChevronDown
-                class="h-4 w-4 text-muted-foreground shrink-0 transition-transform duration-200"
+                class="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground transition-transform"
                 :class="{ 'rotate-180': !collapsedSections[section.id] }"
               />
             </button>
 
-            <!-- Collapsible body -->
-            <div
-              v-show="!collapsedSections[section.id]"
-              class="divide-y divide-border"
-            >
-              <button
+            <div v-show="!collapsedSections[section.id]" class="pb-2">
+              <div
                 v-for="item in section.items"
                 :key="item.id"
-                type="button"
-                class="w-full flex items-start gap-3 p-3 text-left transition duration-150"
-                :class="[
-                  actividadBloqueada(item.id)
-                    ? 'opacity-55 cursor-not-allowed'
-                    : activeItemId === item.id
-                      ? 'bg-primary/10 font-medium'
-                      : 'hover:bg-muted/50',
-                ]"
-                :aria-current="activeItemId === item.id ? 'true' : undefined"
-                :aria-disabled="actividadBloqueada(item.id) ? 'true' : undefined"
-                :title="
-                  actividadBloqueada(item.id)
-                    ? 'Completa la actividad anterior para desbloquear'
-                    : undefined
-                "
-                @click="selectItem(item.id)"
+                class="relative"
               >
-                <!-- Checkbox: solo video/lectura se pueden marcar a mano -->
-                <span
-                  role="checkbox"
-                  tabindex="0"
-                  class="shrink-0 mt-0.5 z-10 rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-                  :aria-checked="completedItems.includes(item.id)"
-                  :aria-label="
-                    completedItems.includes(item.id)
-                      ? `Completada: ${item.title}`
-                      : `Marcar completada: ${item.title}`
-                  "
-                  :aria-disabled="
-                    item.type === 'quiz' ||
-                    item.type === 'assignment' ||
+                <button
+                  type="button"
+                  class="flex w-full items-start gap-3 px-4 py-2.5 text-left"
+                  :class="[
                     actividadBloqueada(item.id)
-                      ? 'true'
-                      : undefined
-                  "
-                  :class="
-                    item.type === 'quiz' ||
-                    item.type === 'assignment' ||
-                    actividadBloqueada(item.id)
-                      ? 'pointer-events-none'
-                      : ''
-                  "
-                  :title="
-                    item.type === 'quiz'
-                      ? 'Se completa aprobando el cuestionario'
-                      : item.type === 'assignment'
-                        ? 'Se completa al entregar la tarea'
-                        : undefined
-                  "
-                  @click.stop="toggleItem(item.id)"
-                  @keydown.enter.prevent.stop="toggleItem(item.id)"
-                  @keydown.space.prevent.stop="toggleItem(item.id)"
+                      ? 'cursor-not-allowed opacity-50'
+                      : activeItemId === item.id
+                        ? 'bg-muted'
+                        : 'hover:bg-muted/50',
+                  ]"
+                  :aria-current="activeItemId === item.id ? 'true' : undefined"
+                  :disabled="actividadBloqueada(item.id)"
+                  @click="selectItem(item.id)"
                 >
-                  <Lock
-                    v-if="actividadBloqueada(item.id)"
-                    class="h-5 w-5 text-muted-foreground/50"
-                    aria-hidden="true"
-                  />
-                  <CheckCircle2
-                    v-else
-                    class="h-5 w-5 transition duration-150"
-                    aria-hidden="true"
-                    :class="[
+                  <span
+                    role="checkbox"
+                    tabindex="0"
+                    class="mt-0.5 grid h-4 w-4 shrink-0 place-items-center border border-muted-foreground/50 bg-background focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+                    :aria-checked="completedItems.includes(item.id)"
+                    :aria-label="
                       completedItems.includes(item.id)
-                        ? 'text-primary fill-primary/10'
-                        : item.type === 'quiz' || item.type === 'assignment'
-                          ? 'text-muted-foreground/35'
-                          : 'text-muted-foreground/60 hover:text-muted-foreground',
-                    ]"
-                  />
-                </span>
-
-                <!-- Info -->
-                <div class="min-w-0 flex-1">
-                  <p
-                    class="text-xs font-semibold leading-normal"
-                    :class="
-                      activeItemId === item.id
-                        ? 'text-primary'
-                        : 'text-muted-foreground'
+                        ? `Completada: ${item.title}`
+                        : `Marcar completada: ${item.title}`
                     "
+                    :class="
+                      item.type === 'quiz' ||
+                      item.type === 'assignment' ||
+                      actividadBloqueada(item.id)
+                        ? 'pointer-events-none'
+                        : ''
+                    "
+                    @click.stop="toggleItem(item.id)"
+                    @keydown.enter.prevent.stop="toggleItem(item.id)"
+                    @keydown.space.prevent.stop="toggleItem(item.id)"
                   >
-                    {{ item.title }}
-                  </p>
-                  <div
-                    class="flex items-center gap-2 mt-1 text-[10px] text-muted-foreground font-medium"
-                  >
-                    <span class="flex items-center gap-1">
-                      <component
-                        :is="getItemIcon(item.type)"
-                        class="h-3 w-3 text-muted-foreground"
-                      />
-                      <span class="capitalize">{{
-                        item.type === "quiz"
-                          ? "Cuestionario"
-                          : item.type === "reading"
-                            ? "Lectura"
-                            : item.type === "assignment"
-                              ? "Tarea"
-                              : "Video"
-                      }}</span>
-                    </span>
-                    <span v-if="item.duration || item.questions">·</span>
-                    <span v-if="item.duration">{{ item.duration }}</span>
-                    <span v-else-if="item.questions"
-                      >{{ item.questions }} preguntas</span
+                    <Lock
+                      v-if="actividadBloqueada(item.id)"
+                      class="h-3 w-3 text-muted-foreground"
+                    />
+                    <Check
+                      v-else-if="completedItems.includes(item.id)"
+                      class="h-3 w-3 text-primary"
+                    />
+                  </span>
+
+                  <div class="min-w-0 flex-1">
+                    <p
+                      class="text-sm leading-snug"
+                      :class="
+                        activeItemId === item.id
+                          ? 'font-semibold text-foreground'
+                          : 'text-foreground/90'
+                      "
                     >
+                      {{ item.title }}
+                    </p>
+                    <div
+                      class="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
+                    >
+                      <span class="inline-flex items-center gap-1">
+                        <component
+                          :is="getItemIcon(item.type)"
+                          class="h-3.5 w-3.5"
+                        />
+                        <span>{{
+                          item.duration ||
+                          (item.questions
+                            ? `${item.questions} preguntas`
+                            : item.type === "quiz"
+                              ? "Cuestionario"
+                              : item.type === "assignment"
+                                ? "Tarea"
+                                : item.type === "reading"
+                                  ? "Lectura"
+                                  : "Video")
+                        }}</span>
+                      </span>
+                      <button
+                        v-if="recursosDeSeccion(section).length"
+                        type="button"
+                        class="inline-flex items-center gap-1 border border-border px-1.5 py-0.5 text-[11px] font-medium hover:bg-background"
+                        @click.stop="toggleRecursosItem(item.id)"
+                      >
+                        Recursos
+                        <ChevronDown class="h-3 w-3" />
+                      </button>
+                    </div>
                   </div>
+                </button>
+
+                <div
+                  v-if="
+                    recursosItemId === item.id &&
+                    recursosDeSeccion(section).length
+                  "
+                  class="mb-2 ml-11 mr-4 border border-border bg-muted/40"
+                >
+                  <button
+                    v-for="recurso in recursosDeSeccion(section)"
+                    :key="recurso.id"
+                    type="button"
+                    class="flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-muted"
+                    @click="abrirRecurso(recurso)"
+                  >
+                    <Download class="h-3.5 w-3.5 shrink-0" />
+                    <span class="truncate">{{ recurso.nombre }}</span>
+                  </button>
                 </div>
-              </button>
+              </div>
             </div>
-          </div>
+          </section>
         </div>
       </aside>
     </div>

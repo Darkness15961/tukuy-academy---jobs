@@ -9,7 +9,14 @@ const INSTRUCTORS = [
   "Lic. Patricia Soto",
 ];
 
+function esCursoMockLocal(cursoId: string) {
+  return /^c-\d+/i.test(cursoId);
+}
+
 export function enrichCourse(course: Course): Course {
+  // Cursos reales (UUID / secundaria): no inventar instructor ni valoraciones.
+  if (!esCursoMockLocal(course.id)) return course;
+
   const seed = Number.parseInt(course.id.replace("c-", ""), 10) || 0;
 
   return {

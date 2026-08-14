@@ -11,10 +11,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useAuth } from "@/composables/useAuth";
 import {
+  etiquetaRol,
   rutaInicioPortal,
   useContextoSesion,
 } from "@/composables/useContextoSesion";
-import { ULTIMAS_FUNCIONES_ENTIDAD_KEY } from "@/lib/constants";
 import type {
   MembresiaOrganizacion,
   TipoPortal,
@@ -22,17 +22,12 @@ import type {
 
 const router = useRouter();
 const { logout, currentUser, restaurarUsuario, sincronizarSesion } = useAuth();
-const {
-  membresiasActivas,
-  contextoActivo,
-  seleccionarContexto,
-} = useContextoSesion();
+const { membresiasActivas, seleccionarContexto } = useContextoSesion();
 
 onMounted(() => {
   void restaurarUsuario();
   void sincronizarSesion(undefined, false);
 });
-
 
 const presentacionPortal: Record<
   TipoPortal,
@@ -94,6 +89,13 @@ const presentacionPortal: Record<
   },
 };
 
+const prioridadPortal: Record<TipoPortal, number> = {
+  organizacion: 0,
+  docente: 1,
+  estudiante: 2,
+  admin: 3,
+};
+
 const prioridadRol: Record<string, number> = {
   OWNER: 60,
   ADMIN: 50,
@@ -106,14 +108,15 @@ const prioridadRol: Record<string, number> = {
   STUDENT: 10,
 };
 
-function ultimasFuncionesGuardadas() {
-  try {
-    return JSON.parse(
-      localStorage.getItem(ULTIMAS_FUNCIONES_ENTIDAD_KEY) ?? "{}",
-    ) as Record<string, string>;
-  } catch {
-    return {};
-  }
+function esDocenciaIndependiente(membresia: MembresiaOrganizacion) {
+  return (
+    membresia.portal === "docente" &&
+    membresia.ambitoDocencia === "INDEPENDIENTE"
+  );
+}
+
+function esPortalOrganizacion(membresia: MembresiaOrganizacion) {
+  return membresia.portal === "organizacion";
 }
 
 function esAccesoInstitucional(membresia: MembresiaOrganizacion) {
@@ -125,61 +128,37 @@ function esAccesoInstitucional(membresia: MembresiaOrganizacion) {
   );
 }
 
-const contextosDisponibles = computed(() => {
-  const personales = membresiasActivas.value.filter(
-    (membresia) =>
-      !esAccesoInstitucional(membresia) && membresia.portal !== "admin",
+function esDireccion(membresia: MembresiaOrganizacion) {
+  return (
+    membresia.rol === "ORGANIZATION_OWNER" || membresia.rol === "OWNER"
   );
-  const administracionTukuy = membresiasActivas.value.filter(
-    (membresia) => membresia.portal === "admin",
+}
+
+function esAdministracion(membresia: MembresiaOrganizacion) {
+  return (
+    membresia.rol === "ORGANIZATION_ADMIN" || membresia.rol === "ADMIN"
   );
-  const porEntidad = new Map<string, MembresiaOrganizacion[]>();
+}
 
-  membresiasActivas.value
-    .filter(esAccesoInstitucional)
-    .forEach((membresia) => {
-      const id = membresia.organizacion!.id;
-      porEntidad.set(id, [...(porEntidad.get(id) ?? []), membresia]);
-    });
-
-  const entidades = [...porEntidad.values()].flatMap((funciones) => {
-    const organizacionId = funciones[0]?.organizacion?.id ?? "";
-    const membresiaPreferida = ultimasFuncionesGuardadas()[organizacionId];
-    const activa = funciones.find(
-      (item) => item.id === contextoActivo.value?.funcionId,
-    );
-    const guardada = funciones.find(
-      (item) => item.id === membresiaPreferida,
-    );
-    const principal =
-      activa ??
-      guardada ??
-      [...funciones].sort(
-        (a, b) =>
-          (prioridadRol[b.rol] ?? 0) - (prioridadRol[a.rol] ?? 0),
-      )[0];
-    return principal ? [principal] : [];
-  });
-
-  return [...personales, ...entidades, ...administracionTukuy];
-});
+/** Una tarjeta por función activa: Administración, Docencia y Aprendizaje no se colapsan. */
+const contextosDisponibles = computed(() =>
+  [...membresiasActivas.value].sort((a, b) => {
+    const porPortal =
+      (prioridadPortal[a.portal] ?? 9) - (prioridadPortal[b.portal] ?? 9);
+    if (porPortal !== 0) return porPortal;
+    return (prioridadRol[b.rol] ?? 0) - (prioridadRol[a.rol] ?? 0);
+  }),
+);
 
 async function ingresar(membresia: MembresiaOrganizacion) {
   const contexto = seleccionarContexto(membresia);
   await router.replace(rutaInicioPortal(contexto.portal));
 }
 
-function esDocenciaIndependiente(membresia: MembresiaOrganizacion) {
-  return (
-    membresia.portal === "docente" &&
-    membresia.ambitoDocencia === "INDEPENDIENTE"
-  );
-}
-
 function nombreContexto(membresia: MembresiaOrganizacion) {
   if (esDocenciaIndependiente(membresia)) return "Espacio profesional propio";
-  if (esAccesoInstitucional(membresia)) return "Entidad vinculada";
-  return membresia.organizacion?.nombre ?? "Tukuy Academy";
+  if (membresia.organizacion?.nombre) return membresia.organizacion.nombre;
+  return "Tukuy Academy";
 }
 
 function claseTarjetaContexto(membresia: MembresiaOrganizacion) {
@@ -200,8 +179,12 @@ function claseTarjetaContexto(membresia: MembresiaOrganizacion) {
 
 function tituloContexto(membresia: MembresiaOrganizacion) {
   if (esDocenciaIndependiente(membresia)) return "Portal docente";
-  if (esAccesoInstitucional(membresia)) {
-    return membresia.organizacion?.nombre ?? "Organización";
+  if (esPortalOrganizacion(membresia)) return etiquetaRol(membresia.rol);
+  if (esAccesoInstitucional(membresia) && membresia.portal === "docente") {
+    return "Docencia";
+  }
+  if (esAccesoInstitucional(membresia) && membresia.portal === "estudiante") {
+    return "Aprendizaje";
   }
   return presentacionPortal[membresia.portal].etiqueta;
 }
@@ -210,7 +193,7 @@ function imagenContexto(membresia: MembresiaOrganizacion) {
   if (esDocenciaIndependiente(membresia)) {
     return "/img/portal-docente-independiente.png";
   }
-  if (esAccesoInstitucional(membresia)) {
+  if (esPortalOrganizacion(membresia) || esAccesoInstitucional(membresia)) {
     return "/img/portal-organizacion.png";
   }
   return presentacionPortal[membresia.portal].imagen;
@@ -219,6 +202,9 @@ function imagenContexto(membresia: MembresiaOrganizacion) {
 function textoAlternativoImagen(membresia: MembresiaOrganizacion) {
   if (esDocenciaIndependiente(membresia)) {
     return "Docente independiente preparando un curso desde su espacio profesional";
+  }
+  if (esPortalOrganizacion(membresia)) {
+    return `${etiquetaRol(membresia.rol)} de ${membresia.organizacion?.nombre ?? "la organización"}`;
   }
   if (esAccesoInstitucional(membresia)) {
     return `Espacio institucional de ${membresia.organizacion?.nombre}`;
@@ -230,8 +216,20 @@ function descripcionContexto(membresia: MembresiaOrganizacion) {
   if (esDocenciaIndependiente(membresia)) {
     return "Crea y comercializa cursos propios, administra tus estudiantes y controla tus ingresos personales.";
   }
-  if (esAccesoInstitucional(membresia)) {
-    return "Ingresa a tu espacio institucional. Tus módulos y datos se adaptarán automáticamente a la función que tengas autorizada.";
+  if (esDireccion(membresia)) {
+    return "Gobierno de la entidad: estructura, accesos y designación de Dirección y Administración.";
+  }
+  if (esAdministracion(membresia)) {
+    return "Opera la entidad: personas, cursos y organigrama. Los nodos de Dirección y Administración de gobierno quedan protegidos.";
+  }
+  if (esPortalOrganizacion(membresia)) {
+    return "Gestiona la operación institucional según los permisos de tu función.";
+  }
+  if (esAccesoInstitucional(membresia) && membresia.portal === "docente") {
+    return "Imparte y gestiona cursos de la entidad, con seguimiento de tus estudiantes.";
+  }
+  if (esAccesoInstitucional(membresia) && membresia.portal === "estudiante") {
+    return "Accede a los cursos y certificaciones que la entidad te asignó.";
   }
   return presentacionPortal[membresia.portal].descripcion;
 }
@@ -244,11 +242,35 @@ function funcionesContexto(membresia: MembresiaOrganizacion) {
       "Ventas e ingresos personales",
     ];
   }
-  if (esAccesoInstitucional(membresia)) {
+  if (esDireccion(membresia)) {
     return [
-      "Una sola entrada para toda la entidad",
-      "Funciones internas según tus permisos",
-      "Información aislada de otras organizaciones",
+      "Gobierno y designación de Administración",
+      "Estructura y accesos completos",
+      "Configuración institucional",
+    ];
+  }
+  if (esAdministracion(membresia)) {
+    return [
+      "Personas, cursos y operación",
+      "Organigrama operativo editable",
+      "Gobierno superior protegido",
+    ];
+  }
+  if (esPortalOrganizacion(membresia)) {
+    return presentacionPortal.organizacion.funciones;
+  }
+  if (esAccesoInstitucional(membresia) && membresia.portal === "docente") {
+    return [
+      "Cursos de la organización",
+      "Estudiantes asignados",
+      "Evaluaciones y seguimiento",
+    ];
+  }
+  if (esAccesoInstitucional(membresia) && membresia.portal === "estudiante") {
+    return [
+      "Cursos asignados por la entidad",
+      "Avance y certificados",
+      "Comunidad institucional",
     ];
   }
   return presentacionPortal[membresia.portal].funciones;

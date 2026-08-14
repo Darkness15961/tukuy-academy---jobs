@@ -234,6 +234,8 @@ export const QUIZZES_APRENDIZAJE_SEMILLA: Record<string, PreguntaQuiz[]> = {
         "Contratar operarios de forma directa.",
       ],
       correctIndex: 1,
+      imagenReferencia:
+        "https://images.unsplash.com/photo-1503387762-592deb58ef4e?auto=format&fit=crop&w=1200&q=80",
     },
     {
       question: '¿Qué es una "partida de control diario" en la plataforma?',

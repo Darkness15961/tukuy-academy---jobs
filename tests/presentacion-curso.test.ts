@@ -31,6 +31,16 @@ describe("presentación de cursos", () => {
     expect(presentado.reviewCount).toBeGreaterThan(0);
   });
 
+  test("no inventa valoraciones en cursos reales de secundaria", () => {
+    const real = enrichCourse({
+      ...cursoBase,
+      id: "a1000000-0000-4000-8000-000000000001",
+    });
+    expect(real.instructor).toBeUndefined();
+    expect(real.rating).toBeUndefined();
+    expect(real.reviewCount).toBeUndefined();
+  });
+
   test("formatea precio y calificación para Perú", () => {
     expect(formatCoursePrice(cursoBase)).toBe("129,00 S/");
     expect(formatCoursePrice({ ...cursoBase, pricing: "free" })).toBe("Gratis");

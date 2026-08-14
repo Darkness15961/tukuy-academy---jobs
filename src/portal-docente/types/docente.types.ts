@@ -256,6 +256,14 @@ export interface AnaliticaDocente {
   horasPico: Array<{ franja: string; porcentaje: number }>;
 }
 
+import type { RequisitoCurso } from "@/lib/requisitos-curso";
+
+export type {
+  CondicionRequisitoCurso,
+  RequisitoCurso,
+  TipoRequisitoCurso,
+} from "@/lib/requisitos-curso";
+
 export interface BorradorCursoDocente {
   titulo: string;
   subtitulo: string;
@@ -265,7 +273,10 @@ export interface BorradorCursoDocente {
   unidadesDestinoIds?: string[];
   unidadesDestinoNombres?: string[];
   objetivos: string[];
-  requisitos: string[];
+  /** Enlaces verificables (p. ej. curso previo). No texto libre. */
+  requisitos: RequisitoCurso[];
+  /** Si false, no se exigen requisitos de acceso (UI switch). */
+  requisitosAccesoActivos?: boolean;
   categoria: string;
   nivel: string;
   imagen: string;
@@ -305,6 +316,8 @@ export interface BorradorCursoDocente {
         question: string;
         options: string[];
         correctIndex: number;
+        /** Imagen de referencia anclada a la pregunta. */
+        imagenReferencia?: string;
       }>;
     }>;
     recursos?: Array<{

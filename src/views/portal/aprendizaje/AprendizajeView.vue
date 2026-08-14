@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ChevronDown, Search } from "lucide-vue-next";
+import { Search } from "lucide-vue-next";
 import { computed, ref } from "vue";
 
 import TarjetaCursoTendencia from "@/components/shared/TarjetaCursoTendencia.vue";
@@ -15,9 +15,25 @@ import { usePortalContext } from "../composables/usePortalContext";
 const portal = usePortalContext();
 
 const searchTerm = ref("");
+const filtroEstado = ref<"todos" | "en-curso" | "completados">("todos");
+
+const avanceGlobal = computed(() => {
+  const list = portal.enrolledCourses.value;
+  if (!list.length) return 0;
+  const suma = list.reduce(
+    (total, curso) => total + Math.min(100, Math.max(0, curso.progress)),
+    0,
+  );
+  return Math.round(suma / list.length);
+});
 
 const learningCourses = computed(() => {
-  const base = portal.enrolledCourses.value;
+  let base = portal.enrolledCourses.value;
+  if (filtroEstado.value === "en-curso") {
+    base = base.filter((course) => course.status !== "Completado");
+  } else if (filtroEstado.value === "completados") {
+    base = base.filter((course) => course.status === "Completado");
+  }
   const term = searchTerm.value.trim().toLowerCase();
   return term
     ? base.filter((course) =>
@@ -63,10 +79,10 @@ const learningCourses = computed(() => {
           >
             <div class="flex items-center justify-between gap-3 text-sm">
               <span class="text-muted-foreground">Avance global</span>
-              <strong>{{ portal.user.value?.profileProgress ?? 82 }}%</strong>
+              <strong>{{ avanceGlobal }}%</strong>
             </div>
             <Progress
-              :model-value="portal.user.value?.profileProgress ?? 82"
+              :model-value="avanceGlobal"
               class="h-2.5"
             />
             <p class="text-xs text-muted-foreground">
@@ -83,28 +99,28 @@ const learningCourses = computed(() => {
         >
           <div class="flex flex-wrap gap-2">
             <Button
-              class="h-10 rounded-none border-border bg-card px-4 text-foreground"
-              variant="outline"
+              class="h-10 rounded-none px-4"
+              :variant="filtroEstado === 'todos' ? 'default' : 'outline'"
               type="button"
+              @click="filtroEstado = 'todos'"
             >
-              Categorías
-              <ChevronDown class="h-4 w-4" />
+              Todos
             </Button>
             <Button
-              class="h-10 rounded-none border-border bg-card px-4 text-foreground"
-              variant="outline"
+              class="h-10 rounded-none px-4"
+              :variant="filtroEstado === 'en-curso' ? 'default' : 'outline'"
               type="button"
+              @click="filtroEstado = 'en-curso'"
             >
-              Progreso
-              <ChevronDown class="h-4 w-4" />
+              En curso
             </Button>
             <Button
-              class="h-10 rounded-none border-border bg-card px-4 text-foreground"
-              variant="outline"
+              class="h-10 rounded-none px-4"
+              :variant="filtroEstado === 'completados' ? 'default' : 'outline'"
               type="button"
+              @click="filtroEstado = 'completados'"
             >
-              Instructor
-              <ChevronDown class="h-4 w-4" />
+              Completados
             </Button>
           </div>
 
@@ -133,10 +149,15 @@ const learningCourses = computed(() => {
           <strong class="text-sm text-foreground"
             >{{ learningCourses.length }} cursos</strong
           >
-          <Button class="text-foreground" variant="ghost" type="button">
-            Visitados recientemente
-            <ChevronDown class="h-4 w-4" />
-          </Button>
+          <p class="text-xs text-muted-foreground">
+            {{
+              filtroEstado === "todos"
+                ? "Todos tus cursos matriculados"
+                : filtroEstado === "en-curso"
+                  ? "Cursos que aún estás cursando"
+                  : "Cursos que ya completaste"
+            }}
+          </p>
         </div>
       </div>
 
@@ -164,7 +185,9 @@ const learningCourses = computed(() => {
           {{
             searchTerm
               ? "No encontramos cursos con ese criterio. Prueba otra búsqueda o limpia los filtros."
-              : "Aún no tienes cursos matriculados. Explora el catálogo, agrégalos al carrito o inscríbete en los gratuitos."
+              : filtroEstado !== "todos"
+                ? "No hay cursos en este filtro."
+                : "Aún no tienes cursos matriculados. Explora el catálogo, agrégalos al carrito o inscríbete en los gratuitos."
           }}
         </CardContent>
       </Card>

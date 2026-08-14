@@ -299,6 +299,7 @@ export type ResultadoContenidoAprendizajeSecundaria = {
         options: string[];
         /** Solo presente en borrador/docente; el alumno no lo recibe. */
         correctIndex?: number;
+        imagenReferencia?: string | null;
       }>
     >;
   };

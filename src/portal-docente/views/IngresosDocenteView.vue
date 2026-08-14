@@ -123,7 +123,7 @@ function descargarReporte() {
           clase-titulo="text-2xl font-black"
           :ayuda="
             esIndependiente
-              ? 'Ventas de tus cursos (órdenes/pagos de la secundaria).'
+              ? 'Ventas de tus cursos.'
               : `Honorarios y liquidaciones de ${contextoActivo?.organizacionNombre}.`
           "
         />

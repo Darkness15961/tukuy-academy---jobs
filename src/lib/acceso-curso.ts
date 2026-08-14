@@ -1,7 +1,22 @@
 import { apiConfig } from "@/api/config";
 import { aprendizajeService } from "@/api/services/aprendizaje.service";
-import { secundariaGatewayService } from "@/api/services/secundaria-gateway.service";
+import {
+  ErrorGatewaySecundaria,
+  secundariaGatewayService,
+} from "@/api/services/secundaria-gateway.service";
 import type { Course } from "@/types/academia";
+
+export { cursoEstadoVisibleEnCatalogoAlumno } from "@/lib/catalogo-alumno";
+export { ErrorGatewaySecundaria };
+
+export function mensajeErrorMatricula(causa: unknown) {
+  if (causa instanceof ErrorGatewaySecundaria) {
+    if (causa.code === "NO_PUBLICADO") return causa.message;
+    return causa.message;
+  }
+  if (causa instanceof Error && causa.message.trim()) return causa.message;
+  return "No se pudo completar la inscripción. Inténtalo de nuevo.";
+}
 
 /** El alumno ya tiene acceso al reproductor (comprado, inscrito o en progreso). */
 export function cursoEstaMatriculado(course: Pick<Course, "status" | "progress">) {

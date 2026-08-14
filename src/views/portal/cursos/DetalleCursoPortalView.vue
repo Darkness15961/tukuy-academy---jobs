@@ -155,9 +155,12 @@ const etiquetaPrincipal = computed(() => {
             </h1>
 
             <div class="mt-6 flex flex-wrap items-center gap-x-4 gap-y-2">
-              <div class="flex items-center gap-2">
+              <div
+                v-if="cursoPresentado.rating"
+                class="flex items-center gap-2"
+              >
                 <strong class="text-[#F5B400]">
-                  {{ formatCourseRating(cursoPresentado.rating!) }}
+                  {{ formatCourseRating(cursoPresentado.rating) }}
                 </strong>
                 <span class="flex text-[#F5B400]">
                   <Star
@@ -165,14 +168,17 @@ const etiquetaPrincipal = computed(() => {
                     :key="indice"
                     class="h-3.5 w-3.5"
                     :class="
-                      indice <= Math.round(cursoPresentado.rating!)
+                      indice <= Math.round(cursoPresentado.rating)
                         ? 'fill-current'
                         : 'opacity-35'
                     "
                   />
                 </span>
-                <span class="text-sm text-white/60">
-                  {{ formatReviewCount(cursoPresentado.reviewCount!) }}
+                <span
+                  v-if="cursoPresentado.reviewCount"
+                  class="text-sm text-white/60"
+                >
+                  {{ formatReviewCount(cursoPresentado.reviewCount) }}
                   valoraciones
                 </span>
               </div>
@@ -225,6 +231,7 @@ const etiquetaPrincipal = computed(() => {
           <aside class="border border-white/20 bg-[#020817] shadow-2xl">
             <div class="relative aspect-video bg-black">
               <video
+                v-if="detalle.videoPresentacion"
                 class="h-full w-full object-cover"
                 controls
                 preload="metadata"
@@ -233,11 +240,17 @@ const etiquetaPrincipal = computed(() => {
                 <source :src="detalle.videoPresentacion" type="video/mp4" />
                 Tu navegador no permite reproducir este video.
               </video>
+              <img
+                v-else
+                :src="cursoPresentado.image"
+                :alt="cursoPresentado.title"
+                class="h-full w-full object-cover"
+              />
               <span
                 class="pointer-events-none absolute left-3 top-3 inline-flex items-center gap-2 bg-black/65 px-2.5 py-1 text-xs font-bold backdrop-blur"
               >
                 <Video class="h-3.5 w-3.5 text-[#F5B400]" />
-                Vista previa
+                {{ detalle.videoPresentacion ? "Vista previa" : "Portada" }}
               </span>
             </div>
 

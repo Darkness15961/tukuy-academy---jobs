@@ -16,6 +16,7 @@ import type {
   SesionEnVivoOrganizacion,
 } from "@/portal-organizacion/types/sesiones-en-vivo.types";
 import { cursoAdmiteSesionesEnVivo } from "@/portal-organizacion/types/sesiones-en-vivo.types";
+import { meetUrlEsSimulado } from "@/lib/meet-sesion";
 import type { ContextoSesion } from "@/types/membresia.types";
 import type { Course } from "@/types/academia";
 import type { SesionDocente } from "@/portal-docente/types/docente.types";
@@ -79,6 +80,10 @@ function mapearSesionSecundariaAOrg(
     15,
     Math.round((fin.getTime() - inicio.getTime()) / 60000),
   );
+  const meetSimulado = meetUrlEsSimulado(
+    sesion.urlAcceso,
+    sesion.calendarEventId,
+  );
   return {
     id: sesion.id,
     clasificacion: "CLASE_EN_VIVO",
@@ -94,6 +99,10 @@ function mapearSesionSecundariaAOrg(
     proveedor: "GOOGLE_CALENDAR_MEET",
     calendarEventId: sesion.calendarEventId || `sec-${sesion.id}`,
     meetUrl: sesion.urlAcceso || "",
+    meetSimulado,
+    meetAviso: meetSimulado
+      ? "Enlace de demostración: Google Calendar no está configurado o falló al crear el evento."
+      : undefined,
     invitados: [],
     inscritos: Number(sesion.inscritos ?? 0),
     creadoPor: { portal: "docente", nombre: "Docente" },
@@ -637,7 +646,7 @@ async function listarParaContexto(
         cursoEstaMatriculado,
       );
       const idsMatricula = new Set(matriculados.map((c) => c.id));
-      if (!idsMatricula.size) return todas;
+      if (!idsMatricula.size) return [];
       return todas.filter((sesion) => idsMatricula.has(sesion.cursoId));
     }
 

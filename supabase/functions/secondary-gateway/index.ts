@@ -17,7 +17,7 @@ function cors(req: Request) {
   const origin = req.headers.get("origin") ?? "";
   const desdeSecret = (Deno.env.get("APP_ALLOWED_ORIGINS") ?? "")
     .split(",")
-    .map((item) => item.trim().replace(/\/$/, ""))
+    .map((item: string) => item.trim().replace(/\/$/, ""))
     .filter(Boolean);
   const locales = [
     "http://localhost:5178",
@@ -605,6 +605,21 @@ Deno.serve(async (req) => {
           );
         }
 
+        // Proyecta requisitos enlazados a tabla (si existe la migración 13140000).
+        const cursoIdSync = String(
+          (guardado.data.curso as Record<string, unknown>).id ?? "",
+        );
+        if (cursoIdSync) {
+          try {
+            await secundaria.rpc("servicio_sincronizar_requisitos_acceso", {
+              p_curso_id: cursoIdSync,
+              p_documento: borrador,
+            });
+          } catch {
+            // La RPC puede no existir aún; el JSON del borrador sigue siendo la fuente.
+          }
+        }
+
         // Al enviar a revisión, indexa la propuesta en el catálogo de la principal.
         let catalogo: unknown = null;
         let advertenciaCatalogo: string | null = null;
@@ -643,6 +658,22 @@ Deno.serve(async (req) => {
             p_datos_historicos: {
               origen: "envio_revision",
               docenteId: usuario.user.id,
+              precio: Number(
+                (borrador as Record<string, unknown>).precio ?? 0,
+              ),
+              gratuito:
+                String(
+                  (borrador as Record<string, unknown>).acceso ?? "",
+                ).toUpperCase() === "GRATUITO" ||
+                !(Number((borrador as Record<string, unknown>).precio ?? 0) >
+                  0),
+              precioPropuestoPorDocente:
+                String(
+                  (borrador as Record<string, unknown>).acceso ?? "",
+                ).toUpperCase() === "GRATUITO" ||
+                Number((borrador as Record<string, unknown>).precio ?? 0) > 0,
+              accesoBorrador: (borrador as Record<string, unknown>).acceso ??
+                null,
               borradorResumen: {
                 categoria: (borrador as Record<string, unknown>).categoria ??
                   null,
@@ -899,6 +930,27 @@ Deno.serve(async (req) => {
             p_curso_id: cursoId,
           });
           const curso = detalle.data?.curso as Record<string, unknown> | undefined;
+          const estadoCurso = String(curso?.estado ?? "").trim().toUpperCase();
+          const publicado = [
+            "PUBLICADO",
+            "PUBLICADA",
+            "ACTIVO",
+            "ACTIVA",
+            "APROBADO",
+            "APROBADA",
+          ].includes(estadoCurso);
+          if (curso && !publicado) {
+            return json(
+              {
+                ok: false,
+                error:
+                  "Este curso aún no está publicado. Cuando la entidad lo publique podrás inscribirte.",
+                code: "NO_PUBLICADO",
+              },
+              409,
+              corsHeaders,
+            );
+          }
           const precio = Number(curso?.precio ?? 0);
           const gratuito = curso?.gratuito === true || !(precio > 0);
           if (!gratuito) {
@@ -1391,7 +1443,7 @@ Deno.serve(async (req) => {
             {
               ok: false,
               error:
-                "Falta ejecutar en la secundaria 20260805249000_academia_sin_mock_estudiantes_sesiones.sql",
+                "Falta ejecutar en la secundaria 20260813170000_actualizar_estado_curso_cast.sql (cast de estado_curso)",
               details: actualizado.error.message,
             },
             200,
@@ -2600,7 +2652,7 @@ Deno.serve(async (req) => {
           {
             ok: false,
             error:
-              "Falta ejecutar en la secundaria 20260811140000_estado_curso_workflow_labels.sql (o 20260810192000)",
+              "Falta ejecutar en la secundaria 20260813170000_actualizar_estado_curso_cast.sql (cast de estado_curso)",
             details: estadoSec.error.message,
           },
           200,
@@ -2754,7 +2806,7 @@ Deno.serve(async (req) => {
         const cursoIds = Array.isArray(entrada.cursoIds)
           ? entrada.cursoIds.map(String)
           : itemsEntrada
-            .map((item) =>
+            .map((item: unknown) =>
               item && typeof item === "object"
                 ? String((item as Record<string, unknown>).cursoId ?? "")
                 : "",
@@ -2772,12 +2824,12 @@ Deno.serve(async (req) => {
         const items: Array<Record<string, unknown>> = [];
         const idsParaPrecio = itemsEntrada.length
           ? itemsEntrada
-            .map((raw) => {
+            .map((raw: unknown) => {
               if (!raw || typeof raw !== "object") return "";
               return String((raw as Record<string, unknown>).cursoId ?? "").trim();
             })
-            .filter((id) => UUID_RE.test(id))
-          : cursoIds.filter((id) => UUID_RE.test(String(id))).map(String);
+            .filter((id: string) => UUID_RE.test(id))
+          : cursoIds.filter((id: string) => UUID_RE.test(String(id))).map(String);
 
         // Precio siempre desde secundaria (ignora importe del cliente).
         for (const cursoId of idsParaPrecio) {
@@ -2803,7 +2855,7 @@ Deno.serve(async (req) => {
             continue;
           }
           const tituloCliente =
-            itemsEntrada.find((raw) =>
+            itemsEntrada.find((raw: unknown) =>
               raw &&
               typeof raw === "object" &&
               String((raw as Record<string, unknown>).cursoId ?? "") === cursoId,

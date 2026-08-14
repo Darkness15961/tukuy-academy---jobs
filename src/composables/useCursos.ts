@@ -10,8 +10,13 @@ const error = ref<string | null>(null);
 const cargadoUnaVez = ref(false);
 let fetchEnCurso: Promise<void> | null = null;
 
-async function fetchCourses(opciones: { silencioso?: boolean } = {}) {
-  if (fetchEnCurso) return fetchEnCurso;
+async function fetchCourses(
+  opciones: { silencioso?: boolean; forzar?: boolean } = {},
+) {
+  if (fetchEnCurso) {
+    if (!opciones.forzar) return fetchEnCurso;
+    await fetchEnCurso.catch(() => undefined);
+  }
 
   const mostrarLoading = !opciones.silencioso && !cargadoUnaVez.value;
   if (mostrarLoading) loading.value = true;
@@ -58,7 +63,8 @@ export function useCursos() {
     error,
     completedCourses,
     activeCourses,
-    refetch: () => fetchCourses(),
+    refetch: (opciones?: { silencioso?: boolean; forzar?: boolean }) =>
+      fetchCourses(opciones),
   };
 }
 

@@ -4,17 +4,33 @@ import { API } from "@/api/endpoints";
 import { resolveMock } from "@/api/mock";
 import { courses as coursesMock } from "@/data/academia.mock";
 import { fusionarCatalogoConEntidades } from "@/lib/cursos-catalogo";
+import { cursoEstadoVisibleEnCatalogoAlumno } from "@/lib/catalogo-alumno";
 import { mapCourseList } from "@/mappers/academia.mapper";
 import {
   mapearCursoSecundariaAPortal,
   mapearMatriculaAPortal,
 } from "@/api/services/mapper-curso-secundaria";
 import { secundariaGatewayService } from "@/api/services/secundaria-gateway.service";
+import { useContextoSesion } from "@/composables/useContextoSesion";
 import type { CourseDto } from "@/types/api";
 import type { Course } from "@/types/academia";
 
+function catalogoLocal(): Course[] {
+  return fusionarCatalogoConEntidades(mapCourseList(coursesMock));
+}
+
 export const cursosService = {
   async getAll(): Promise<Course[]> {
+    const portal = useContextoSesion().contextoActivo.value?.portal;
+    // Solo el portal estudiante consulta secundaria (bootstrap / mis-cursos).
+    // Landing pública, org, docente y admin no deben disparar 401 sin sesión.
+    if (portal !== "estudiante") {
+      if (apiConfig.useMock || !portal) {
+        return resolveMock(catalogoLocal());
+      }
+      return [];
+    }
+
     if (apiConfig.secundariaCursos) {
       let listado;
       let mis;
@@ -35,9 +51,15 @@ export const cursosService = {
       const porMatricula = new Map(
         mis.cursos.map((item) => [item.cursoId, item]),
       );
-      const desdeCatalogo = listado.cursos.map((curso) =>
-        mapearCursoSecundariaAPortal(curso, porMatricula.get(curso.id)),
-      );
+      const desdeCatalogo = listado.cursos
+        .filter(
+          (curso) =>
+            porMatricula.has(curso.id) ||
+            cursoEstadoVisibleEnCatalogoAlumno(curso.estado),
+        )
+        .map((curso) =>
+          mapearCursoSecundariaAPortal(curso, porMatricula.get(curso.id)),
+        );
       const soloMatricula = mis.cursos
         .filter((item) => !listado.cursos.some((curso) => curso.id === item.cursoId))
         .map(mapearMatriculaAPortal);
@@ -45,8 +67,7 @@ export const cursosService = {
     }
 
     if (apiConfig.useMock) {
-      const base = mapCourseList(coursesMock);
-      return resolveMock(fusionarCatalogoConEntidades(base));
+      return resolveMock(catalogoLocal());
     }
 
     const { data } = await api.get<CourseDto[]>(API.courses.list);

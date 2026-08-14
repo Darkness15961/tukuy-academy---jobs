@@ -1,5 +1,5 @@
 import { useContextoSesion } from "@/composables/useContextoSesion";
-import { INSTALACION_TUKUY_ACADEMY_ID } from "@/lib/constants";
+import { AUTH_TOKEN_KEY, INSTALACION_TUKUY_ACADEMY_ID } from "@/lib/constants";
 import { supabasePrincipal } from "@/lib/supabase";
 import type {
   BootstrapAlumnoSecundaria,
@@ -95,6 +95,25 @@ export function instalacionSecundariaActiva(): string {
   return UUID_RE.test(id) ? id : INSTALACION_TUKUY_ACADEMY_ID;
 }
 
+/** Solo con contexto de estudiante autenticado. Landing/org/docente/admin: no. */
+function portalActivoEsAlumno(): boolean {
+  const { contextoActivo } = useContextoSesion();
+  return contextoActivo.value?.portal === "estudiante";
+}
+
+const vacioListadoCursos = (): ListadoCursosSecundaria => ({
+  ok: true,
+  total: 0,
+  cursos: [],
+  generadoEn: new Date().toISOString(),
+});
+
+const vacioMisCursos = (): ResultadoMisCursosSecundaria => ({
+  ok: true,
+  total: 0,
+  cursos: [],
+});
+
 function obtenerCache(): FragmentosCache | null {
   const clave = instalacionSecundariaActiva();
   const cache = cachePorInstalacion.get(clave) ?? null;
@@ -166,7 +185,73 @@ function invalidarPorMutacion(action: string) {
   invalidarFragmentos(...mapa);
 }
 
+export class ErrorGatewaySecundaria extends Error {
+  code?: string;
+  constructor(message: string, code?: string) {
+    super(message);
+    this.name = "ErrorGatewaySecundaria";
+    this.code = code;
+  }
+}
+
+async function cuerpoErrorGateway(
+  error: { context?: Response; message?: string } | null,
+  data: unknown,
+): Promise<{ message: string; code?: string }> {
+  const desdeData = (candidato: unknown) => {
+    if (!candidato || typeof candidato !== "object") return null;
+    const cuerpo = candidato as {
+      error?: string;
+      details?: string;
+      code?: string;
+    };
+    if (!cuerpo.error && !cuerpo.code) return null;
+    return {
+      message:
+        [cuerpo.error, cuerpo.details].filter(Boolean).join(" — ") ||
+        "La secundaria no respondió correctamente.",
+      code: cuerpo.code,
+    };
+  };
+
+  const directo = desdeData(data);
+  if (directo) return directo;
+
+  const ctx = error?.context;
+  if (ctx && typeof ctx.json === "function") {
+    try {
+      const cuerpo = await ctx.clone().json();
+      const parseado = desdeData(cuerpo);
+      if (parseado) return parseado;
+    } catch {
+      /* el body no era JSON */
+    }
+  }
+
+  return {
+    message: error?.message || "La secundaria no respondió correctamente.",
+  };
+}
+
 async function invocar<T>(action: string, extra: Record<string, unknown> = {}) {
+  const accionesSoloAlumno = new Set([
+    "bootstrap-alumno",
+    "mis-cursos",
+    "contenido-curso",
+    "completar-actividad",
+    "guardar-apuntes",
+    "calificar-quiz",
+  ]);
+  if (
+    accionesSoloAlumno.has(action) &&
+    (!portalActivoEsAlumno() || !localStorage.getItem(AUTH_TOKEN_KEY))
+  ) {
+    throw new ErrorGatewaySecundaria(
+      "Acción de alumno no disponible sin sesión de estudiante",
+      "PORTAL_NO_ALUMNO",
+    );
+  }
+
   const { data, error } = await supabasePrincipal().functions.invoke(
     "secondary-gateway",
     {
@@ -177,12 +262,9 @@ async function invocar<T>(action: string, extra: Record<string, unknown> = {}) {
       },
     },
   );
-  if (error) throw new Error(error.message);
-  if (!data?.ok) {
-    throw new Error(
-      [data?.error, data?.details].filter(Boolean).join(" — ") ||
-        "La secundaria no respondió correctamente.",
-    );
+  if (error || !data?.ok) {
+    const cuerpo = await cuerpoErrorGateway(error, data);
+    throw new ErrorGatewaySecundaria(cuerpo.message, cuerpo.code);
   }
   return data as T;
 }
@@ -306,6 +388,13 @@ export const secundariaGatewayService = {
   },
 
   async bootstrapAlumno(forzar = false): Promise<BootstrapAlumnoSecundaria> {
+    if (!portalActivoEsAlumno()) {
+      return {
+        ok: true,
+        cursos: vacioListadoCursos(),
+        misCursos: vacioMisCursos(),
+      };
+    }
     const instalacion = instalacionSecundariaActiva();
     const dispararRed = () => {
       const existente = inflightAlumnoPorInstalacion.get(instalacion);
@@ -344,6 +433,7 @@ export const secundariaGatewayService = {
 
   /** Prefetch en segundo plano (layouts); no bloquea la UI. */
   prefetchAlumno(): void {
+    if (!portalActivoEsAlumno()) return;
     void this.bootstrapAlumno().catch(() => undefined);
   },
 
@@ -351,11 +441,10 @@ export const secundariaGatewayService = {
     void this.bootstrapDocente().catch(() => undefined);
   },
 
+  /** Org: no prefetchear APIs de alumno/catálogo; cada vista carga lo suyo. */
   prefetchOrganizacion(): void {
-    void Promise.all([
-      this.listarCursos().catch(() => undefined),
-      this.listarSesiones().catch(() => undefined),
-    ]);
+    // Intencionalmente vacío: list-cursos / bootstrap-alumno / mis-cursos
+    // no aplican al perfil Dirección/Administración.
   },
 
   async listarCursos(limite = 100): Promise<ListadoCursosSecundaria> {
@@ -615,6 +704,9 @@ export const secundariaGatewayService = {
   },
 
   async listarMisCursos(): Promise<ResultadoMisCursosSecundaria> {
+    if (!portalActivoEsAlumno()) {
+      return vacioMisCursos();
+    }
     return conCacheSWR({
       fragmento: "misCursos",
       leer: () => obtenerCache()?.misCursos,
