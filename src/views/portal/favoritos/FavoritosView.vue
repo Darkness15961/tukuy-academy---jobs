@@ -32,32 +32,32 @@ const metrics = computed(() => [
     value: `${portal.favoriteCourses.value.length}`,
     detail: "cursos marcados",
     icon: Heart,
-    cardClass: "border-border bg-rose-50/70",
-    iconClass: "bg-rose-500 text-white",
+    cardClass: "border-rose-500/25 bg-card",
+    iconClass: "bg-rose-500/15 text-rose-600 dark:text-rose-300",
   },
   {
     label: "Gratuitos",
     value: `${portal.favoriteCourses.value.filter((c) => c.pricing === "free").length}`,
     detail: "listos para iniciar",
     icon: Sparkles,
-    cardClass: "border-teal-100 bg-teal-50/70",
-    iconClass: "bg-teal-600 text-white",
+    cardClass: "border-teal-500/25 bg-card",
+    iconClass: "bg-teal-500/15 text-teal-700 dark:text-teal-300",
   },
   {
     label: "De pago",
     value: `${portal.favoriteCourses.value.filter((c) => c.pricing === "paid").length}`,
     detail: "pendientes de compra",
     icon: Star,
-    cardClass: "border-amber-100 bg-amber-50/70",
-    iconClass: "bg-accent text-accent-foreground",
+    cardClass: "border-amber-500/30 bg-card",
+    iconClass: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
   },
   {
     label: "En progreso",
     value: `${portal.favoriteCourses.value.filter((c) => c.progress > 0 && c.progress < 100).length}`,
     detail: "cursos iniciados",
     icon: TrendingUp,
-    cardClass: "border-border bg-primary/10",
-    iconClass: "bg-primary text-white",
+    cardClass: "border-primary/30 bg-card",
+    iconClass: "bg-primary/15 text-primary",
   },
 ]);
 </script>
@@ -67,17 +67,17 @@ const metrics = computed(() => [
     <section class="grid gap-7">
       <!-- Hero header -->
       <div
-        class="rounded-xl border border-border bg-muted/60 p-6 shadow-sm lg:p-8"
+        class="rounded-none border border-border bg-card p-6 shadow-sm lg:p-8"
       >
         <div
           class="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between"
         >
           <div>
             <Badge
-              class="border-rose-200/60 bg-rose-50 text-rose-700"
+              class="border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300"
               variant="outline"
             >
-              <Heart class="mr-1 h-3 w-3 fill-rose-400 text-rose-400" />
+              <Heart class="mr-1 h-3 w-3 fill-rose-500 text-rose-500 dark:fill-rose-300 dark:text-rose-300" />
               Favoritos
             </Badge>
             <h1
@@ -86,7 +86,7 @@ const metrics = computed(() => [
               Cursos de tu interés
             </h1>
             <p
-              class="mt-3 max-w-3xl text-sm leading-7 text-[#41516A] sm:text-base"
+              class="mt-3 max-w-3xl text-sm leading-7 text-muted-foreground sm:text-base"
             >
               Guarda los cursos que te llaman la atención para revisarlos más
               adelante, comprar cuando estés listo o retomar tu aprendizaje.
@@ -94,15 +94,17 @@ const metrics = computed(() => [
           </div>
 
           <div
-            class="grid gap-2 rounded-lg border border-border bg-card p-4 shadow-sm sm:min-w-56"
+            class="grid gap-2 rounded-none border border-border bg-muted/40 p-4 shadow-sm sm:min-w-56"
           >
             <div class="flex items-center justify-between gap-3 text-sm">
               <span class="text-muted-foreground">Total guardados</span>
-              <strong>{{ portal.favoriteCourses.value.length }}</strong>
+              <strong class="text-foreground">{{
+                portal.favoriteCourses.value.length
+              }}</strong>
             </div>
-            <div class="h-2.5 rounded-full bg-rose-100 overflow-hidden">
+            <div class="h-2.5 overflow-hidden rounded-none bg-muted">
               <div
-                class="h-full rounded-full bg-rose-500 transition-all duration-500"
+                class="h-full rounded-none bg-rose-500 transition-all duration-500"
                 :style="{
                   width: `${Math.min(portal.favoriteCourses.value.length * 20, 100)}%`,
                 }"
@@ -131,13 +133,15 @@ const metrics = computed(() => [
             class="flex items-center gap-4 p-4 transition duration-300 hover:-translate-y-0.5 hover:shadow-md"
           >
             <div
-              class="grid h-12 w-12 shrink-0 place-items-center rounded-md shadow-sm"
+              class="grid h-12 w-12 shrink-0 place-items-center rounded-none"
               :class="metric.iconClass"
             >
               <component :is="metric.icon" class="h-5 w-5" />
             </div>
-            <div>
-              <p class="text-xs font-semibold uppercase text-muted-foreground">
+            <div class="min-w-0">
+              <p
+                class="text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+              >
                 {{ metric.label }}
               </p>
               <strong class="mt-1 block text-2xl font-black text-foreground">{{
@@ -153,11 +157,15 @@ const metrics = computed(() => [
 
       <!-- Search and filter bar -->
       <div
-        class="flex flex-col gap-4 rounded-lg border border-border bg-card p-4 shadow-sm lg:flex-row lg:items-center lg:justify-between"
+        class="flex flex-col gap-4 rounded-none border border-border bg-card p-4 shadow-sm lg:flex-row lg:items-center lg:justify-between"
       >
         <div>
-          <p class="text-xs font-bold uppercase text-secondary">Tu lista</p>
-          <h2 class="mt-1 text-2xl font-black">Cursos guardados</h2>
+          <p class="text-xs font-bold uppercase tracking-wide text-primary">
+            Tu lista
+          </p>
+          <h2 class="mt-1 text-2xl font-black text-foreground">
+            Cursos guardados
+          </h2>
         </div>
         <div class="relative w-full lg:max-w-sm">
           <Search
@@ -196,9 +204,9 @@ const metrics = computed(() => [
       <Card v-else class="border-border shadow-none">
         <CardContent class="grid place-items-center gap-4 py-16 text-center">
           <div
-            class="grid h-16 w-16 place-items-center rounded-full bg-rose-50"
+            class="grid h-16 w-16 place-items-center rounded-none bg-rose-500/10"
           >
-            <Heart class="h-7 w-7 text-rose-400" />
+            <Heart class="h-7 w-7 text-rose-500 dark:text-rose-300" />
           </div>
           <div>
             <h3 class="text-base font-bold text-foreground">

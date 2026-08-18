@@ -1,3 +1,4 @@
+import { pasarelaCursosHabilitada } from "@/lib/pasarela-cursos";
 import type { Course } from "@/types/academia";
 
 const INSTRUCTORS = [
@@ -39,8 +40,8 @@ export function formatCourseRating(rating: number) {
 }
 
 export function formatCoursePrice(course: Course) {
-  if (course.pricing === "free") return "Gratis";
-  return `${(course.price ?? 0).toFixed(2).replace(".", ",")} S/`;
+  if (!pasarelaCursosHabilitada || course.pricing === "free") return "Gratis";
+  return `S/ ${(course.price ?? 0).toFixed(2).replace(".", ",")}`;
 }
 
 export function formatReviewCount(count: number) {

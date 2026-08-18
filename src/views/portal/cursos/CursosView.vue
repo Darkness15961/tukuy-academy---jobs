@@ -1,7 +1,12 @@
 <script setup lang="ts">
 import { Search } from "lucide-vue-next";
-import { computed } from "vue";
+import { computed, onMounted, ref } from "vue";
+import { useRouter } from "vue-router";
 
+import {
+  portalBannersService,
+  type BannerPortalAlumno,
+} from "@/api/services/portal-banners.service";
 import CarruselCursos from "@/components/shared/CarruselCursos.vue";
 import PortadaCurso from "@/components/shared/PortadaCurso.vue";
 import SelectorFiltro from "@/components/shared/SelectorFiltro.vue";
@@ -9,6 +14,8 @@ import TarjetaCursoTendencia from "@/components/shared/TarjetaCursoTendencia.vue
 import EsqueletoCursoTendencia from "@/components/shared/EsqueletoCursoTendencia.vue";
 import PortalSection from "@/components/shared/PortalSection.vue";
 import { Input } from "@/components/ui/input";
+import { useContextoSesion } from "@/composables/useContextoSesion";
+import { urlVisualizableMedia } from "@/lib/storage-academia";
 import { usePortalContext } from "../composables/usePortalContext";
 import type {
   AccesoCursoFilter,
@@ -17,6 +24,9 @@ import type {
 } from "../composables/usePortalContext";
 
 const portal = usePortalContext();
+const router = useRouter();
+const { contextoActivo } = useContextoSesion();
+const banners = ref<BannerPortalAlumno[]>([]);
 
 const opcionesFuente = computed(() => [
   {
@@ -64,36 +74,62 @@ const resumenFiltros = computed(() => {
   if (portal.pricingFilter.value === "paid") partes.push("De pago");
   return partes.length ? partes.join(" · ") : "Catálogo completo";
 });
+
+async function cargarBanners() {
+  try {
+    const orgId = contextoActivo.value?.organizacionId?.trim() || null;
+    const lista = await portalBannersService.listarAlumno(orgId);
+    banners.value = await Promise.all(
+      lista.map(async (b) => {
+        const raw = b.imagenUrl?.trim() || "";
+        if (
+          !raw ||
+          raw.startsWith("http") ||
+          raw.startsWith("data:") ||
+          raw.startsWith("blob:")
+        ) {
+          return b;
+        }
+        const url = await urlVisualizableMedia(raw, "");
+        return { ...b, imagenUrl: url || raw };
+      }),
+    );
+  } catch {
+    banners.value = [];
+  }
+}
+
+function onCtaBanner(slide: BannerPortalAlumno) {
+  if (slide.tipo === "CURSO" && slide.cursoRef?.trim()) {
+    const curso = portal.courses.value.find((c) => c.id === slide.cursoRef);
+    if (curso) {
+      void portal.openSimuladorCurso(curso);
+      return;
+    }
+    void router.push(`/tukuy-academy/cursos/${slide.cursoRef.trim()}`);
+    return;
+  }
+  const url = slide.ctaUrl?.trim();
+  if (!url) return;
+  if (url.startsWith("http://") || url.startsWith("https://")) {
+    window.open(url, "_blank", "noopener,noreferrer");
+    return;
+  }
+  void router.push(url.startsWith("/") ? url : `/${url}`);
+}
+
+onMounted(() => {
+  void cargarBanners();
+});
 </script>
 
 <template>
   <PortalSection wide>
     <PortadaCurso
-      :courses="portal.topCourses.value"
+      :slides="banners"
       :interval-ms="5000"
-      @add-to-cart="portal.handleAddToCart"
-      @continue-course="
-        (id) => {
-          const c = portal.courses.value.find((x) => x.id === id);
-          if (c) portal.openSimuladorCurso(c);
-        }
-      "
+      @cta="onCtaBanner"
     />
-
-    <div
-      v-if="portal.mensajeAccesoCurso.value"
-      class="flex flex-wrap items-center justify-between gap-3 border-l-4 border-l-accent bg-accent/10 px-5 py-4 text-sm font-semibold text-foreground"
-      role="status"
-    >
-      <span>{{ portal.mensajeAccesoCurso.value }}</span>
-      <button
-        type="button"
-        class="text-primary underline-offset-2 hover:underline"
-        @click="portal.irAlCarrito()"
-      >
-        Ver carrito
-      </button>
-    </div>
 
     <CarruselCursos
       subtitle="Formación especializada"
@@ -117,7 +153,27 @@ const resumenFiltros = computed(() => {
       />
     </CarruselCursos>
 
-    <section class="grid w-full gap-6 text-left">
+    <div
+      class="relative my-2 w-full py-6 sm:my-4 sm:py-8"
+      aria-hidden="true"
+    >
+      <div class="h-px w-full bg-border" />
+      <div
+        class="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center gap-2 bg-background px-4"
+      >
+        <span class="h-1.5 w-1.5 rounded-full bg-primary" />
+        <span
+          class="text-[11px] font-black uppercase tracking-[0.2em] text-muted-foreground"
+        >
+          Catálogo
+        </span>
+        <span class="h-1.5 w-1.5 rounded-full bg-primary" />
+      </div>
+    </div>
+
+    <section
+      class="grid w-full gap-6 rounded-none border border-border bg-card/40 p-4 text-left sm:p-6 lg:p-8"
+    >
       <div
         class="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between"
       >
@@ -125,25 +181,22 @@ const resumenFiltros = computed(() => {
           <p
             class="text-sm font-black uppercase tracking-[.25em] text-primary"
           >
-            Rutas formativas
+            Explorar
           </p>
           <h2 class="mt-3 text-3xl font-black text-foreground sm:text-4xl">
-            Catálogo Tukuy y cursos de entidades
+            Catálogo de cursos
           </h2>
-          <p class="mt-3 max-w-2xl text-base leading-7 text-muted-foreground">
-            Oferta de Tukuy Academy, cursos públicos de organizaciones y
-            formaciones con acceso restringido.
-          </p>
         </div>
         <p class="shrink-0 text-sm font-semibold text-muted-foreground">
-          {{ portal.contadoresCatalogo.value.total }} cursos ·
-          {{ portal.contadoresCatalogo.value.entidad }} de entidades ·
-          {{ portal.contadoresCatalogo.value.restringido }} restringidos
+          {{ portal.contadoresCatalogo.value.total }}
+          {{
+            portal.contadoresCatalogo.value.total === 1 ? "curso" : "cursos"
+          }}
         </p>
       </div>
 
       <div
-        class="flex flex-col gap-3 border border-border bg-card p-3 sm:p-4 lg:flex-row lg:items-center"
+        class="flex flex-col gap-3 border border-border bg-background p-3 sm:p-4 lg:flex-row lg:items-center"
       >
         <label class="relative min-w-0 flex-1">
           <Search
@@ -207,16 +260,41 @@ const resumenFiltros = computed(() => {
         v-if="!portal.catalogCourses.value.length"
         class="border border-border bg-card py-12 text-center text-sm text-muted-foreground"
       >
-        {{
-          portal.coursesLoading.value
-            ? "Cargando catálogo…"
-            : portal.searchTerm.value ||
-                portal.fuenteFilter.value !== "all" ||
-                portal.accesoFilter.value !== "all" ||
-                portal.pricingFilter.value !== "all"
-              ? "No encontramos cursos con ese filtro. Prueba otra combinación."
-              : "Aún no hay cursos publicados. Cuando la entidad los publique aparecerán aquí."
-        }}
+        <template v-if="portal.coursesLoading.value">
+          Cargando catálogo…
+        </template>
+        <template v-else-if="portal.coursesError.value">
+          No se pudieron cargar los cursos. Inténtalo de nuevo.
+        </template>
+        <template
+          v-else-if="
+            portal.searchTerm.value ||
+            portal.fuenteFilter.value !== 'all' ||
+            portal.accesoFilter.value !== 'all' ||
+            portal.pricingFilter.value !== 'all'
+          "
+        >
+          No encontramos cursos con ese filtro. Prueba otra combinación.
+        </template>
+        <template v-else>
+          <p>
+            Aún no hay cursos publicados en el catálogo del alumno.
+          </p>
+          <p
+            v-if="(portal.metaCatalogoAlumno.value?.ocultosPorEstado ?? 0) > 0"
+            class="mt-2 text-xs"
+          >
+            Hay
+            {{ portal.metaCatalogoAlumno.value?.ocultosPorEstado }}
+            curso(s) en borrador o revisión. Dirección debe
+            <strong>aprobar y publicar</strong>
+            desde Portal Organización → Catálogo.
+          </p>
+          <p v-else class="mt-2 text-xs">
+            Los cursos del docente aparecen aquí cuando la organización los
+            publica (estado Publicado o Aprobado).
+          </p>
+        </template>
       </div>
     </section>
   </PortalSection>

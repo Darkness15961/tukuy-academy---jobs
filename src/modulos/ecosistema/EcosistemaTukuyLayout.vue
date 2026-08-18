@@ -74,12 +74,7 @@ const logoOrganizacion = computed(() => {
     return "/img/logo-andina-constructora.png";
   return null;
 });
-const iniciales = computed(() => {
-  if (portalActivo.value === "docente") return "CQ";
-  if (portalActivo.value === "organizacion") return "CI";
-  if (portalActivo.value === "admin") return "TA";
-  return "CQ";
-});
+const iniciales = computed(() => currentUser.value?.initials ?? "TU");
 const puedeGestionarVacantes = computed(() =>
   tienePermiso("vacantes.gestionar"),
 );

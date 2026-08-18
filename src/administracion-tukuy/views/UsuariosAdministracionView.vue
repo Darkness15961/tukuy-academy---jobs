@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { toast } from "@/lib/toast";
 import {
   administracionService,
   type UsuarioAdministrado,
@@ -52,7 +53,7 @@ async function cambiarEstado(usuario: UsuarioAdministrado) {
   await administracionService.usuarios.actualizar(usuario.id, {
     estado: usuario.estado,
   });
-  mensaje.value = `${usuario.nombre} ahora se encuentra ${usuario.estado.toLowerCase()}.`;
+  toast.success(`${usuario.nombre} ahora se encuentra ${usuario.estado.toLowerCase()}.`);
 }
 
 function severidad(valor: string) {

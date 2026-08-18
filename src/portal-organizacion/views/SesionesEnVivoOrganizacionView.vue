@@ -26,6 +26,7 @@ import { useContextoSesion } from "@/composables/useContextoSesion";
 import type {
   SesionEnVivoOrganizacion,
 } from "@/portal-organizacion/types/sesiones-en-vivo.types";
+import { toast } from "@/lib/toast";
 
 const { contextoActivo } = useContextoSesion();
 
@@ -241,18 +242,25 @@ async function programar() {
     !formulario.fechaHora ||
     !formulario.docenteEmail.includes("@")
   ) {
-    aviso.value =
+    const msg =
       "Completa título, curso, fecha/hora y correo del docente.";
+    aviso.value = msg;
+    toast.warning("Faltan datos", { description: msg });
     return;
   }
   if (!cursos.value.length) {
-    aviso.value =
+    const msg =
       "No hay cursos en la academia. Crea o publica un curso antes de programar.";
+    aviso.value = msg;
+    toast.warning("Sin cursos", { description: msg });
     return;
   }
   const curso = cursos.value.find((c) => c.id === formulario.cursoId);
   if (!curso) {
     aviso.value = "Selecciona un curso válido.";
+    toast.warning("Curso inválido", {
+      description: "Selecciona un curso válido.",
+    });
     return;
   }
 
@@ -281,44 +289,70 @@ async function programar() {
     modalProgramar.value = false;
     sesionDetalle.value = creada;
     if (creada.meetSimulado) {
-      aviso.value =
-        `Sesión guardada, pero Meet sigue SIMULADO: ${creada.meetAviso ?? "revisa secrets GOOGLE_CALENDAR_* y redeploy."}`;
+      const msg = `Sesión guardada, pero Meet sigue SIMULADO: ${creada.meetAviso ?? "revisa secrets GOOGLE_CALENDAR_* y redeploy."}`;
+      aviso.value = msg;
+      toast.warning("Sesión con Meet simulado", { description: msg });
     } else {
-      aviso.value =
-        "Sesión guardada con Meet real de Google Calendar.";
+      aviso.value = "Sesión guardada con Meet real de Google Calendar.";
+      toast.success("Sesión programada", {
+        description: "Meet de Google Calendar listo.",
+      });
     }
   } catch (err) {
-    aviso.value =
+    const msg =
       err instanceof Error
         ? err.message
         : "No se pudo guardar la sesión. Revisa la consola / gateway.";
+    aviso.value = msg;
+    toast.error("No se pudo programar", { description: msg });
   } finally {
     procesando.value = false;
   }
 }
 
 async function iniciar(sesion: SesionEnVivoOrganizacion) {
-  const actualizada = await organizacionService.sesionesEnVivo.iniciar(
-    sesion.id,
-  );
-  reemplazar(actualizada);
-  sesionDetalle.value = actualizada;
+  try {
+    const actualizada = await organizacionService.sesionesEnVivo.iniciar(
+      sesion.id,
+    );
+    reemplazar(actualizada);
+    sesionDetalle.value = actualizada;
+    toast.success("Sesión iniciada");
+  } catch (err) {
+    toast.error("No se pudo iniciar", {
+      description: err instanceof Error ? err.message : undefined,
+    });
+  }
 }
 
 async function cancelar(sesion: SesionEnVivoOrganizacion) {
-  const actualizada = await organizacionService.sesionesEnVivo.cancelar(
-    sesion.id,
-  );
-  reemplazar(actualizada);
-  sesionDetalle.value = actualizada;
+  try {
+    const actualizada = await organizacionService.sesionesEnVivo.cancelar(
+      sesion.id,
+    );
+    reemplazar(actualizada);
+    sesionDetalle.value = actualizada;
+    toast.success("Sesión cancelada");
+  } catch (err) {
+    toast.error("No se pudo cancelar", {
+      description: err instanceof Error ? err.message : undefined,
+    });
+  }
 }
 
 async function reenviar(sesion: SesionEnVivoOrganizacion) {
-  const actualizada =
-    await organizacionService.sesionesEnVivo.reenviarInvitaciones(sesion.id);
-  reemplazar(actualizada);
-  sesionDetalle.value = actualizada;
-  aviso.value = "Invitaciones reenviadas a correos pendientes (simulado).";
+  try {
+    const actualizada =
+      await organizacionService.sesionesEnVivo.reenviarInvitaciones(sesion.id);
+    reemplazar(actualizada);
+    sesionDetalle.value = actualizada;
+    aviso.value = "Invitaciones reenviadas a correos pendientes (simulado).";
+    toast.success("Invitaciones reenviadas");
+  } catch (err) {
+    toast.error("No se pudieron reenviar", {
+      description: err instanceof Error ? err.message : undefined,
+    });
+  }
 }
 
 function reemplazar(sesion: SesionEnVivoOrganizacion) {

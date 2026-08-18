@@ -4,6 +4,7 @@ import { API } from "@/api/endpoints";
 import { resolveMock } from "@/api/mock";
 import { user } from "@/data/academia.mock";
 import { CONTEXTO_SESION_KEY } from "@/lib/constants";
+import { urlFotoPerfilReal } from "@/lib/foto-perfil";
 import type { ContextoSesion } from "@/types/membresia.types";
 import {
   eventosMock,
@@ -54,7 +55,7 @@ function obtenerAutorActualMock() {
         : contexto?.portal === "admin"
           ? "Administración de plataforma"
           : user.trade,
-    avatar: "/img/vistasimg/perfilfoto.png",
+    avatar: urlFotoPerfilReal(user.avatarUrl) ?? "",
     portal: contexto?.portal ?? ("estudiante" as const),
     verificado: contexto?.portal === "docente" || contexto?.portal === "admin",
   };

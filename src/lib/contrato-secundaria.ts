@@ -50,6 +50,7 @@ export const ACCIONES_GATEWAY_SECUNDARIA = [
   "guardar-curso",
   "publicar-curso",
   "actualizar-estado-curso",
+  "eliminar-curso",
   "matricular-curso",
   "mis-cursos",
   "contenido-curso",
@@ -290,6 +291,7 @@ export type ResultadoContenidoAprendizajeSecundaria = {
         description: string;
         questions?: number | null;
         videoUrl?: string | null;
+        videoFuente?: "youtube" | "tiktok" | "drive" | null;
       }>;
     }>;
     quizzes: Record<

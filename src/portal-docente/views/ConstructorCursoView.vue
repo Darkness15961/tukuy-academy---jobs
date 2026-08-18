@@ -45,6 +45,7 @@ import Select from "primevue/select";
 import {
   docenteService,
   type BorradorCursoDocente,
+  type CursoDocente,
 } from "@/api/services/docente.service";
 import type {
   DocenteResponsableCurso,
@@ -71,11 +72,17 @@ import {
   type ChequeoFirma,
 } from "@/lib/validar-firma-imagen";
 import ToggleSwitch from "primevue/toggleswitch";
-import { useToast } from "primevue/usetoast";
+import { toast } from "@/lib/toast";
+import {
+  OPCIONES_FUENTE_VIDEO,
+  ayudaUrlVideo,
+  detectarFuenteVideo,
+  placeholderUrlVideo,
+  type FuenteVideoCurso,
+} from "@/lib/video-curso";
 
 const router = useRouter();
 const route = useRoute();
-const toast = useToast();
 const { contextoActivo, tienePermiso } = useContextoSesion();
 const { currentUser, restaurarUsuario } = useAuth();
 const paso = ref(1);
@@ -168,6 +175,20 @@ const nombreAmbito = computed(() =>
 const membresiaId = contextoActivo.value?.membresiaId ?? "docente";
 const cursoId = computed(() =>
   String(route.params.cursoId ?? route.query.borrador ?? "nuevo"),
+);
+const cursoGuardado = ref<CursoDocente | null>(null);
+const modalEliminarCurso = ref(false);
+const eliminandoCurso = ref(false);
+const cursoPersistido = computed(
+  () =>
+    cursoId.value !== "nuevo" &&
+    !cursoId.value.startsWith("borrador-") &&
+    !cursoId.value.startsWith("curso-institucional-"),
+);
+const puedeEliminarCurso = computed(
+  () =>
+    cursoPersistido.value &&
+    cursoGuardado.value?.estado !== "ARCHIVADO",
 );
 
 const valoresIniciales = {
@@ -297,6 +318,7 @@ const secciones = ref<BorradorCursoDocente["secciones"]>([
         titulo: "",
         tipo: "video",
         urlYoutube: "",
+        fuenteVideo: "youtube",
       },
     ],
     recursos: [],
@@ -316,7 +338,7 @@ function agregarItem(seccion: SeccionBorrador, tipo: ItemSeccion["tipo"] = "lect
     titulo: "",
     tipo,
     ...(tipo === "quiz" ? { preguntas: preguntasSemilla() } : {}),
-    ...(tipo === "video" ? { urlYoutube: "" } : {}),
+    ...(tipo === "video" ? { urlYoutube: "", fuenteVideo: "youtube" as const } : {}),
   });
   sincronizarClases(seccion);
 }
@@ -336,9 +358,27 @@ function alCambiarTipo(item: ItemSeccion) {
   }
   if (item.tipo === "video") {
     item.urlYoutube ??= "";
+    item.fuenteVideo ??= "youtube";
   } else {
     delete item.urlYoutube;
+    delete item.fuenteVideo;
   }
+}
+
+function alCambiarUrlVideo(item: ItemSeccion) {
+  const detectada = detectarFuenteVideo(item.urlYoutube);
+  if (detectada) item.fuenteVideo = detectada;
+  if (
+    detectada &&
+    String(item.urlYoutube ?? "").trim() &&
+    !String(item.titulo ?? "").trim()
+  ) {
+    item.titulo = "Clase en video";
+  }
+}
+
+function fuenteVideoItem(item: ItemSeccion): FuenteVideoCurso {
+  return item.fuenteVideo ?? "youtube";
 }
 
 function agregarPregunta(item: ItemSeccion) {
@@ -440,6 +480,7 @@ onMounted(async () => {
       cursoId.value.startsWith("curso-institucional-")
         ? null
         : await docenteService.cursos.obtener(cursoId.value).catch(() => null);
+    cursoGuardado.value = cursoExistente;
     const semilla = {
       ...valoresIniciales,
       titulo: cursoExistente?.titulo ?? valoresIniciales.titulo,
@@ -839,7 +880,19 @@ function construirBorrador(): BorradorCursoDocente {
     if (!seccion.id) seccion.id = crypto.randomUUID();
     for (const item of seccion.items ?? []) {
       if (!item.id) item.id = crypto.randomUUID();
+      if (item.tipo !== "video") continue;
+      const url = String(item.urlYoutube ?? "").trim();
+      item.urlYoutube = url;
+      if (!url) continue;
+      item.fuenteVideo =
+        detectarFuenteVideo(url) ?? item.fuenteVideo ?? "youtube";
+      // La secundaria descarta ítems sin título; el enlace de Drive/TikTok
+      // no puede perderse por dejar el título vacío.
+      if (!String(item.titulo ?? "").trim()) {
+        item.titulo = "Clase en video";
+      }
     }
+    sincronizarClases(seccion);
     // Conservar URLs http(s)/s3; no reenviar dataURL enormes.
     return {
       ...seccion,
@@ -899,20 +952,16 @@ function mensajeErrorGuardado(causa: unknown): string {
 }
 
 function notificarError(causa: unknown, resumen = "No se pudo guardar") {
-  toast.add({
-    severity: "error",
-    summary: resumen,
-    detail: mensajeErrorGuardado(causa),
-    life: 7000,
+  toast.error(resumen, {
+    description: mensajeErrorGuardado(causa),
+    duration: 7000,
   });
 }
 
 function notificarExito(mensaje: string) {
-  toast.add({
-    severity: "success",
-    summary: "Listo",
-    detail: mensaje,
-    life: 3500,
+  toast.success("Listo", {
+    description: mensaje,
+    duration: 3500,
   });
 }
 
@@ -1500,6 +1549,29 @@ async function confirmarPortadaRecortada(archivo: File) {
     subiendoPortada.value = false;
   }
 }
+
+async function confirmarEliminarCurso() {
+  if (!cursoPersistido.value || eliminandoCurso.value) return;
+  eliminandoCurso.value = true;
+  try {
+    if (esGestionOrganizacion.value) {
+      await docenteService.archivarCurso(cursoId.value);
+    } else {
+      await docenteService.eliminarCurso(cursoId.value);
+    }
+    toast.success("Curso oculto del catálogo.");
+    void router.push(rutaRegreso.value);
+  } catch (causa) {
+    toast.error(
+      causa instanceof Error
+        ? causa.message
+        : "No se pudo eliminar el curso.",
+    );
+  } finally {
+    eliminandoCurso.value = false;
+    modalEliminarCurso.value = false;
+  }
+}
 </script>
 
 <template>
@@ -1545,6 +1617,12 @@ async function confirmarPortadaRecortada(archivo: File) {
               ><Save class="h-4 w-4" />Guardar borrador</Button
             ><Button class="bg-primary" @click="mostrandoVistaPrevia = true"
               ><Eye class="h-4 w-4" />Vista previa</Button
+            ><Button
+              v-if="puedeEliminarCurso"
+              variant="outline"
+              class="border-red-500/40 text-red-600 hover:bg-red-500/10"
+              @click="modalEliminarCurso = true"
+              ><Trash2 class="h-4 w-4" />Ocultar curso</Button
             >
           </div>
         </div>
@@ -1910,12 +1988,39 @@ async function confirmarPortadaRecortada(archivo: File) {
                     >
                       <label
                         class="text-xs font-bold uppercase tracking-wide text-muted-foreground"
-                        >Enlace de YouTube</label
+                        >Origen del video</label
+                      >
+                      <Select
+                        :model-value="fuenteVideoItem(item)"
+                        :options="OPCIONES_FUENTE_VIDEO"
+                        option-label="label"
+                        option-value="value"
+                        class="filtro-control w-full"
+                        :panel-class="PANEL_COMBO"
+                        @update:model-value="
+                          (valor: FuenteVideoCurso) =>
+                            (item.fuenteVideo = valor)
+                        "
+                      />
+                      <label
+                        class="text-xs font-bold uppercase tracking-wide text-muted-foreground"
+                        >Enlace de
+                        {{
+                          fuenteVideoItem(item) === "tiktok"
+                            ? "TikTok"
+                            : fuenteVideoItem(item) === "drive"
+                              ? "Google Drive"
+                              : "YouTube"
+                        }}</label
                       >
                       <Input
                         v-model="item.urlYoutube"
-                        placeholder="https://www.youtube.com/watch?v=…"
+                        :placeholder="placeholderUrlVideo(fuenteVideoItem(item))"
+                        @update:model-value="alCambiarUrlVideo(item)"
                       />
+                      <p class="text-xs text-muted-foreground">
+                        {{ ayudaUrlVideo(fuenteVideoItem(item)) }}
+                      </p>
                     </div>
                     <div
                       v-if="item.tipo === 'quiz'"
@@ -2868,6 +2973,30 @@ async function confirmarPortadaRecortada(archivo: File) {
       </div>
       <template #footer>
         <Button @click="modalCategorias = false">Listo</Button>
+      </template>
+    </Dialog>
+    <Dialog
+      v-model:visible="modalEliminarCurso"
+      modal
+      header="Ocultar curso del catálogo"
+      :style="{ width: 'min(32rem, calc(100vw - 2rem))' }"
+    >
+      <p class="text-sm text-muted-foreground">
+        El curso dejará de mostrarse en el catálogo para nuevos alumnos. Quienes ya
+        están inscritos conservan acceso, progreso y certificados. No se borran
+        materiales ni matrículas.
+      </p>
+      <template #footer>
+        <Button variant="outline" @click="modalEliminarCurso = false">
+          Cancelar
+        </Button>
+        <Button
+          variant="destructive"
+          :disabled="eliminandoCurso"
+          @click="confirmarEliminarCurso"
+        >
+          {{ eliminandoCurso ? "Ocultando…" : "Sí, ocultar" }}
+        </Button>
       </template>
     </Dialog>
     <Dialog

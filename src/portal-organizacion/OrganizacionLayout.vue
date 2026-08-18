@@ -11,8 +11,10 @@ import {
   ClipboardList,
   CreditCard,
   CalendarDays,
+  FileBadge,
   GraduationCap,
   Home,
+  Image,
   LogOut,
   Menu,
   Network,
@@ -211,6 +213,12 @@ const gruposBase: GrupoNav[] = [
         icono: Award,
         permiso: "certificados.ver",
       },
+      {
+        etiqueta: "Diseño del certificado",
+        ruta: "/organizacion/certificados/diseno",
+        icono: FileBadge,
+        permiso: "certificados.ver",
+      },
     ],
   },
   {
@@ -310,6 +318,12 @@ const itemsEcosistemaBase = [
     e: "Presencia pública",
     r: "/organizacion/ecosistema",
     i: Sparkles,
+    p: "configuracion.editar",
+  },
+  {
+    e: "Anuncios del portal",
+    r: "/organizacion/anuncios-portal",
+    i: Image,
     p: "configuracion.editar",
   },
   {

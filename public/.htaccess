@@ -1,0 +1,42 @@
+# SPA Vue (Vite) — Apache
+# Copia este archivo a la raíz del sitio (junto a index.html / carpeta dist).
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+
+  # Si la app no está en la raíz del dominio, descomenta y ajusta:
+  # RewriteBase /
+
+  # No reescribir archivos ni carpetas reales
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+
+  # Rutas del Vue Router → index.html
+  RewriteRule ^ index.html [L]
+</IfModule>
+
+# Tipos MIME útiles (opcional)
+<IfModule mod_mime.c>
+  AddType application/javascript js mjs
+  AddType text/css css
+  AddType image/svg+xml svg svgz
+</IfModule>
+
+# Caché de assets hasheados de Vite (opcional)
+<IfModule mod_expires.c>
+  ExpiresActive On
+  ExpiresByType text/html "access plus 0 seconds"
+  ExpiresByType text/css "access plus 7 days"
+  ExpiresByType application/javascript "access plus 7 days"
+  ExpiresByType image/webp "access plus 30 days"
+  ExpiresByType image/jpeg "access plus 30 days"
+  ExpiresByType image/png "access plus 30 days"
+  ExpiresByType image/svg+xml "access plus 30 days"
+  ExpiresByType font/woff2 "access plus 30 days"
+</IfModule>
+
+# Compresión (opcional)
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/html text/css application/javascript application/json image/svg+xml
+</IfModule>

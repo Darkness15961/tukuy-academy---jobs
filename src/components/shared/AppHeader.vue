@@ -35,6 +35,8 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import SelectorTema from "@/components/shared/SelectorTema.vue";
+import { urlFotoPerfilReal } from "@/lib/foto-perfil";
+import { pasarelaCursosHabilitada } from "@/lib/pasarela-cursos";
 import { portalPathByView } from "@/lib/portal-routes";
 import {
   etiquetaRol,
@@ -115,10 +117,15 @@ function alCambiarMenuUsuario(abierto: boolean) {
 }
 
 const isPortal = computed(() => props.mode === "portal");
-const profilePhotoSrc = computed(
-  () => props.user?.avatarUrl || "/img/vistasimg/perfilfoto.png",
-);
+const fotoPerfil = computed(() => urlFotoPerfilReal(props.user?.avatarUrl));
 const profilePhotoFailed = ref(false);
+const inicialesPerfil = computed(
+  () => props.user?.initials || "TU",
+);
+
+watch(fotoPerfil, () => {
+  profilePhotoFailed.value = false;
+});
 const otrasFunciones = computed(() =>
   contextoActivo.value?.organizacionId &&
   !contextoActivo.value.organizacionId.startsWith("org-personal-")
@@ -458,6 +465,7 @@ async function activarFuncion(membresiaId: string) {
           </DropdownMenuRoot>
 
           <Button
+            v-if="pasarelaCursosHabilitada"
             class="relative"
             variant="ghost"
             size="icon"
@@ -499,14 +507,15 @@ async function activarFuncion(membresiaId: string) {
                   class="h-9 w-9 rounded-full border border-border bg-card shadow-sm"
                 >
                   <img
-                    v-if="!profilePhotoFailed"
+                    v-if="fotoPerfil && !profilePhotoFailed"
                     class="h-full w-full object-cover"
-                    :src="profilePhotoSrc"
+                    :src="fotoPerfil"
                     :alt="`Foto de ${user.name}`"
+                    referrerpolicy="no-referrer"
                     @error="profilePhotoFailed = true"
                   />
                   <AvatarFallback v-else class="text-xs">
-                    {{ user.initials }}
+                    {{ inicialesPerfil }}
                   </AvatarFallback>
                 </Avatar>
               </Button>

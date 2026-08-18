@@ -10,6 +10,7 @@ import {
 } from "@/data/academia.mock";
 import { USUARIO_SESION_KEY } from "@/lib/constants";
 import { env } from "@/lib/env";
+import { urlFotoPerfilReal } from "@/lib/foto-perfil";
 import {
   mapUserProfileDto,
   mapWorkExperienceList,
@@ -43,7 +44,8 @@ function fusionarPerfilAuth(auth: UserProfile, local: UserProfile): UserProfile 
     ...local,
     name: auth.name || local.name,
     initials: auth.initials || local.initials,
-    avatarUrl: auth.avatarUrl || local.avatarUrl,
+    avatarUrl:
+      urlFotoPerfilReal(auth.avatarUrl) || urlFotoPerfilReal(local.avatarUrl),
     trade: localEsDemo ? auth.trade || local.trade : local.trade,
     specialty: localEsDemo
       ? auth.specialty || local.specialty
@@ -90,7 +92,7 @@ export const usuarioService = {
   },
 
   async getExperiences(): Promise<WorkExperience[]> {
-    if (apiConfig.useMock) {
+    if (apiConfig.useMock || env.authProvider === "supabase") {
       return resolveMock(experienciasLocales.leer());
     }
 
@@ -124,7 +126,7 @@ export const usuarioService = {
   async updateExperiences(
     experiences: WorkExperience[],
   ): Promise<WorkExperience[]> {
-    if (apiConfig.useMock) {
+    if (apiConfig.useMock || env.authProvider === "supabase") {
       return resolveMock(experienciasLocales.guardar(experiences));
     }
     const { data } = await api.put<WorkExperienceDto[]>(

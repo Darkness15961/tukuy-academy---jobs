@@ -26,6 +26,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useContextoSesion } from "@/composables/useContextoSesion";
+import { toast } from "@/lib/toast";
 
 const router = useRouter();
 const { contextoActivo } = useContextoSesion();
@@ -136,9 +137,8 @@ function fecha(fechaIso: string) {
 function abrirPlan() {
   if (!facturacion.value) return;
   if (facturacion.value.soloLectura) {
-    mensaje.value =
-      facturacion.value.mensajeGestion ??
-      "Los cambios de plan los gestiona administración Tukuy.";
+    toast.success(facturacion.value.mensajeGestion ??
+      "Los cambios de plan los gestiona administración Tukuy.");
     return;
   }
   plan.nombre = facturacion.value.plan;
@@ -160,15 +160,14 @@ async function guardarPlan() {
   await organizacionService.guardarFacturacion(actualizado);
   facturacion.value = actualizado;
   modalPlan.value = false;
-  mensaje.value = "Plan actualizado correctamente.";
+  toast.success("Plan actualizado correctamente.");
 }
 
 function abrirTarjeta() {
   if (!facturacion.value) return;
   if (facturacion.value.soloLectura) {
-    mensaje.value =
-      facturacion.value.mensajeGestion ??
-      "El medio de pago lo gestiona administración Tukuy.";
+    toast.success(facturacion.value.mensajeGestion ??
+      "El medio de pago lo gestiona administración Tukuy.");
     return;
   }
   Object.assign(tarjeta, {
@@ -185,8 +184,7 @@ async function guardarTarjeta() {
     !/^\d{4}$/.test(tarjeta.ultimos4) ||
     !/^\d{2}\/\d{4}$/.test(tarjeta.vencimiento)
   ) {
-    mensaje.value =
-      "Revisa los últimos cuatro dígitos y la fecha MM/AAAA.";
+    toast.success("Revisa los últimos cuatro dígitos y la fecha MM/AAAA.");
     return;
   }
   const actualizado = {
@@ -198,7 +196,7 @@ async function guardarTarjeta() {
   await organizacionService.guardarFacturacion(actualizado);
   facturacion.value = actualizado;
   modalTarjeta.value = false;
-  mensaje.value = "Método de pago actualizado.";
+  toast.success("Método de pago actualizado.");
 }
 
 function descargar(comprobante: ComprobanteOrganizacion) {

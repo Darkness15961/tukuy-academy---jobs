@@ -42,6 +42,98 @@ function cors(req: Request) {
   };
 }
 
+/** Firmas + índice público tras emitir (manual o auto-cert 100%). */
+async function postProcesarCertificadoEmitido(entrada: {
+  secundaria: SupabaseClient;
+  principal: SupabaseClient;
+  instalacionId: string;
+  emisorId: string;
+  emisorNombre: string | null;
+  cert: Record<string, unknown> | null | undefined;
+}) {
+  const cert = entrada.cert;
+  const certificadoId =
+    typeof cert?.certificadoId === "string" ? cert.certificadoId : "";
+  const documentoId =
+    typeof cert?.documentoId === "string" ? cert.documentoId : "";
+  if (!certificadoId || !documentoId) {
+    return null;
+  }
+
+  let firmas: unknown = null;
+  let advertenciaFirmas: string | null = null;
+  let listoParaIndice = true;
+
+  const registro = await entrada.secundaria.rpc(
+    "servicio_registrar_firmas_certificado",
+    {
+      p_certificado_id: certificadoId,
+      p_documento_id: documentoId,
+      p_emisor_identidad_ref: entrada.emisorId,
+      p_emisor_nombre: entrada.emisorNombre,
+    },
+  );
+  if (registro.error) {
+    advertenciaFirmas =
+      `Emitido, pero falta 20260810195000_firma_certificado.sql: ${registro.error.message}`;
+  } else {
+    firmas = registro.data;
+    listoParaIndice = registro.data?.listoParaIndice === true;
+  }
+
+  let indicePublico: unknown = null;
+  let advertenciaIndice: string | null = null;
+  const codigo =
+    typeof cert?.codigoVerificacion === "string"
+      ? cert.codigoVerificacion
+      : typeof cert?.codigo === "string"
+        ? cert.codigo
+        : "";
+  if (listoParaIndice && codigo) {
+    const indice = await entrada.principal.rpc(
+      "admin_upsert_indice_certificado_publico",
+      {
+        p_instalacion_id: entrada.instalacionId,
+        p_codigo_verificacion: codigo,
+        p_certificado_secundario_ref: certificadoId,
+        p_documento_secundario_ref: documentoId,
+        p_huella_documento:
+          typeof cert?.huellaDocumento === "string" ? cert.huellaDocumento : "",
+        p_titular_historico:
+          typeof cert?.titular === "string" ? cert.titular : "Titular",
+        p_curso_historico:
+          typeof cert?.curso === "string" ? cert.curso : "Curso",
+        p_organizacion_historica:
+          typeof cert?.organizacion === "string"
+            ? cert.organizacion
+            : "Tukuy Academy",
+        p_emitido_en:
+          typeof cert?.emitidoEn === "string"
+            ? cert.emitidoEn
+            : new Date().toISOString(),
+        p_estado_publico: "VIGENTE",
+      },
+    );
+    if (indice.error) {
+      advertenciaIndice =
+        `Certificado emitido en secundaria, pero falta índice en principal: ${indice.error.message}`;
+    } else {
+      indicePublico = indice.data;
+    }
+  }
+
+  return {
+    firmas,
+    listoParaIndice,
+    indicePublico,
+    advertenciaFirmas,
+    advertenciaIndice,
+    requiereFirmaInstitucional: listoParaIndice !== true,
+    certificadoId,
+    documentoId,
+  };
+}
+
 type Contexto = Record<string, unknown>;
 
 function nombreSecreto(ref: string) {
@@ -451,7 +543,8 @@ Deno.serve(async (req) => {
     }
 
     if (entrada.action === "list-cursos" || entrada.action === "get-curso" ||
-      entrada.action === "get-borrador" || entrada.action === "guardar-curso") {
+      entrada.action === "get-borrador" || entrada.action === "guardar-curso" ||
+      entrada.action === "eliminar-curso") {
       const { data: esAdmin, error: errorAdmin } = await principal.rpc(
         "es_super_admin_actual",
       );
@@ -719,6 +812,34 @@ Deno.serve(async (req) => {
         );
       }
 
+      if (entrada.action === "eliminar-curso") {
+        const cursoId =
+          typeof entrada.cursoId === "string" ? entrada.cursoId.trim() : "";
+        if (!cursoId) {
+          return json({ error: "cursoId requerido" }, 400, corsHeaders);
+        }
+        const eliminado = await secundaria.rpc(
+          "servicio_eliminar_curso_docente",
+          {
+            p_curso_id: cursoId,
+            p_docente_identidad_ref: usuario.user.id,
+          },
+        );
+        if (eliminado.error) {
+          return json(
+            {
+              ok: false,
+              error:
+                "No se pudo ocultar el curso. Ejecuta 20260817200000_ocultar_curso_docente.sql en la secundaria.",
+              details: eliminado.error.message,
+            },
+            200,
+            corsHeaders,
+          );
+        }
+        return json({ ok: true, ...eliminado.data }, 200, corsHeaders);
+      }
+
       const limite =
         typeof entrada.limite === "number" && Number.isFinite(entrada.limite)
           ? entrada.limite
@@ -953,7 +1074,10 @@ Deno.serve(async (req) => {
           }
           const precio = Number(curso?.precio ?? 0);
           const gratuito = curso?.gratuito === true || !(precio > 0);
-          if (!gratuito) {
+          const pasarelaCursosHabilitada =
+            (Deno.env.get("PASARELA_CURSOS_HABILITADA") ?? "false").toLowerCase() ===
+            "true";
+          if (!gratuito && pasarelaCursosHabilitada) {
             const compra = await secundaria.rpc(
               "servicio_estudiante_tiene_compra_pagada",
               {
@@ -1151,7 +1275,36 @@ Deno.serve(async (req) => {
             corsHeaders,
           );
         }
-        return json({ ok: true, ...progreso.data }, 200, corsHeaders);
+        const certAuto =
+          progreso.data?.certificado &&
+            typeof progreso.data.certificado === "object"
+            ? (progreso.data.certificado as Record<string, unknown>)
+            : null;
+        const postCert =
+          certAuto && certAuto.ok !== false && certAuto.certificadoId
+            ? await postProcesarCertificadoEmitido({
+              secundaria,
+              principal,
+              instalacionId,
+              emisorId: usuario.user.id,
+              emisorNombre:
+                typeof usuario.user.user_metadata?.full_name === "string"
+                  ? usuario.user.user_metadata.full_name
+                  : usuario.user.email ?? null,
+              cert: certAuto,
+            })
+            : null;
+        return json(
+          {
+            ok: true,
+            ...progreso.data,
+            postProcesoCertificado: postCert,
+            requiereFirmaInstitucional:
+              postCert?.requiereFirmaInstitucional === true,
+          },
+          200,
+          corsHeaders,
+        );
       }
 
       if (entrada.action === "calificar-quiz") {
@@ -1189,7 +1342,36 @@ Deno.serve(async (req) => {
             corsHeaders,
           );
         }
-        return json({ ok: true, ...calificado.data }, 200, corsHeaders);
+        const certQuiz =
+          calificado.data?.certificado &&
+            typeof calificado.data.certificado === "object"
+            ? (calificado.data.certificado as Record<string, unknown>)
+            : null;
+        const postCertQuiz =
+          certQuiz && certQuiz.ok !== false && certQuiz.certificadoId
+            ? await postProcesarCertificadoEmitido({
+              secundaria,
+              principal,
+              instalacionId,
+              emisorId: usuario.user.id,
+              emisorNombre:
+                typeof usuario.user.user_metadata?.full_name === "string"
+                  ? usuario.user.user_metadata.full_name
+                  : usuario.user.email ?? null,
+              cert: certQuiz,
+            })
+            : null;
+        return json(
+          {
+            ok: true,
+            ...calificado.data,
+            postProcesoCertificado: postCertQuiz,
+            requiereFirmaInstitucional:
+              postCertQuiz?.requiereFirmaInstitucional === true,
+          },
+          200,
+          corsHeaders,
+        );
       }
 
       return json({ error: "Accion de aprendizaje no soportada" }, 400, corsHeaders);
@@ -1766,6 +1948,12 @@ Deno.serve(async (req) => {
           typeof entrada.huellaDocumento === "string"
             ? entrada.huellaDocumento.trim()
             : null;
+        const datosPlantilla =
+          entrada.datosPlantilla &&
+            typeof entrada.datosPlantilla === "object" &&
+            !Array.isArray(entrada.datosPlantilla)
+            ? entrada.datosPlantilla
+            : null;
         const actualizado = await secundaria.rpc(
           "servicio_actualizar_documento_certificado",
           {
@@ -1773,6 +1961,7 @@ Deno.serve(async (req) => {
             p_clave_almacenamiento: clave,
             p_tamano_bytes: tamano,
             p_huella_documento: huella,
+            p_datos_plantilla: datosPlantilla,
           },
         );
         if (actualizado.error) {
@@ -1974,57 +2163,26 @@ Deno.serve(async (req) => {
       let firmas: unknown = null;
       let advertenciaFirmas: string | null = null;
       let listoParaIndice = true;
-      if (emitido.data?.certificadoId && emitido.data?.documentoId) {
-        const registro = await secundaria.rpc(
-          "servicio_registrar_firmas_certificado",
-          {
-            p_certificado_id: emitido.data.certificadoId,
-            p_documento_id: emitido.data.documentoId,
-            p_emisor_identidad_ref: usuario.user.id,
-            p_emisor_nombre:
-              typeof usuario.user.user_metadata?.full_name === "string"
-                ? usuario.user.user_metadata.full_name
-                : usuario.user.email ?? null,
-          },
-        );
-        if (registro.error) {
-          advertenciaFirmas =
-            `Emitido, pero falta 20260810195000_firma_certificado.sql: ${registro.error.message}`;
-        } else {
-          firmas = registro.data;
-          listoParaIndice = registro.data?.listoParaIndice === true;
-        }
-      }
-
       let indicePublico: unknown = null;
       let advertenciaIndice: string | null = null;
-      if (
-        listoParaIndice &&
-        emitido.data?.certificadoId &&
-        emitido.data?.documentoId &&
-        emitido.data?.codigoVerificacion
-      ) {
-        const indice = await principal.rpc(
-          "admin_upsert_indice_certificado_publico",
-          {
-            p_instalacion_id: instalacionId,
-            p_codigo_verificacion: emitido.data.codigoVerificacion,
-            p_certificado_secundario_ref: emitido.data.certificadoId,
-            p_documento_secundario_ref: emitido.data.documentoId,
-            p_huella_documento: emitido.data.huellaDocumento ?? "",
-            p_titular_historico: emitido.data.titular ?? "Titular",
-            p_curso_historico: emitido.data.curso ?? "Curso",
-            p_organizacion_historica:
-              emitido.data.organizacion ?? "Tukuy Academy",
-            p_emitido_en: emitido.data.emitidoEn ?? new Date().toISOString(),
-            p_estado_publico: "VIGENTE",
-          },
-        );
-        if (indice.error) {
-          advertenciaIndice =
-            `Certificado emitido en secundaria, pero falta 20260805248000_indice_certificado_publico.sql en la principal: ${indice.error.message}`;
-        } else {
-          indicePublico = indice.data;
+      if (emitido.data?.certificadoId && emitido.data?.documentoId) {
+        const post = await postProcesarCertificadoEmitido({
+          secundaria,
+          principal,
+          instalacionId,
+          emisorId: usuario.user.id,
+          emisorNombre:
+            typeof usuario.user.user_metadata?.full_name === "string"
+              ? usuario.user.user_metadata.full_name
+              : usuario.user.email ?? null,
+          cert: emitido.data as Record<string, unknown>,
+        });
+        if (post) {
+          firmas = post.firmas;
+          advertenciaFirmas = post.advertenciaFirmas;
+          listoParaIndice = post.listoParaIndice;
+          indicePublico = post.indicePublico;
+          advertenciaIndice = post.advertenciaIndice;
         }
       }
 

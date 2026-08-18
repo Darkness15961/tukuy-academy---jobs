@@ -19,6 +19,7 @@ import { useContextoSesion } from "@/composables/useContextoSesion";
 import { MODULOS_ACCESO, modulosDePermisos } from "@/lib/control-acceso";
 import type { PerfilEntidad } from "@/portal-organizacion/types/estructura-organizacional.types";
 import type { UsuarioOrganizacion } from "@/api/services/organizacion.service";
+import { toast } from "@/lib/toast";
 
 type Pestana = "general" | "excepciones";
 type ExcepcionPermiso = {
@@ -165,8 +166,7 @@ function abrirPerfil(perfil: PerfilEntidad) {
   perfilEditando.value = perfil;
   permisosEditando.value = [...perfil.permisos];
   modalPerfil.value = true;
-  mensaje.value = "";
-}
+  }
 
 async function guardarPerfil() {
   if (!perfilEditando.value || !puedeEditarPerfil(perfilEditando.value)) return;
@@ -181,7 +181,7 @@ async function guardarPerfil() {
       p.id === actualizado.id ? actualizado : p,
     );
     modalPerfil.value = false;
-    mensaje.value = `Permisos generales de «${actualizado.nombre}» actualizados.`;
+    toast.success(`Permisos generales de «${actualizado.nombre}» actualizados.`);
   } catch (e) {
     error.value =
       e instanceof Error ? e.message : "No se pudieron guardar los permisos.";
@@ -223,7 +223,7 @@ async function guardarExcepcion() {
     excepciones.value =
       await organizacionPrincipalService.listarExcepcionesPermiso(instalacionId);
     modalExcepcion.value = false;
-    mensaje.value = "Excepción guardada. Aplica solo a esa persona.";
+    toast.success("Excepción guardada. Aplica solo a esa persona.");
   } catch (e) {
     error.value =
       e instanceof Error ? e.message : "No se pudo guardar la excepción.";
@@ -242,7 +242,7 @@ async function eliminarExcepcion(item: ExcepcionPermiso) {
       item.id,
     );
     excepciones.value = excepciones.value.filter((e) => e.id !== item.id);
-    mensaje.value = "Excepción eliminada. Vuelve a regir el permiso del perfil.";
+    toast.success("Excepción eliminada. Vuelve a regir el permiso del perfil.");
   } catch (e) {
     error.value =
       e instanceof Error ? e.message : "No se pudo eliminar la excepción.";

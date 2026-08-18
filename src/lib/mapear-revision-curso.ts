@@ -4,6 +4,11 @@ import type {
   RecursoRevisionCurso,
   TipoActividadRevision,
 } from "@/portal-organizacion/types/revision-curso.types";
+import {
+  detectarFuenteVideo,
+  etiquetaFuenteVideo,
+  normalizarFuenteVideo,
+} from "@/lib/video-curso";
 
 function formatearTamanio(bytes: unknown): string | undefined {
   const n = Number(bytes);
@@ -80,12 +85,17 @@ export function mapearSeccionesAModulosRevision(
       const tipo = tipoActividad(item.tipo);
       const preguntas = Array.isArray(item.preguntas) ? item.preguntas : [];
       const urlYoutube = urlUtil(item.urlYoutube ?? item.url_youtube);
+      const fuenteVideo =
+        normalizarFuenteVideo(
+          String(item.fuenteVideo ?? item.videoFuente ?? ""),
+        ) ?? detectarFuenteVideo(urlYoutube) ?? undefined;
       return {
         id: String(item.id ?? `${cursoId}-m${indice}-a${iIdx}`),
         titulo: String(item.titulo ?? clases[iIdx] ?? `Actividad ${iIdx + 1}`),
         tipo,
         tipoEtiqueta: etiquetaTipo(tipo),
         urlYoutube: urlYoutube || undefined,
+        fuenteVideo,
         totalPreguntas: tipo === "quiz" ? preguntas.length : undefined,
       };
     });

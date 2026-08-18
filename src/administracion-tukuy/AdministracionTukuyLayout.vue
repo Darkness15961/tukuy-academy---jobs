@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {
   ArrowLeftRight,
+  Award,
   Bell,
   BookOpenCheck,
   Building2,
@@ -91,6 +92,11 @@ const navegacion = computed(() => [
     icono: BookOpenCheck,
     contador: cursosPendientes.value,
     permiso: "cursos.revisar",
+  },
+  {
+    etiqueta: "Certificados",
+    ruta: "/admin/certificados",
+    icono: Award,
   },
   {
     etiqueta: "Planes y licencias",

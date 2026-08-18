@@ -9,6 +9,8 @@ import {
   USUARIOS_REGISTRADOS_KEY,
 } from "@/lib/constants";
 import { env } from "@/lib/env";
+import { inicialesNombre, urlFotoPerfilReal } from "@/lib/foto-perfil";
+import { invalidarCacheMedia } from "@/lib/storage-academia";
 import { supabasePrincipal } from "@/lib/supabase";
 import type { Session, User } from "@supabase/supabase-js";
 import type {
@@ -63,13 +65,13 @@ function perfilDesdeSupabase(usuario: User): UserProfileDto {
     nombreCompleto ||
     usuario.email?.split("@")[0] ||
     "Usuario Tukuy";
-  const partes = nombre.split(/\s+/).filter(Boolean);
 
   return {
     name: nombre,
-    initials: `${partes[0]?.[0] ?? "T"}${partes[1]?.[0] ?? "U"}`.toUpperCase(),
-    avatarUrl:
-      textoMetadata(metadata, "avatar_url", "picture") || undefined,
+    initials: inicialesNombre(nombre),
+    avatarUrl: urlFotoPerfilReal(
+      textoMetadata(metadata, "avatar_url", "picture"),
+    ),
     trade: "Usuario Tukuy",
     specialty: "Perfil en construcción",
     location: "Perú",
@@ -609,6 +611,11 @@ export const authService = {
   },
 
   async logout(): Promise<void> {
+    try {
+      invalidarCacheMedia();
+    } catch {
+      /* ignore */
+    }
     if (usarAuthMock()) return;
     if (env.authProvider === "supabase") {
       const { error } = await supabasePrincipal().auth.signOut();

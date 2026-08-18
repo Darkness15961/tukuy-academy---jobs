@@ -18,6 +18,7 @@ import Select from "primevue/select";
 import Skeleton from "primevue/skeleton";
 import Tag from "primevue/tag";
 import { computed, onMounted, ref } from "vue";
+import { useRouter } from "vue-router";
 
 import { organizacionService } from "@/api/services/organizacion.service";
 import { apiConfig } from "@/api/config";
@@ -25,12 +26,14 @@ import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useContextoSesion } from "@/composables/useContextoSesion";
+import { toast } from "@/lib/toast";
 import type {
   CertificadoEmitidoDocente,
   CertificadoPendienteDocente,
 } from "@/portal-docente/types/docente.types";
 
 const { contextoActivo, funcionesEntidadActiva, tienePermiso } = useContextoSesion();
+const router = useRouter();
 
 const logoEntidad = computed(
   () =>
@@ -215,12 +218,11 @@ async function emitir(pendienteId: string) {
       pendientesFirma.value = await organizacionService.listarPendientesFirma();
     }
     const requiereFirma = emitido.requiereFirmaInstitucional === true;
-    mensaje.value = requiereFirma
+    toast.success(requiereFirma
       ? "Certificado preparado. Falta la firma institucional para publicarlo."
-      : "Certificado emitido y enviado al estudiante.";
+      : "Certificado emitido y enviado al estudiante.");
     setTimeout(() => {
-      mensaje.value = "";
-    }, 3500);
+          }, 3500);
   } catch (causa) {
     error.value =
       causa instanceof Error
@@ -254,10 +256,9 @@ async function firmar(item: {
     pendientesFirma.value = pendientesFirma.value.filter(
       (fila) => fila.firmaId !== item.firmaId,
     );
-    mensaje.value = `Firma institucional aplicada · ${item.nombre}`;
+    toast.success(`Firma institucional aplicada · ${item.nombre}`);
     setTimeout(() => {
-      mensaje.value = "";
-    }, 3000);
+          }, 3000);
   } catch (causa) {
     error.value =
       causa instanceof Error
@@ -293,10 +294,9 @@ async function revocar(certificado: CertificadoEmitidoDocente) {
           }
         : item,
     );
-    mensaje.value = `Certificado revocado · ${certificado.nombre}`;
+    toast.success(`Certificado revocado · ${certificado.nombre}`);
     setTimeout(() => {
-      mensaje.value = "";
-    }, 3500);
+          }, 3500);
   } catch (causa) {
     error.value =
       causa instanceof Error
@@ -360,8 +360,16 @@ function codigoCertificado(certificado: CertificadoEmitidoDocente) {
   return certificado.codigoVerificacion?.trim() || certificado.id;
 }
 
-function datosCertificado(certificado: CertificadoEmitidoDocente) {
+async function datosCertificado(certificado: CertificadoEmitidoDocente) {
   const codigo = codigoCertificado(certificado);
+  const { plantillasCertificadoService } = await import(
+    "@/api/services/plantillas-certificado.service"
+  );
+  const { INSTALACION_TUKUY_ACADEMY_ID } = await import("@/lib/constants");
+  const instalacionId =
+    contextoActivo.value?.organizacionId?.trim() || INSTALACION_TUKUY_ACADEMY_ID;
+  const plantilla =
+    await plantillasCertificadoService.obtenerDefault(instalacionId);
   return {
     holderName: certificado.nombre,
     courseTitle: certificado.curso,
@@ -378,6 +386,7 @@ function datosCertificado(certificado: CertificadoEmitidoDocente) {
       contextoActivo.value?.organizacionNombre ??
       "Tukuy Academy",
     issuerLogoUrl: logoEntidad.value,
+    plantilla,
   };
 }
 
@@ -409,7 +418,7 @@ async function verCertificado(certificado: CertificadoEmitidoDocente) {
     }
   }
   const { openCertificatePdf } = await import("@/lib/certificado-pdf");
-  await openCertificatePdf(datosCertificado(certificado));
+  await openCertificatePdf(await datosCertificado(certificado));
 }
 
 async function descargarCertificado(certificado: CertificadoEmitidoDocente) {
@@ -433,7 +442,7 @@ async function descargarCertificado(certificado: CertificadoEmitidoDocente) {
       return;
     }
     const { downloadCertificatePdf } = await import("@/lib/certificado-pdf");
-    await downloadCertificatePdf(datosCertificado(certificado));
+    await downloadCertificatePdf(await datosCertificado(certificado));
   } catch {
     error.value = "No se pudo generar el PDF del certificado.";
   } finally {
@@ -450,10 +459,19 @@ async function descargarCertificado(certificado: CertificadoEmitidoDocente) {
         ayuda="Emite, consulta y verifica los certificados otorgados por la entidad a los alumnos que cumplen los requisitos académicos."
         clase-titulo="text-2xl font-black"
       />
-      <Button variant="outline" @click="exportar">
-        <Download class="h-4 w-4" />
-        Exportar CSV
-      </Button>
+      <div class="flex flex-wrap gap-2">
+        <Button
+          variant="outline"
+          @click="router.push('/organizacion/certificados/diseno')"
+        >
+          <SlidersHorizontal class="h-4 w-4" />
+          Definir / ajustar diseño
+        </Button>
+        <Button variant="outline" @click="exportar">
+          <Download class="h-4 w-4" />
+          Exportar CSV
+        </Button>
+      </div>
     </header>
 
     <div

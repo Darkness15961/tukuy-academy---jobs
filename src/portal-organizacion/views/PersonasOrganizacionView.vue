@@ -25,6 +25,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import { Card, CardContent } from "@/components/ui/card";
+import { toast } from "@/lib/toast";
 import type {
   EstructuraOrganizacional,
   NivelOrganizacional,
@@ -127,19 +128,17 @@ async function cargar() {
       estructuraSeleccionadaId.value = unidadDestino.estructuraId ?? estructuraSeleccionadaId.value;
       await nextTick();
       filtrosNodosVinculaciones.value = rutaIdsUnidad(unidadDestino.id);
-      mensaje.value = `Mostrando personas de “${unidadDestino.nombre}”.`;
+      toast.success(`Mostrando personas de “${unidadDestino.nombre}”.`);
     } else if (
       usuarios.value.length &&
       usuarios.value.every((u) => typeof u.id === "string" && u.id.includes("-"))
     ) {
-      mensaje.value =
-        "Directorio de personal (sin alumnos STUDENT). Los alumnos están en Alumnos.";
+      toast.success("Directorio de personal (sin alumnos STUDENT). Los alumnos están en Alumnos.");
     }
   } catch (error) {
-    mensaje.value =
-      error instanceof Error
+    toast.success(error instanceof Error
         ? error.message
-        : "No se pudo cargar el directorio de personas";
+        : "No se pudo cargar el directorio de personas");
   } finally {
     cargando.value = false;
   }
@@ -564,10 +563,9 @@ async function crearVinculacion() {
     });
     vinculaciones.value.unshift(creada);
     modalVinculacion.value = false;
-    mensaje.value = "La persona fue vinculada al nodo seleccionado.";
+    toast.success("La persona fue vinculada al nodo seleccionado.");
   } catch (error) {
-    mensaje.value =
-      error instanceof Error ? error.message : "No se pudo crear la vinculación.";
+    toast.success(error instanceof Error ? error.message : "No se pudo crear la vinculación.");
   }
 }
 
@@ -578,7 +576,7 @@ async function aprobarSolicitud(vinculacion: VinculacionUnidad) {
   );
   const indice = vinculaciones.value.findIndex((item) => item.id === actualizada.id);
   if (indice >= 0) vinculaciones.value[indice] = actualizada;
-  mensaje.value = "La solicitud de nodo fue aprobada.";
+  toast.success("La solicitud de nodo fue aprobada.");
 }
 
 async function activarIncorporacion(usuario: UsuarioOrganizacion) {
@@ -589,7 +587,7 @@ async function activarIncorporacion(usuario: UsuarioOrganizacion) {
   const posicion = usuarios.value.findIndex((item) => item.id === usuario.id);
   if (posicion >= 0) usuarios.value[posicion] = actualizado;
   vinculaciones.value = await organizacionService.estructura.vinculaciones.listar();
-  mensaje.value = `${actualizado.nombre}: ingreso aceptado.`;
+  toast.success(`${actualizado.nombre}: ingreso aceptado.`);
   if (!filasSolicitudes.value.length) modalSolicitudes.value = false;
 }
 

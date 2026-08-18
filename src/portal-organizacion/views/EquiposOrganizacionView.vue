@@ -52,6 +52,7 @@ import type {
   VinculacionUnidad,
 } from "@/portal-organizacion/types/estructura-organizacional.types";
 
+import { toast } from "@/lib/toast";
 import {
   MODULOS_ACCESO,
   PERMISOS_POR_PLANTILLA,
@@ -777,8 +778,9 @@ async function abrirUnidad() {
   if (!puedeGestionarEstructura.value) return;
   if (!estructuraSeleccionadaId.value) {
     abrirEstructura();
-    mensaje.value =
-      "Primero crea una estructura operativa; luego podrás agregar nodos.";
+    toast.success(
+      "Primero crea una estructura operativa; luego podrás agregar nodos.",
+    );
     return;
   }
   unidadEditandoId.value = null;
@@ -832,8 +834,7 @@ function abrirEditarUnidadPorId(id: string) {
 function abrirConfirmacionEliminar() {
   if (!puedeEliminarUnidad.value) {
     if (unidadEditandoTieneHijos.value) {
-      mensaje.value =
-        "No se puede eliminar un nodo que contiene descendientes. Elimina primero los nodos del último nivel.";
+      toast.success("No se puede eliminar un nodo que contiene descendientes. Elimina primero los nodos del último nivel.");
     }
     return;
   }
@@ -857,14 +858,13 @@ async function eliminarUnidad() {
     modalEliminarUnidad.value = false;
     modalUnidad.value = false;
     unidadEditandoId.value = null;
-    mensaje.value = `${resultado.unidadesEliminadas} ${
+    toast.success(`${resultado.unidadesEliminadas} ${
       resultado.unidadesEliminadas === 1 ? "nodo fue eliminado" : "nodos fueron eliminados"
-    }. Se limpiaron ${resultado.vinculacionesEliminadas} vinculaciones y se actualizaron ${resultado.reglasAccesoActualizadas} reglas de acceso.`;
+    }. Se limpiaron ${resultado.vinculacionesEliminadas} vinculaciones y se actualizaron ${resultado.reglasAccesoActualizadas} reglas de acceso.`);
   } catch (error) {
-    mensaje.value =
-      error instanceof Error
+    toast.success(error instanceof Error
         ? error.message
-        : "No fue posible eliminar el nodo seleccionado.";
+        : "No fue posible eliminar el nodo seleccionado.");
   } finally {
     eliminando.value = false;
   }
@@ -955,8 +955,7 @@ async function guardarUnidad() {
     if (unidadEditandoId.value) {
       if (!puedeEditarUnidad(unidadEditandoId.value)) return;
       if (unidadEditandoTieneHijos.value && !formularioUnidad.permiteSubunidades) {
-        mensaje.value =
-          "No puedes convertir este nodo en terminal mientras conserve nodos descendientes activos.";
+        toast.success("No puedes convertir este nodo en terminal mientras conserve nodos descendientes activos.");
         return;
       }
       const cambios: Partial<UnidadOrganizacional> = {
@@ -980,7 +979,7 @@ async function guardarUnidad() {
       const indice = unidades.value.findIndex((item) => item.id === actualizada.id);
       if (indice >= 0) unidades.value[indice] = actualizada;
       modalUnidad.value = false;
-      mensaje.value = "Los cambios del nodo se guardaron en la estructura.";
+      toast.success("Los cambios del nodo se guardaron en la estructura.");
       return;
     }
 
@@ -995,7 +994,7 @@ async function guardarUnidad() {
           : padreIdDesdeFormulario(formularioUnidad.unidadPadreId);
 
     if (unidadPadreIdDestino && !puedeCrearEnUnidad(unidadPadreIdDestino)) {
-      mensaje.value = "No puedes crear nodos dentro de una función protegida.";
+      toast.success("No puedes crear nodos dentro de una función protegida.");
       return;
     }
 
@@ -1048,7 +1047,7 @@ async function guardarUnidad() {
     });
     unidades.value.push(creada);
     modalUnidad.value = false;
-    mensaje.value = "El nodo se agregó a la estructura institucional.";
+    toast.success("El nodo se agregó a la estructura institucional.");
   } finally {
     guardando.value = false;
   }
@@ -1067,8 +1066,7 @@ function abrirEstructura() {
 async function crearEstructura() {
   if (!formularioEstructura.nombre.trim() || guardando.value) return;
   guardando.value = true;
-  mensaje.value = "";
-  try {
+    try {
     const id = `estructura-${Date.now()}`;
     const nombreEst = formularioEstructura.nombre.trim();
     const creada = await organizacionService.estructura.estructuras.crear({
@@ -1102,12 +1100,11 @@ async function crearEstructura() {
     unidades.value.push(nodoRaiz);
 
     modalEstructura.value = false;
-    mensaje.value = `Estructura "${creada.nombre}" creada con su nodo principal.`;
+    toast.success(`Estructura "${creada.nombre}" creada con su nodo principal.`);
   } catch (error) {
-    mensaje.value =
-      error instanceof Error
+    toast.success(error instanceof Error
         ? error.message
-        : "No se pudo crear la estructura";
+        : "No se pudo crear la estructura");
   } finally {
     guardando.value = false;
   }
@@ -1130,7 +1127,7 @@ async function crearNivel() {
   });
   niveles.value.push(creado);
   modalNivel.value = false;
-  mensaje.value = `Nivel “${creado.nombre}” agregado a ${estructuraSeleccionada.value?.nombre}.`;
+  toast.success(`Nivel “${creado.nombre}” agregado a ${estructuraSeleccionada.value?.nombre}.`);
 }
 
 function abrirModalTipo(desdeUnidad = false) {
@@ -1155,8 +1152,7 @@ function seleccionarTipoUnidad(valor: string) {
 async function crearTipoUnidad() {
   if (!formularioTipo.nombre.trim() || guardando.value) return;
   guardando.value = true;
-  mensaje.value = "";
-  try {
+    try {
     const nombre = formularioTipo.nombre.trim();
     const creado = await organizacionService.estructura.tiposUnidad.crear({
       id: `tipo-${Date.now()}`,
@@ -1176,13 +1172,11 @@ async function crearTipoUnidad() {
     modalTipo.value = false;
     creandoTipoDesdeUnidad.value = false;
     Object.assign(formularioTipo, { nombre: "", descripcion: "" });
-    mensaje.value =
-      "El nuevo tipo de nodo ya puede utilizarse en el organigrama.";
+    toast.success("El nuevo tipo de nodo ya puede utilizarse en el organigrama.");
   } catch (error) {
-    mensaje.value =
-      error instanceof Error
+    toast.success(error instanceof Error
         ? error.message
-        : "No se pudo crear el tipo de nodo.";
+        : "No se pudo crear el tipo de nodo.");
   } finally {
     guardando.value = false;
   }
@@ -1217,7 +1211,7 @@ async function crearPerfil() {
   perfiles.value.push(creado);
   modalPerfil.value = false;
   Object.assign(formularioPerfil, { nombre: "", descripcion: "", plantilla: "SUPERVISION" });
-  mensaje.value = "El perfil personalizado fue creado debajo de Administración.";
+  toast.success("El perfil personalizado fue creado debajo de Administración.");
 }
 
 function abrirAccesosPerfil(perfil: PerfilEntidad) {
@@ -1237,7 +1231,7 @@ async function guardarAccesosPerfil() {
     const indice = perfiles.value.findIndex((item) => item.id === actualizado.id);
     if (indice >= 0) perfiles.value[indice] = actualizado;
     modalAccesosPerfil.value = false;
-    mensaje.value = `Accesos de ${actualizado.nombre} actualizados por Superadministración.`;
+    toast.success(`Accesos de ${actualizado.nombre} actualizados por Superadministración.`);
   } finally {
     guardando.value = false;
   }
@@ -1280,7 +1274,7 @@ async function crearReglaCurso() {
   if (indice >= 0) reglasAccesoCursos.value[indice] = creada;
   else reglasAccesoCursos.value.unshift(creada);
   modalReglaCurso.value = false;
-  mensaje.value = "La regla de acceso al curso quedó activa para la entidad.";
+  toast.success("La regla de acceso al curso quedó activa para la entidad.");
 }
 
 function etiquetaPublico(regla: ReglaAccesoCursoEntidad) {

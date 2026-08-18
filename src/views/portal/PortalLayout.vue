@@ -2,10 +2,14 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
+import { obtenerMetaCatalogoAlumno } from "@/api/services/cursos.service";
 import { aprendizajeService } from "@/api/services/aprendizaje.service";
 import { apiConfig } from "@/api/config";
 import { organizacionService } from "@/api/services/organizacion.service";
-import { secundariaGatewayService } from "@/api/services/secundaria-gateway.service";
+import {
+  invalidarCacheSecundaria,
+  secundariaGatewayService,
+} from "@/api/services/secundaria-gateway.service";
 import AppHeader from "@/components/shared/AppHeader.vue";
 import LazyRouteOutlet from "@/components/shared/LazyRouteOutlet.vue";
 import PortalPageSkeleton from "@/components/shared/PortalPageSkeleton.vue";
@@ -35,11 +39,13 @@ import {
   matricularCurso,
   matricularCursos,
   mensajeErrorMatricula,
+  pasarelaCursosHabilitada,
 } from "@/lib/acceso-curso";
 import { cursoVisibleEnCatalogoAlumno } from "@/lib/catalogo-alumno";
 import { cursosPerfilesEntidadesMock } from "@/modulos/comunidad/data/entidades-publicas.mock";
 import { entidadesComunidadService } from "@/modulos/comunidad/services/entidades.service";
 import { portalPathByView, resolvePortalView } from "@/lib/portal-routes";
+import { toast } from "@/lib/toast";
 import type { Course, UserProfile, ViewId } from "@/types/academia";
 import { providePortalContext } from "./composables/usePortalContext";
 import type {
@@ -57,6 +63,7 @@ const {
   courses,
   completedCourses,
   loading: coursesLoading,
+  error: coursesError,
   refetch: refetchCursos,
 } = useCursos();
 const { searchTerm, filteredCourses } = useFiltroCursos(() => courses.value);
@@ -75,7 +82,7 @@ const {
   updateProfile,
 } = useUsuario();
 const { cartCount, addToCart, removeFromCart, clearCart, isInCart } = useCarrito();
-const { favoritesCount, isFavorite, toggleFavorite, favoriteCourseIds } =
+const { favoritesCount, isFavorite, toggleFavorite, favoriteCourseIds, sincronizarConCatalogo } =
   useFavoritos();
 
 const pricingFilter = ref<PricingFilter>("all");
@@ -186,8 +193,38 @@ const favoriteCourses = computed(() =>
   courses.value.filter((course) => favoriteCourseIds.value.includes(course.id)),
 );
 
+const metaCatalogoAlumno = computed(() => obtenerMetaCatalogoAlumno());
+
+watch(
+  courses,
+  (lista) => {
+    // No podar favoritos si el catálogo viene vacío (carga fallida / sin publicados).
+    if (!lista.length) return;
+    sincronizarConCatalogo(lista.map((c) => c.id));
+  },
+  { immediate: true },
+);
+
+watch(
+  () => contextoActivo.value?.organizacionId,
+  async (siguiente, anterior) => {
+    if (!siguiente || siguiente === anterior) return;
+    if (apiConfig.secundariaCursos) {
+      invalidarCacheSecundaria();
+    }
+    await refetchCursos({ forzar: true });
+  },
+);
+
 function navigate(view: ViewId) {
   router.push(portalPathByView[view]);
+}
+
+function avisarAcceso(
+  mensaje: string,
+  tipo: "success" | "error" | "info" | "warning" = "info",
+) {
+  toast[tipo](mensaje);
 }
 
 function verDetalleCurso(course: Course) {
@@ -202,17 +239,34 @@ function handleAddToCart(courseId: string) {
     void router.push(`/tukuy-academy/aprendizaje/${courseId}`);
     return;
   }
+  if (!pasarelaCursosHabilitada) {
+    if (course) void openSimuladorCurso(course);
+    return;
+  }
   if (isInCart(courseId)) {
-    mensajeAccesoCurso.value =
-      "Este curso ya está en tu carrito. Ábrelo desde el ícono para pagar.";
+    avisarAcceso(
+      "Este curso ya está en tu carrito. Ábrelo desde el ícono para pagar.",
+      "info",
+    );
     return;
   }
   addToCart(courseId);
-  mensajeAccesoCurso.value =
-    "Agregado al carrito. Puedes seguir explorando o pagar desde el ícono.";
+  avisarAcceso(
+    "Agregado al carrito. Puedes seguir explorando o pagar desde el ícono.",
+    "success",
+  );
+}
+
+function handleToggleFavorite(courseId: string) {
+  const yaEraFavorito = isFavorite(courseId);
+  toggleFavorite(courseId);
+  toast.success(
+    yaEraFavorito ? "Quitado de favoritos." : "Agregado a favoritos.",
+  );
 }
 
 function irAlCarrito() {
+  if (!pasarelaCursosHabilitada) return;
   void router.push("/tukuy-academy/carrito");
 }
 
@@ -220,6 +274,10 @@ function comprarAhora(courseId: string) {
   const course = courses.value.find((item) => item.id === courseId);
   if (course && cursoEstaMatriculado(course)) {
     void router.push(`/tukuy-academy/aprendizaje/${courseId}`);
+    return;
+  }
+  if (!pasarelaCursosHabilitada) {
+    if (course) void openSimuladorCurso(course);
     return;
   }
   if (!isInCart(courseId)) addToCart(courseId);
@@ -235,6 +293,12 @@ async function handleViewCertificate(course: Course) {
       cursoId: course.id,
       fallback: () => viewCourseCertificate(course, user.value!),
     });
+  } catch (causa) {
+    toast.error(
+      causa instanceof Error
+        ? causa.message
+        : "No se pudo abrir el certificado.",
+    );
   } finally {
     openingCertificateId.value = null;
   }
@@ -251,6 +315,13 @@ async function handleDownloadCertificate(course: Course) {
       fallback: () =>
         downloadCertificatePdf(buildCertificateData(course, user.value!)),
     });
+    toast.success("Certificado descargado.");
+  } catch (causa) {
+    toast.error(
+      causa instanceof Error
+        ? causa.message
+        : "No se pudo descargar el certificado.",
+    );
   } finally {
     openingCertificateId.value = null;
   }
@@ -300,9 +371,11 @@ async function openSimuladorCurso(course: Course) {
   }
 
   if (cursoRequiereCompra(course)) {
-    mensajeAccesoCurso.value =
-      "Este curso requiere compra. Agrégalo al carrito y completa el pago para continuar.";
-    handleAddToCart(course.id);
+    if (!isInCart(course.id)) addToCart(course.id);
+    avisarAcceso(
+      "Este curso requiere compra. Agrégalo al carrito y completa el pago para continuar.",
+      "warning",
+    );
     return;
   }
 
@@ -315,19 +388,25 @@ async function openSimuladorCurso(course: Course) {
         const acceso =
           await entidadesComunidadService.evaluarAccesoCurso(cursoEntidad);
         if (!acceso.disponible) {
-          mensajeAccesoCurso.value = `${acceso.motivo} Puedes solicitar acceso desde el perfil de la entidad.`;
+          avisarAcceso(
+            `${acceso.motivo} Puedes solicitar acceso desde el perfil de la entidad.`,
+            "warning",
+          );
           void router.push(`/comunidad/entidades/${cursoEntidad.organizacionId}`);
           return;
         }
         if (acceso.origenAcceso === "APROBACION") {
           await entidadesComunidadService.matricularEnCurso(cursoEntidad);
-          mensajeAccesoCurso.value =
-            "Solicitud de matrícula enviada. La entidad debe aprobarla antes de habilitar el curso.";
+          avisarAcceso(
+            "Solicitud de matrícula enviada. La entidad debe aprobarla antes de habilitar el curso.",
+            "success",
+          );
           return;
         }
         await entidadesComunidadService.matricularEnCurso(cursoEntidad);
         await matricularCurso(course.id, courses.value);
         await refrescarCursosTrasMatricula();
+        toast.success("Inscripción lista. Ya puedes entrar al curso.");
         await router.push(`/tukuy-academy/aprendizaje/${course.id}`);
         return;
       }
@@ -343,7 +422,7 @@ async function openSimuladorCurso(course: Course) {
         course.id,
       );
       if (!evaluacion.disponible) {
-        mensajeAccesoCurso.value = evaluacion.motivo;
+        avisarAcceso(evaluacion.motivo, "warning");
         return;
       }
       if (evaluacion.requiereAprobacion) {
@@ -353,8 +432,10 @@ async function openSimuladorCurso(course: Course) {
           curso: course.title,
           unidadOrigenId: evaluacion.unidadOrigenId,
         });
-        mensajeAccesoCurso.value =
-          "Solicitud enviada. La entidad debe aprobarla antes de habilitar el curso.";
+        avisarAcceso(
+          "Solicitud enviada. La entidad debe aprobarla antes de habilitar el curso.",
+          "success",
+        );
         return;
       }
       await organizacionService.matricularUsuarioEnCurso({
@@ -366,6 +447,7 @@ async function openSimuladorCurso(course: Course) {
       });
       await matricularCurso(course.id, courses.value);
       await refrescarCursosTrasMatricula();
+      toast.success("Inscripción lista. Ya puedes entrar al curso.");
       await router.push(`/tukuy-academy/aprendizaje/${course.id}`);
       return;
     }
@@ -373,16 +455,19 @@ async function openSimuladorCurso(course: Course) {
     if (cursoPuedeInscribirseGratis(course)) {
       await matricularCurso(course.id, courses.value);
       await refrescarCursosTrasMatricula();
+      toast.success("Inscripción lista. Ya puedes entrar al curso.");
       await router.push(`/tukuy-academy/aprendizaje/${course.id}`);
       return;
     }
   } catch (causa) {
-    mensajeAccesoCurso.value = mensajeErrorMatricula(causa);
+    avisarAcceso(mensajeErrorMatricula(causa), "error");
     return;
   }
 
-  mensajeAccesoCurso.value =
-    "No tienes acceso a este curso todavía. Revisa el detalle o el carrito.";
+  avisarAcceso(
+    "No tienes acceso a este curso todavía. Revisa el detalle o el carrito.",
+    "warning",
+  );
   verDetalleCurso(course);
 }
 
@@ -439,6 +524,8 @@ const portalContext = {
   scopeFilter,
   dateFilter,
   coursesLoading,
+  coursesError,
+  metaCatalogoAlumno,
   jobsLoading,
   contentLoading,
   openingCertificateId,
@@ -455,7 +542,7 @@ const portalContext = {
   removeFromCart,
   clearCart,
   isFavorite,
-  toggleFavorite,
+  toggleFavorite: handleToggleFavorite,
   handleViewCertificate,
   handleDownloadCertificate,
   openSimuladorCurso,
@@ -501,4 +588,24 @@ providePortalContext(portalContext);
       variant="light"
     />
   </main>
+
+  <div
+    v-else
+    class="grid min-h-[70vh] place-items-center bg-background px-6 text-center text-foreground"
+  >
+    <div class="grid max-w-md gap-3">
+      <h1 class="text-xl font-black">No se pudo cargar tu perfil</h1>
+      <p class="text-sm text-muted-foreground">
+        Recarga la página o vuelve a iniciar sesión. Si el problema continúa,
+        revisa que la sesión de Supabase esté activa.
+      </p>
+      <button
+        type="button"
+        class="mx-auto mt-2 border border-border bg-primary px-4 py-2 text-sm font-bold text-primary-foreground"
+        @click="router.push('/login')"
+      >
+        Ir al login
+      </button>
+    </div>
+  </div>
 </template>

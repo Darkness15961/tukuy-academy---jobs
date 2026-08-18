@@ -18,8 +18,9 @@ export interface ActividadRevisionCurso {
   titulo: string;
   tipo: TipoActividadRevision;
   tipoEtiqueta: string;
-  /** Enlace YouTube cuando es video. */
+  /** Enlace del video (YouTube, TikTok o Drive). */
   urlYoutube?: string;
+  fuenteVideo?: "youtube" | "tiktok" | "drive";
   totalPreguntas?: number;
 }
 

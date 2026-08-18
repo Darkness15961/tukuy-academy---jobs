@@ -5,6 +5,7 @@ import { computed } from "vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
+import { cursoEsDePago } from "@/lib/acceso-curso";
 import type { Course } from "@/types/academia";
 
 const props = defineProps<{
@@ -21,12 +22,12 @@ const emit = defineEmits<{
 }>();
 
 const priceLabel = computed(() => {
-  if (props.course.pricing === "free") return "Gratis";
+  if (!cursoEsDePago(props.course)) return "Gratis";
   return `S/ ${props.course.price ?? 0}`;
 });
 
 const pricingBadgeClass = computed(() => {
-  if (props.course.pricing === "free")
+  if (!cursoEsDePago(props.course))
     return "border-border bg-muted text-muted-foreground";
   return "border-border bg-card text-foreground";
 });
@@ -75,7 +76,7 @@ const statusBadgeClass = computed(() => {
           :class="pricingBadgeClass"
           variant="outline"
         >
-          {{ course.pricing === "free" ? "Gratis" : "De pago" }}
+          {{ cursoEsDePago(course) ? "De pago" : "Gratis" }}
         </Badge>
         <Badge
           v-if="course.status !== 'Disponible'"
@@ -103,7 +104,7 @@ const statusBadgeClass = computed(() => {
       <strong
         class="text-sm"
         :class="
-          course.pricing === 'free' ? 'text-emerald-700 dark:text-emerald-400' : 'text-foreground'
+          !cursoEsDePago(course) ? 'text-emerald-700 dark:text-emerald-400' : 'text-foreground'
         "
       >
         {{ priceLabel }}
@@ -116,7 +117,7 @@ const statusBadgeClass = computed(() => {
         Continuar
       </Button>
       <Button
-        v-else-if="course.pricing === 'paid'"
+        v-else-if="cursoEsDePago(course)"
         size="sm"
         :variant="inCart ? 'outline' : 'default'"
         @click="emit('addToCart')"

@@ -20,9 +20,8 @@ import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import Skeleton from "primevue/skeleton";
-import { useToast } from "primevue/usetoast";
+import { toast } from "@/lib/toast";
 
-const toast = useToast();
 const filtro = ref<"PENDIENTES" | "REVISADAS">("PENDIENTES");
 const cargando = ref(true);
 const guardando = ref(false);
@@ -83,11 +82,9 @@ async function verArchivo(entrega: EntregaActividadAcademica) {
   try {
     await academicoService.abrirArchivo(entrega);
   } catch (error) {
-    toast.add({
-      severity: "error",
-      summary: "No se pudo abrir el PDF",
-      detail: error instanceof Error ? error.message : "Error desconocido",
-      life: 5000,
+    toast.error("No se pudo abrir el PDF", {
+      description: error instanceof Error ? error.message : "Error desconocido",
+      duration: 5000,
     });
   }
 }
@@ -96,11 +93,9 @@ async function bajarArchivo(entrega: EntregaActividadAcademica) {
   try {
     await academicoService.descargarArchivo(entrega);
   } catch (error) {
-    toast.add({
-      severity: "error",
-      summary: "No se pudo descargar el PDF",
-      detail: error instanceof Error ? error.message : "Error desconocido",
-      life: 5000,
+    toast.error("No se pudo descargar el PDF", {
+      description: error instanceof Error ? error.message : "Error desconocido",
+      duration: 5000,
     });
   }
 }

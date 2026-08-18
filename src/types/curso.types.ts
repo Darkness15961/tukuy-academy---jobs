@@ -51,7 +51,7 @@ export type CourseSection = {
 export type InstructorCursoPublico = {
   nombre: string;
   cargo: string;
-  foto: string;
+  foto?: string;
   biografia: string;
   experiencia: string[];
 };

@@ -310,8 +310,10 @@ export interface BorradorCursoDocente {
       id?: string;
       titulo: string;
       tipo: "lectura" | "video" | "quiz" | "assignment";
-      /** Enlace YouTube anclado (solo ítems tipo video). */
+      /** Enlace del video (YouTube, TikTok o Drive). */
       urlYoutube?: string;
+      /** Origen del enlace. Si falta, se detecta por la URL. */
+      fuenteVideo?: "youtube" | "tiktok" | "drive";
       preguntas?: Array<{
         question: string;
         options: string[];

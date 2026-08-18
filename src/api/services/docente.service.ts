@@ -7,7 +7,9 @@ import {
   crearRepositorioLocal,
 } from "@/api/repositorio-local";
 import { CONTEXTO_SESION_KEY } from "@/lib/constants";
+import { env } from "@/lib/env";
 import { mapearCursoSecundariaADocente, mapearDocumentoABorrador, mapearSesionSecundariaADocente } from "@/api/services/mapper-curso-secundaria";
+import { perfilDocenteService } from "@/api/services/perfil-docente.service";
 import { secundariaGatewayService } from "@/api/services/secundaria-gateway.service";
 import { sesionesEnVivoCompartidas } from "@/api/services/sesiones-en-vivo-compartidas.service";
 import {
@@ -64,8 +66,11 @@ type RegistroIdentificable = { id: Identificador };
 
 export interface ConfiguracionDocente {
   nombre: string;
+  cargo: string;
   especialidad: string;
   biografia: string;
+  experiencia: string[];
+  fotoUrl?: string;
   avisos: boolean;
   autenticacionDosPasos: boolean;
   alertasInicioSesion: boolean;
@@ -155,6 +160,28 @@ function normalizar(texto: string) {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase();
+}
+
+function cursoEsDelDocenteActual(
+  curso: CursoDocente,
+  contexto: ContextoSesion,
+) {
+  const yo = contexto.usuarioId?.trim();
+  if (!yo) return false;
+  if (curso.docenteResponsableId && curso.docenteResponsableId === yo) {
+    return true;
+  }
+  const asignados = contexto.alcance?.cursoIds;
+  return Boolean(asignados?.length && asignados.includes(curso.id));
+}
+
+/** Org-admin ve el catálogo institucional; el docente solo lo suyo. */
+function limitarCursosSegunPortal(
+  cursos: CursoDocente[],
+  contexto: ContextoSesion,
+) {
+  if (contexto.portal !== "docente") return cursos;
+  return cursos.filter((curso) => cursoEsDelDocenteActual(curso, contexto));
 }
 
 function cursosDelContexto(contexto: ContextoSesion): CursoDocente[] {
@@ -360,7 +387,9 @@ const cursos = {
         mapearCursoSecundariaADocente(curso, contexto),
       );
       const observados = base.filter((curso) => curso.estado === "OBSERVADO");
-      if (!observados.length) return base;
+      if (!observados.length) {
+        return limitarCursosSegunPortal(base, contexto);
+      }
 
       const enriquecidos = await Promise.all(
         observados.map(async (curso) => {
@@ -382,7 +411,10 @@ const cursos = {
         }),
       );
       const porId = new Map(enriquecidos.map((c) => [c.id, c]));
-      return base.map((curso) => porId.get(curso.id) ?? curso);
+      return limitarCursosSegunPortal(
+        base.map((curso) => porId.get(curso.id) ?? curso),
+        contexto,
+      );
     }
 
     const registros = await cursosRepositorio.listar();
@@ -686,6 +718,7 @@ function mapearCertificadoPendienteSecundaria(
 
 async function persistirPdfCertificadoEmitido(
   certificado: CertificadoEmitidoDocente,
+  opciones: { logoEntidadUrl?: string | null } = {},
 ): Promise<CertificadoEmitidoDocente> {
   const certificadoId = certificado.certificadoId || certificado.id;
   const codigo =
@@ -696,6 +729,29 @@ async function persistirPdfCertificadoEmitido(
   try {
     const { blobCertificatePdf } = await import("@/lib/certificado-pdf");
     const { storageAcademia } = await import("@/lib/storage-academia");
+    const { plantillasCertificadoService } = await import(
+      "@/api/services/plantillas-certificado.service"
+    );
+    const { INSTALACION_TUKUY_ACADEMY_ID, CONTEXTO_SESION_KEY } = await import(
+      "@/lib/constants"
+    );
+
+    let instalacionId = INSTALACION_TUKUY_ACADEMY_ID;
+    try {
+      const raw = localStorage.getItem(CONTEXTO_SESION_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as { organizacionId?: string };
+        if (parsed.organizacionId?.trim()) {
+          instalacionId = parsed.organizacionId.trim();
+        }
+      }
+    } catch {
+      /* usa Tukuy Academy */
+    }
+
+    const plantilla =
+      await plantillasCertificadoService.obtenerDefault(instalacionId);
+
     const blob = await blobCertificatePdf({
       holderName: certificado.nombre,
       courseTitle: certificado.curso,
@@ -708,6 +764,8 @@ async function persistirPdfCertificadoEmitido(
       issuedAt: certificado.fecha,
       certificateCode: codigo,
       issuerName: certificado.organizacionEmisora ?? "Tukuy Academy",
+      issuerLogoUrl: opciones.logoEntidadUrl || undefined,
+      plantilla,
     });
     const archivo = new File(
       [blob],
@@ -715,10 +773,26 @@ async function persistirPdfCertificadoEmitido(
       { type: "application/pdf" },
     );
     const subida = await storageAcademia.subirCertificado(archivo);
+    const cantidadFirmantes =
+      plantilla?.layout?.cantidadFirmantesActiva ??
+      plantilla?.layout?.firmantes?.filter((f) => f.visible !== false).length ??
+      1;
     await secundariaGatewayService.actualizarDocumentoCertificado({
       certificadoId,
       claveAlmacenamiento: subida.objectKey,
       tamanoBytes: archivo.size,
+      datosPlantilla: plantilla
+        ? {
+            id: plantilla.id,
+            nombre: plantilla.nombre,
+            cantidadFirmantes:
+              cantidadFirmantes === 2 || cantidadFirmantes === 3
+                ? cantidadFirmantes
+                : 1,
+            versionPlantilla: `plantilla:${plantilla.id}:f${cantidadFirmantes}`,
+            instalacionId,
+          }
+        : null,
     });
     return {
       ...certificado,
@@ -998,10 +1072,12 @@ const actividades = {
 };
 
 const configuracionSemilla: ConfiguracionDocente = {
-  nombre: "Carlos Alberto",
-  especialidad: "Gestión y control de obras",
-  biografia:
-    "Profesional especialista en gestión digital, logística y control operativo de obras.",
+  nombre: "",
+  cargo: "",
+  especialidad: "",
+  biografia: "",
+  experiencia: [],
+  fotoUrl: undefined,
   avisos: true,
   autenticacionDosPasos: false,
   alertasInicioSesion: true,
@@ -1016,7 +1092,7 @@ function almacenConfiguracion() {
   return crearAlmacenDocumento(
     claveContextual("configuracion"),
     configuracionSemilla,
-    2,
+    3,
   );
 }
 
@@ -1093,7 +1169,27 @@ export const docenteService = {
   actividades,
 
   async obtenerConfiguracion(): Promise<ConfiguracionDocente> {
-    if (apiConfig.useMock) return almacenConfiguracion().leer();
+    const local = almacenConfiguracion().leer();
+    if (env.authProvider === "supabase") {
+      try {
+        const perfil = await perfilDocenteService.obtenerMio();
+        return {
+          ...configuracionSemilla,
+          ...local,
+          nombre: perfil.nombre || local.nombre,
+          cargo: perfil.cargo,
+          especialidad: perfil.especialidad,
+          biografia: perfil.biografia,
+          experiencia: perfil.experiencia.length
+            ? perfil.experiencia
+            : local.experiencia ?? [],
+          fotoUrl: perfil.fotoUrl,
+        };
+      } catch {
+        return { ...configuracionSemilla, ...local };
+      }
+    }
+    if (apiConfig.useMock) return local;
     const { data } = await api.get<ConfiguracionDocente>(
       API.docente.configuracion,
     );
@@ -1103,10 +1199,29 @@ export const docenteService = {
   async guardarConfiguracion(
     configuracion: ConfiguracionDocente,
   ): Promise<ConfiguracionDocente> {
+    const preferencias = almacenConfiguracion().guardar(configuracion);
+    if (env.authProvider === "supabase") {
+      const perfil = await perfilDocenteService.guardar({
+        nombre: configuracion.nombre,
+        cargo: configuracion.cargo,
+        especialidad: configuracion.especialidad,
+        biografia: configuracion.biografia,
+        experiencia: configuracion.experiencia,
+        fotoUrl: configuracion.fotoUrl,
+      });
+      return {
+        ...preferencias,
+        nombre: perfil.nombre,
+        cargo: perfil.cargo,
+        especialidad: perfil.especialidad,
+        biografia: perfil.biografia,
+        experiencia: perfil.experiencia,
+        fotoUrl: perfil.fotoUrl,
+      };
+    }
     if (apiConfig.useMock) {
-      const guardada = almacenConfiguracion().guardar(configuracion);
       emitirCambio("configuracion");
-      return guardada;
+      return preferencias;
     }
     const { data } = await api.put<ConfiguracionDocente>(
       API.docente.configuracion,
@@ -1351,6 +1466,17 @@ export const docenteService = {
       );
     }
     return cursos.actualizar(id, { estado: "ARCHIVADO", actualizado: "Ahora" });
+  },
+
+  async eliminarCurso(id: string) {
+    if (apiConfig.secundariaCursos) {
+      const resultado = await secundariaGatewayService.eliminarCurso(id);
+      return mapearCursoSecundariaADocente(
+        resultado.curso,
+        obtenerContextoActual(),
+      );
+    }
+    return this.archivarCurso(id);
   },
 
   async actualizarEstadoCurso(
@@ -1619,6 +1745,14 @@ export const docenteService = {
       `${emitido.nombre} · ${emitido.curso}`,
     );
     return emitido;
+  },
+
+  /** Genera PDF con plantilla default y guarda snapshot en el documento (emisión o auto-cert). */
+  async asegurarPdfCertificado(
+    certificado: CertificadoEmitidoDocente,
+    opciones: { logoEntidadUrl?: string | null } = {},
+  ) {
+    return persistirPdfCertificadoEmitido(certificado, opciones);
   },
 
   async listarPendientesFirma() {

@@ -19,6 +19,7 @@ import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { toast } from "@/lib/toast";
 
 const cargando = ref(true);
 const planes = ref<PlanPrincipal[]>([]);
@@ -115,7 +116,7 @@ async function guardarPlan() {
         { codigo: "ALMACENAMIENTO", limite: formularioPlan.almacenamiento, unidad: "GB" },
       ],
     });
-    dialogoPlan.value = false; mensaje.value = "El plan y sus límites fueron guardados."; await cargar();
+    dialogoPlan.value = false; toast.success("El plan y sus límites fueron guardados."); await cargar();
   } catch (causa) { error.value = causa instanceof Error ? causa.message : "No se pudo guardar el plan."; }
   finally { guardando.value = false; }
 }
@@ -135,7 +136,7 @@ async function guardarSuscripcion() {
   guardando.value = true; error.value = "";
   try {
     await planesLicenciasPrincipalService.guardarSuscripcion({ ...formularioSuscripcion, suscripcionId: formularioSuscripcion.suscripcionId || undefined });
-    dialogoSuscripcion.value = false; mensaje.value = `La suscripción de ${formularioSuscripcion.organizacion} fue actualizada.`; await cargar();
+    dialogoSuscripcion.value = false; toast.success(`La suscripción de ${formularioSuscripcion.organizacion} fue actualizada.`); await cargar();
   } catch (causa) { error.value = causa instanceof Error ? causa.message : "No se pudo guardar la suscripción."; }
   finally { guardando.value = false; }
 }

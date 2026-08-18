@@ -2,6 +2,15 @@ import { jsPDF } from "jspdf";
 import QRCode from "qrcode";
 
 import type { Course, UserProfile } from "@/types/academia";
+import type { PlantillaCertificado } from "@/lib/plantilla-certificado";
+import {
+  layoutDeModelo,
+  type CantidadFirmantesCertificado,
+} from "@/lib/plantilla-certificado";
+import {
+  dataUrlMediaCacheada,
+  urlPublicaMedia,
+} from "@/lib/storage-academia";
 
 export type CertificateData = {
   holderName: string;
@@ -15,6 +24,10 @@ export type CertificateData = {
   verificationUrl?: string;
   issuerName?: string;
   issuerLogoUrl?: string;
+  /** Nombres/cargos al emitir (opcional; si falta, usa la plantilla). */
+  firmantes?: Array<{ nombre: string; cargo?: string }>;
+  /** Si hay plantilla org/docente, se usa fondo + posiciones. */
+  plantilla?: PlantillaCertificado | null;
 };
 
 const ISSUED_DATES: Record<string, string> = {
@@ -52,7 +65,210 @@ export function buildCertificateData(
   };
 }
 
+async function createCertificateDocumentFromPlantilla(
+  data: CertificateData,
+  plantilla: PlantillaCertificado,
+) {
+  const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const navy = { r: 7, g: 21, b: 43 };
+  const slate = { r: 71, g: 85, b: 105 };
+  const emitidos = data.firmantes?.length ?? 0;
+  const cantidadModelo = (
+    emitidos >= 3
+      ? 3
+      : emitidos === 2
+        ? 2
+        : emitidos === 1
+          ? 1
+          : (plantilla.layout.cantidadFirmantesActiva ?? 1)
+  ) as CantidadFirmantesCertificado;
+  const derivado = layoutDeModelo(plantilla.layout, cantidadModelo);
+  const campos = derivado.campos;
+  const firmantesLayout = derivado.firmantes;
+
+  const fondo = plantilla.fondoUrl?.trim()
+    ? await dataUrlMediaCacheada(plantilla.fondoUrl)
+    : "";
+  if (fondo) {
+    try {
+      const fondoData = fondo;
+      const formato = fondoData.includes("image/jpeg") ? "JPEG" : "PNG";
+      doc.addImage(fondoData, formato, 0, 0, pageWidth, pageHeight);
+    } catch {
+      doc.setFillColor(255, 255, 255);
+      doc.rect(0, 0, pageWidth, pageHeight, "F");
+    }
+  } else {
+    doc.setFillColor(255, 255, 255);
+    doc.rect(0, 0, pageWidth, pageHeight, "F");
+  }
+
+  const dibujarTexto = (
+    texto: string,
+    campo: {
+      xMm: number;
+      yMm: number;
+      fontSize?: number;
+      align?: "left" | "center" | "right";
+      visible?: boolean;
+    },
+    opciones: {
+      bold?: boolean;
+      color?: { r: number; g: number; b: number };
+      maxWidthMm?: number;
+    } = {},
+  ) => {
+    if (campo.visible === false) return;
+    doc.setFont("helvetica", opciones.bold ? "bold" : "normal");
+    doc.setFontSize(campo.fontSize ?? 11);
+    const color = opciones.color ?? navy;
+    doc.setTextColor(color.r, color.g, color.b);
+    const maxW = opciones.maxWidthMm ?? pageWidth - 40;
+    const lines = doc.splitTextToSize(texto, maxW);
+    doc.text(lines, campo.xMm, campo.yMm, {
+      align: campo.align ?? "center",
+    });
+  };
+
+  dibujarTexto(
+    campos.tituloDocumento.texto?.trim() ||
+      "CERTIFICADO DE RECONOCIMIENTO",
+    campos.tituloDocumento,
+    {
+      bold: true,
+      maxWidthMm: campos.tituloDocumento.widthMm ?? 220,
+    },
+  );
+  dibujarTexto(
+    campos.introduccion.texto?.trim() ||
+      `${data.issuerName ?? "Tukuy Academy"} certifica que`,
+    campos.introduccion,
+    {
+      color: slate,
+      maxWidthMm: campos.introduccion.widthMm ?? 200,
+    },
+  );
+  dibujarTexto(data.holderName, campos.titular, {
+    bold: true,
+    maxWidthMm: campos.titular.widthMm ?? 240,
+  });
+  dibujarTexto(data.courseTitle, campos.curso, {
+    bold: true,
+    maxWidthMm: campos.curso.widthMm ?? 230,
+  });
+  dibujarTexto(
+    `${data.category} · ${data.duration} · Nivel ${data.level} · ${data.mode}`,
+    campos.detalle,
+    { color: slate, maxWidthMm: campos.detalle.widthMm ?? 240 },
+  );
+  dibujarTexto(data.issuedAt, campos.fecha, {
+    color: slate,
+    maxWidthMm: campos.fecha.widthMm ?? 70,
+  });
+  dibujarTexto(data.certificateCode, campos.codigo, {
+    color: slate,
+    maxWidthMm: campos.codigo.widthMm ?? 75,
+  });
+
+  firmantesLayout.forEach((firma, indice) => {
+    if (firma.visible === false) return;
+    const emitido = data.firmantes?.[indice];
+    const nombre =
+      emitido?.nombre?.trim() ||
+      firma.nombreMostrar?.trim() ||
+      (indice === 0 ? data.issuerName?.trim() : "") ||
+      firma.etiqueta ||
+      "Firmante";
+    const cargo = emitido?.cargo?.trim() || firma.etiqueta || "";
+    const align = firma.align ?? "center";
+    const anchoLinea = firma.anchoLineaMm ?? 50;
+    const yLinea = firma.yMm - 7;
+    let x1 = firma.xMm - anchoLinea / 2;
+    let x2 = firma.xMm + anchoLinea / 2;
+    if (align === "left") {
+      x1 = firma.xMm;
+      x2 = firma.xMm + anchoLinea;
+    } else if (align === "right") {
+      x1 = firma.xMm - anchoLinea;
+      x2 = firma.xMm;
+    }
+    doc.setDrawColor(navy.r, navy.g, navy.b);
+    doc.setLineWidth(0.35);
+    doc.line(x1, yLinea, x2, yLinea);
+
+    dibujarTexto(nombre, firma, {
+      bold: true,
+      maxWidthMm: anchoLinea + 10,
+    });
+    if (cargo) {
+      dibujarTexto(
+        cargo,
+        {
+          ...firma,
+          yMm: firma.yMm + 5,
+          fontSize: Math.max(7, (firma.fontSize ?? 10) - 2),
+        },
+        { color: slate, maxWidthMm: anchoLinea + 10 },
+      );
+    }
+  });
+
+  const logoUrl =
+    plantilla.logoOverrideUrl ||
+    (plantilla.usarLogoEntidad ? data.issuerLogoUrl : "") ||
+    "";
+  if (campos.logo.visible !== false && logoUrl) {
+    try {
+      const logoData = await loadImageAsDataUrl(urlPublicaMedia(logoUrl));
+      const formato = logoData.includes("image/jpeg") ? "JPEG" : "PNG";
+      doc.addImage(
+        logoData,
+        formato,
+        campos.logo.xMm,
+        campos.logo.yMm,
+        campos.logo.widthMm ?? 28,
+        campos.logo.heightMm ?? 18,
+      );
+    } catch {
+      /* logo opcional */
+    }
+  }
+
+  if (campos.qr.visible !== false) {
+    const verificationUrl =
+      data.verificationUrl ??
+      `${window.location.origin}/certificados/verificar/${encodeURIComponent(data.certificateCode)}`;
+    try {
+      const codigoQr = await QRCode.toDataURL(verificationUrl, {
+        width: 512,
+        margin: 1,
+        errorCorrectionLevel: "M",
+        color: { dark: "#071F52", light: "#FFFFFF" },
+      });
+      const size = campos.qr.widthMm ?? 28;
+      doc.addImage(
+        codigoQr,
+        "PNG",
+        campos.qr.xMm,
+        campos.qr.yMm,
+        size,
+        campos.qr.heightMm ?? size,
+      );
+    } catch {
+      /* qr opcional */
+    }
+  }
+
+  return doc;
+}
+
 async function createCertificateDocument(data: CertificateData) {
+  if (data.plantilla) {
+    return createCertificateDocumentFromPlantilla(data, data.plantilla);
+  }
+
   const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();

@@ -32,17 +32,20 @@ import IconoAyuda from "@/components/shared/IconoAyuda.vue";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { obtenerRevisionCursoMock } from "@/portal-organizacion/data/revision-cursos.mock";
-import type { RevisionAcademicaCurso } from "@/portal-organizacion/types/revision-curso.types";
+import type {
+  ActividadRevisionCurso,
+  RevisionAcademicaCurso,
+} from "@/portal-organizacion/types/revision-curso.types";
 import {
   etiquetasRequisitos,
   normalizarRequisitos,
 } from "@/lib/requisitos-curso";
 import { mapearSeccionesAModulosRevision } from "@/lib/mapear-revision-curso";
-import { useToast } from "primevue/usetoast";
+import { toast } from "@/lib/toast";
+import { etiquetaFuenteVideo } from "@/lib/video-curso";
 
 const route = useRoute();
 const router = useRouter();
-const toast = useToast();
 
 const cargando = ref(true);
 const procesando = ref(false);
@@ -81,7 +84,13 @@ function esUrlMaterial(url: string) {
   );
 }
 
-function actividadesDeModulo(modulo: RevisionAcademicaCurso["modulos"][number]) {
+function etiquetaFuente(actividad: ActividadRevisionCurso) {
+  return etiquetaFuenteVideo(actividad.fuenteVideo);
+}
+
+function actividadesDeModulo(
+  modulo: RevisionAcademicaCurso["modulos"][number],
+): ActividadRevisionCurso[] {
   if (modulo.actividadesDetalle?.length) return modulo.actividadesDetalle;
   return modulo.clases.map((titulo, i) => ({
     id: `${modulo.id}-clase-${i}`,
@@ -165,6 +174,9 @@ onMounted(async () => {
       lista.find((item) => item.cursoDocenteId === cursoId.value);
     if (!propuesta.value) {
       error.value = "No se encontró la propuesta de curso a revisar.";
+      toast.error("Propuesta no encontrada", {
+        description: error.value,
+      });
       return;
     }
     revision.value = await cargarRevisionAcademica(propuesta.value);
@@ -174,13 +186,25 @@ onMounted(async () => {
       confirmaciones.docente = true;
       confirmaciones.criterios = true;
     }
+  } catch (causa) {
+    error.value =
+      causa instanceof Error
+        ? causa.message
+        : "No se pudo cargar la revisión.";
+    toast.error("Error al cargar", { description: error.value });
   } finally {
     cargando.value = false;
   }
 });
 
 async function confirmarRevision() {
-  if (!propuesta.value || !revisionConfirmada.value) return;
+  if (!propuesta.value) return;
+  if (!revisionConfirmada.value) {
+    toast.warning("Completa la confirmación", {
+      description: "Marca las 4 casillas de revisión académica para continuar.",
+    });
+    return;
+  }
   procesando.value = true;
   try {
     if (propuesta.value.estado !== "CONTENIDO_REVISADO") {
@@ -189,27 +213,15 @@ async function confirmarRevision() {
           propuesta.value.id,
         );
     }
-    toast.add({
-      severity: "success",
-      summary: "Revisión confirmada",
-      detail: "Contenido revisado. Ya puedes definir precio y acceso.",
-      life: 4000,
+    toast.success("Revisión confirmada", {
+      description: "Contenido revisado. Ya puedes definir precio y acceso.",
     });
-    void router.push({
-      path: "/organizacion/cursos",
-      query: {
-        mensaje:
-          "Contenido revisado. Ya puedes definir precio y acceso en la tarjeta.",
-      },
-    });
+    void router.push("/organizacion/cursos");
   } catch (causa) {
     const mensaje =
       causa instanceof Error ? causa.message : "No se pudo confirmar la revisión.";
-    toast.add({
-      severity: "error",
-      summary: "No se pudo confirmar",
-      detail: mensaje,
-      life: 8000,
+    toast.error("No se pudo confirmar", {
+      description: mensaje,
     });
   } finally {
     procesando.value = false;
@@ -217,7 +229,13 @@ async function confirmarRevision() {
 }
 
 async function irAConfiguracionComercial() {
-  if (!propuesta.value || !revisionConfirmada.value) return;
+  if (!propuesta.value) return;
+  if (!revisionConfirmada.value) {
+    toast.warning("Completa la confirmación", {
+      description: "Marca las 4 casillas antes de definir precio y acceso.",
+    });
+    return;
+  }
   procesando.value = true;
   try {
     if (propuesta.value.estado !== "CONTENIDO_REVISADO") {
@@ -225,10 +243,18 @@ async function irAConfiguracionComercial() {
         await organizacionService.catalogoCursos.marcarContenidoRevisado(
           propuesta.value.id,
         );
+      toast.success("Revisión guardada", {
+        description: "Pasamos a precio y acceso.",
+      });
     }
     void router.push({
       path: `/organizacion/cursos/${propuesta.value.cursoDocenteId}/aprobacion`,
       query: { propuesta: propuesta.value.id },
+    });
+  } catch (causa) {
+    toast.error("No se pudo continuar", {
+      description:
+        causa instanceof Error ? causa.message : "Error al guardar la revisión.",
     });
   } finally {
     procesando.value = false;
@@ -236,16 +262,27 @@ async function irAConfiguracionComercial() {
 }
 
 async function confirmarObservacion() {
-  if (!propuesta.value || !observacion.value.trim()) return;
+  if (!propuesta.value) return;
+  if (!observacion.value.trim()) {
+    toast.warning("Escribe las observaciones", {
+      description: "El docente necesita el detalle de lo observado.",
+    });
+    return;
+  }
   procesando.value = true;
   try {
     await organizacionService.catalogoCursos.observar(
       propuesta.value.id,
       observacion.value.trim(),
     );
-    void router.push({
-      path: "/organizacion/cursos",
-      query: { mensaje: "Observaciones enviadas al docente." },
+    toast.success("Observaciones enviadas", {
+      description: "El docente recibió el feedback de contenido.",
+    });
+    void router.push("/organizacion/cursos");
+  } catch (causa) {
+    toast.error("No se pudieron enviar las observaciones", {
+      description:
+        causa instanceof Error ? causa.message : "Intenta de nuevo.",
     });
   } finally {
     procesando.value = false;
@@ -255,9 +292,9 @@ async function confirmarObservacion() {
 </script>
 
 <template>
-  <section class="mx-auto grid max-w-375 gap-6">
-    <header class="flex flex-wrap items-start justify-between gap-4">
-      <div>
+  <section class="mx-auto grid w-full max-w-375 gap-6 px-1 sm:px-0">
+    <header class="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
+      <div class="min-w-0">
         <Button
           variant="ghost"
           size="sm"
@@ -276,6 +313,7 @@ async function confirmarObservacion() {
       </div>
       <Badge
         v-if="propuesta"
+        class="w-fit shrink-0"
         :class="
           yaRevisado
             ? 'border-transparent bg-emerald-700 text-white'
@@ -305,25 +343,29 @@ async function confirmarObservacion() {
         acceso desde el catálogo o continuar aquí.
       </div>
 
-      <article class="grid gap-5 border border-border bg-card p-5 md:grid-cols-[220px_1fr]">
+      <article
+        class="grid gap-5 border border-border bg-card p-4 sm:p-5 lg:grid-cols-[minmax(12rem,14rem)_minmax(0,1fr)]"
+      >
         <img
           :src="propuesta.imagen"
           :alt="propuesta.titulo"
-          class="h-40 w-full object-cover md:h-full"
+          class="aspect-video h-auto w-full object-cover lg:aspect-auto lg:h-full lg:min-h-40"
         />
-        <div class="grid gap-3">
+        <div class="grid min-w-0 gap-3">
           <div>
-            <h2 class="text-2xl font-black md:text-3xl">{{ propuesta.titulo }}</h2>
+            <h2 class="text-xl font-black sm:text-2xl md:text-3xl">
+              {{ propuesta.titulo }}
+            </h2>
             <p class="mt-1 text-sm text-muted-foreground">
               Docente: {{ propuesta.docente }} · Versión {{ revision.version }} ·
               Enviado
               {{ new Date(revision.enviadaEn).toLocaleString("es-PE") }}
             </p>
           </div>
-          <div class="grid gap-3 sm:grid-cols-2">
+          <div class="grid gap-3 md:grid-cols-2">
             <div class="border border-border bg-muted/20 p-3 text-sm">
               <span class="text-muted-foreground">Descripción</span>
-              <p class="mt-1 font-medium">{{ revision.descripcion }}</p>
+              <p class="mt-1 font-medium break-words">{{ revision.descripcion }}</p>
             </div>
             <div class="border border-border bg-muted/20 p-3 text-sm">
               <span class="text-muted-foreground">Objetivos</span>
@@ -341,7 +383,9 @@ async function confirmarObservacion() {
                 </li>
               </ul>
             </div>
-            <div class="grid gap-2 border border-border bg-muted/20 p-3 text-sm sm:grid-cols-2">
+            <div
+              class="grid gap-3 border border-border bg-muted/20 p-3 text-sm sm:grid-cols-2"
+            >
               <div>
                 <span class="text-muted-foreground">Categoría propuesta</span><br />
                 <strong>{{ propuesta.categoria }}</strong>
@@ -433,7 +477,7 @@ async function confirmarObservacion() {
             <div
               v-for="actividad in actividadesDeModulo(modulo)"
               :key="actividad.id"
-              class="grid gap-2 border border-border bg-muted/15 px-3 py-3 sm:grid-cols-[1fr_auto] sm:items-center"
+              class="grid gap-2 border border-border bg-muted/15 px-3 py-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center"
             >
               <div class="flex min-w-0 items-start gap-3">
                 <span
@@ -471,7 +515,7 @@ async function confirmarObservacion() {
                 class="inline-flex items-center gap-1.5 text-xs font-bold text-primary hover:underline"
               >
                 <Link2 class="h-3.5 w-3.5" />
-                Abrir YouTube
+                Abrir {{ etiquetaFuente(actividad) }}
                 <ExternalLink class="h-3 w-3" />
               </a>
             </div>
@@ -524,16 +568,17 @@ async function confirmarObservacion() {
       </div>
 
       <aside
-        class="grid gap-4 border border-border border-t-4 border-t-accent bg-card p-5 lg:grid-cols-[1fr_auto] lg:items-end"
+        class="grid gap-5 border border-border border-t-4 border-t-accent bg-card p-4 sm:p-5"
       >
-        <div>
-          <div class="flex items-center gap-2">
+        <div class="min-w-0">
+          <div class="flex flex-wrap items-center gap-2">
             <h3 class="font-black">Confirmación de revisión académica</h3>
             <IconoAyuda
               texto="Marca lo revisado. Luego el curso queda a la espera de definir precio y acceso."
             />
           </div>
-          <div class="mt-4 grid gap-2 sm:grid-cols-2">
+          <!-- 1 col con sidebar org; 2 cols solo con ancho real suficiente -->
+          <div class="mt-4 grid grid-cols-1 gap-2 xl:grid-cols-2">
             <label
               v-for="(etiqueta, clave) in {
                 contenido: 'Contenido y objetivos revisados',
@@ -542,23 +587,26 @@ async function confirmarObservacion() {
                 criterios: 'Criterios de aprobación revisados',
               }"
               :key="clave"
-              class="flex items-center gap-3 border border-border bg-muted/20 px-3 py-3 text-sm font-bold"
+              class="flex min-w-0 items-start gap-3 border border-border bg-muted/20 px-3 py-3 text-sm font-bold leading-snug"
               :class="yaRevisado ? 'opacity-70' : ''"
             >
               <input
                 v-model="confirmaciones[clave as keyof typeof confirmaciones]"
                 type="checkbox"
-                class="h-4 w-4 accent-[var(--color-primary)]"
+                class="mt-0.5 h-4 w-4 shrink-0 accent-[var(--color-primary)]"
                 :disabled="yaRevisado"
               />
-              {{ etiqueta }}
+              <span class="min-w-0 flex-1 text-pretty">{{ etiqueta }}</span>
             </label>
           </div>
         </div>
-        <div class="flex flex-wrap gap-2">
+        <div
+          class="flex flex-col gap-2 border-t border-border pt-4 sm:flex-row sm:flex-wrap sm:justify-end"
+        >
           <Button
             v-if="!yaRevisado"
             variant="outline"
+            class="w-full sm:w-auto"
             @click="modalObservar = true"
           >
             <MessageSquareWarning class="h-4 w-4" />
@@ -566,7 +614,8 @@ async function confirmarObservacion() {
           </Button>
           <Button
             variant="outline"
-            :disabled="procesando || !revisionConfirmada"
+            class="w-full sm:w-auto"
+            :disabled="procesando"
             @click="confirmarRevision"
           >
             <CheckCircle2 class="h-4 w-4" />
@@ -577,7 +626,8 @@ async function confirmarObservacion() {
             }}
           </Button>
           <Button
-            :disabled="procesando || !revisionConfirmada"
+            class="w-full sm:w-auto"
+            :disabled="procesando"
             @click="irAConfiguracionComercial"
           >
             <BookOpenCheck class="h-4 w-4" />
@@ -591,7 +641,7 @@ async function confirmarObservacion() {
       v-model:visible="modalObservar"
       modal
       header="Observar contenido"
-      :style="{ width: '32rem' }"
+      :style="{ width: 'min(32rem, calc(100vw - 2rem))' }"
     >
       <label class="grid gap-2 text-sm font-bold">
         Observaciones para el docente

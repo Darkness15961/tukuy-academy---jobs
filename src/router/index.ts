@@ -340,6 +340,22 @@ const router = createRouter({
           },
         },
         {
+          path: "certificados/diseno",
+          name: "diseno-certificado-organizacion",
+          component: () =>
+            import(
+              "@/portal-organizacion/views/PlantillasCertificadoOrganizacionView.vue"
+            ),
+          meta: {
+            titulo: "Diseño del certificado",
+            requiredPermission: "certificados.ver",
+          },
+        },
+        {
+          path: "certificados/plantillas",
+          redirect: { name: "diseno-certificado-organizacion" },
+        },
+        {
           path: "equipos",
           name: "equipos-organizacion",
           component: () =>
@@ -517,6 +533,23 @@ const router = createRouter({
           },
         },
         {
+          path: "anuncios-portal",
+          name: "anuncios-portal-organizacion",
+          component: () =>
+            import(
+              "@/portal-organizacion/views/BannersPortalOrganizacionView.vue"
+            ),
+          meta: {
+            titulo: "Anuncios del portal",
+            requiredPermission: "configuracion.editar",
+          },
+        },
+        // Alias antiguo
+        {
+          path: "carrusel-portal",
+          redirect: "/organizacion/anuncios-portal",
+        },
+        {
           path: "configuracion",
           name: "configuracion-organizacion",
           component: () =>
@@ -594,6 +627,15 @@ const router = createRouter({
             titulo: "Cursos y revisión",
             requiredPermission: "cursos.revisar",
           },
+        },
+        {
+          path: "certificados",
+          name: "certificados-admin",
+          component: () =>
+            import(
+              "@/administracion-tukuy/views/CertificadosAdministracionView.vue"
+            ),
+          meta: { titulo: "Certificados" },
         },
         {
           path: "planes-licencias",

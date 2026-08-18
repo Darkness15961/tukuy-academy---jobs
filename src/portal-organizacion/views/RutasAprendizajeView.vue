@@ -45,6 +45,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
+import { toast } from "@/lib/toast";
 import type {
   PoliticaCombinacionDescuentos,
   ReglaDescuentoCurso,
@@ -509,23 +510,21 @@ async function guardar() {
     };
     if (editandoId.value) {
       await organizacionService.rutas.actualizar(editandoId.value, datos);
-      mensaje.value = "Ruta actualizada.";
+      toast.success("Ruta actualizada.");
     } else {
       await organizacionService.rutas.crear({
         id: `ruta-${Date.now()}`,
         ...datos,
         progreso: 0,
       });
-      mensaje.value =
-        formulario.estado === "PUBLICADA"
+      toast.success(formulario.estado === "PUBLICADA"
           ? "Ruta creada y publicada."
-          : "Ruta creada como borrador.";
+          : "Ruta creada como borrador.");
     }
     modal.value = false;
     await cargar();
     setTimeout(() => {
-      mensaje.value = "";
-    }, 2800);
+          }, 2800);
   } catch (err) {
     error.value =
       err instanceof Error ? err.message : "No se pudo guardar la ruta.";
@@ -536,31 +535,28 @@ async function guardar() {
 
 async function publicar(ruta: RutaOrganizacion) {
   await organizacionService.rutas.actualizar(ruta.id, { estado: "PUBLICADA" });
-  mensaje.value = `“${ruta.nombre}” publicada.`;
+  toast.success(`“${ruta.nombre}” publicada.`);
   await cargar();
   setTimeout(() => {
-    mensaje.value = "";
-  }, 2500);
+      }, 2500);
 }
 
 async function archivar(ruta: RutaOrganizacion) {
   if (!window.confirm(`¿Archivar la ruta “${ruta.nombre}”?`)) return;
   await organizacionService.rutas.actualizar(ruta.id, { estado: "ARCHIVADA" });
-  mensaje.value = `“${ruta.nombre}” archivada.`;
+  toast.success(`“${ruta.nombre}” archivada.`);
   await cargar();
   setTimeout(() => {
-    mensaje.value = "";
-  }, 2500);
+      }, 2500);
 }
 
 async function eliminar(ruta: RutaOrganizacion) {
   if (!window.confirm(`¿Eliminar permanentemente “${ruta.nombre}”?`)) return;
   await organizacionService.rutas.eliminar(ruta.id);
-  mensaje.value = `Se eliminó “${ruta.nombre}”.`;
+  toast.success(`Se eliminó “${ruta.nombre}”.`);
   await cargar();
   setTimeout(() => {
-    mensaje.value = "";
-  }, 2500);
+      }, 2500);
 }
 </script>
 

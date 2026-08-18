@@ -1355,23 +1355,24 @@ export const academicoService = {
   ): Promise<VerificacionCertificadoAcademico | null> {
     if (apiConfig.secundariaCursos) {
       const { data, error } = await supabasePrincipal().rpc(
-        "verificar_certificado_publico",
-        { p_codigo: codigo },
+        "verificar_certificado_publico" as never,
+        { p_codigo: codigo } as never,
       );
       if (error) throw new Error(error.message);
       if (!data) return null;
+      const fila = data as Record<string, unknown>;
       return {
-        codigo: String(data.codigo ?? codigo),
-        estado: (data.estado as VerificacionCertificadoAcademico["estado"]) ||
+        codigo: String(fila.codigo ?? codigo),
+        estado: (fila.estado as VerificacionCertificadoAcademico["estado"]) ||
           "VIGENTE",
-        estudiante: String(data.estudiante ?? ""),
-        curso: String(data.curso ?? ""),
-        horasCertificadas: Number(data.horasCertificadas ?? 0),
-        notaFinal: Number(data.notaFinal ?? 0),
-        emitidoEn: String(data.emitidoEn ?? ""),
-        organizacion: String(data.organizacion ?? "Tukuy Academy"),
-        modulosCompletados: Number(data.modulosCompletados ?? 0),
-        versionPrograma: String(data.versionPrograma ?? "1"),
+        estudiante: String(fila.estudiante ?? ""),
+        curso: String(fila.curso ?? ""),
+        horasCertificadas: Number(fila.horasCertificadas ?? 0),
+        notaFinal: Number(fila.notaFinal ?? 0),
+        emitidoEn: String(fila.emitidoEn ?? ""),
+        organizacion: String(fila.organizacion ?? "Tukuy Academy"),
+        modulosCompletados: Number(fila.modulosCompletados ?? 0),
+        versionPrograma: String(fila.versionPrograma ?? "1"),
       };
     }
 

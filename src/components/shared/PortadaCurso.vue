@@ -1,43 +1,38 @@
 <script setup lang="ts">
-import { ChevronLeft, ChevronRight, Star } from "lucide-vue-next";
+import { ChevronLeft, ChevronRight } from "lucide-vue-next";
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
+import type { BannerPortalAlumno } from "@/api/services/portal-banners.service";
+import CapaFiltroBanner from "@/components/shared/CapaFiltroBanner.vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  enrichCourse,
-  formatCoursePrice,
-  formatCourseRating,
-  formatReviewCount,
-} from "@/lib/presentacion-curso";
-import type { Course } from "@/types/academia";
 
 const props = withDefaults(
   defineProps<{
-    courses: Course[];
+    slides: BannerPortalAlumno[];
     intervalMs?: number;
   }>(),
   { intervalMs: 5000 },
 );
 
 const emit = defineEmits<{
-  addToCart: [courseId: string];
-  continueCourse: [courseId: string];
+  cta: [slide: BannerPortalAlumno];
 }>();
 
 const activeIndex = ref(0);
 const isPaused = ref(false);
 
-const enrichedCourses = computed(() => props.courses.map(enrichCourse));
+const visibles = computed(() =>
+  props.slides.filter((s) => s.activo !== false && s.imagenUrl?.trim()),
+);
 
 let timer: ReturnType<typeof setInterval> | undefined;
 
 function startAutoplay() {
   stopAutoplay();
   timer = setInterval(() => {
-    if (!isPaused.value && enrichedCourses.value.length > 0) {
-      activeIndex.value =
-        (activeIndex.value + 1) % enrichedCourses.value.length;
+    if (!isPaused.value && visibles.value.length > 1) {
+      activeIndex.value = (activeIndex.value + 1) % visibles.value.length;
     }
   }, props.intervalMs);
 }
@@ -55,13 +50,13 @@ function goTo(index: number) {
 }
 
 function prev() {
-  const len = enrichedCourses.value.length;
+  const len = visibles.value.length;
   if (!len) return;
   goTo((activeIndex.value - 1 + len) % len);
 }
 
 function next() {
-  const len = enrichedCourses.value.length;
+  const len = visibles.value.length;
   if (!len) return;
   goTo((activeIndex.value + 1) % len);
 }
@@ -70,7 +65,7 @@ onMounted(startAutoplay);
 onBeforeUnmount(stopAutoplay);
 
 watch(
-  () => props.courses.length,
+  () => visibles.value.length,
   () => {
     activeIndex.value = 0;
     startAutoplay();
@@ -80,16 +75,15 @@ watch(
 
 <template>
   <section
-    v-if="enrichedCourses.length"
+    v-if="visibles.length"
     class="hero-banner relative w-full overflow-hidden bg-[#07152B]"
     @mouseenter="isPaused = true"
     @mouseleave="isPaused = false"
   >
-    <!-- Altura fija por aspect-ratio: evita saltos al cambiar de slide -->
     <div class="hero-banner__viewport relative w-full">
       <div
-        v-for="(course, i) in enrichedCourses"
-        :key="course.id"
+        v-for="(slide, i) in visibles"
+        :key="slide.id"
         class="absolute inset-0 transition-opacity duration-500 ease-out"
         :class="
           i === activeIndex
@@ -99,96 +93,72 @@ watch(
         :aria-hidden="i !== activeIndex"
       >
         <img
-          :src="course.image"
-          :alt="course.title"
+          :src="slide.imagenUrl"
+          :alt="slide.titulo"
           class="absolute inset-0 h-full w-full object-cover"
         />
-        <div
-          class="absolute inset-0 bg-linear-to-r from-[#07152B]/95 via-[#07152B]/70 to-[#0B3A78]/25"
-        />
-        <div
-          class="absolute inset-0 bg-linear-to-t from-[#07152B]/80 via-transparent to-[#07152B]/30"
-        />
+        <CapaFiltroBanner :estilo="slide.filtroImagen" />
 
         <div
-          class="relative flex h-full items-end px-5 pb-12 pt-6 sm:items-center sm:px-10 sm:pb-8 lg:px-14"
+          class="relative z-[1] flex h-full items-end px-5 pb-12 pt-6 sm:items-center sm:px-10 sm:pb-8 lg:px-14"
         >
           <div class="max-w-2xl">
             <p
+              v-if="slide.etiqueta"
               class="text-xs font-black uppercase tracking-[.25em] text-[#F5B400]"
             >
-              {{ course.category }}
+              {{ slide.etiqueta }}
             </p>
 
-            <div class="mt-3 flex flex-wrap items-center gap-2">
+            <div
+              v-if="slide.badges?.length"
+              class="mt-3 flex flex-wrap items-center gap-2"
+            >
               <Badge
-                v-if="course.bestseller"
-                class="rounded-none border-transparent bg-[#F5B400] text-[11px] font-black text-[#07152B]"
+                v-for="(badge, bi) in slide.badges"
+                :key="`${slide.id}-${bi}`"
+                class="rounded-none border-transparent text-[11px] font-black"
+                :class="
+                  bi === 0
+                    ? 'bg-[#F5B400] text-[#07152B]'
+                    : 'border border-white/25 bg-transparent text-white/85'
+                "
               >
-                Más vendido
+                {{ badge }}
               </Badge>
               <span
-                class="border border-white/25 px-2.5 py-1 text-[11px] font-bold text-white/85"
+                class="border border-white/25 px-2.5 py-1 text-[11px] font-bold uppercase text-white/85"
               >
-                {{ course.level }}
+                {{ slide.tipo }}
               </span>
+            </div>
+            <div v-else class="mt-3">
               <span
-                class="border border-white/25 px-2.5 py-1 text-[11px] font-bold text-white/85"
+                class="border border-white/25 px-2.5 py-1 text-[11px] font-bold uppercase text-white/85"
               >
-                {{ course.mode }}
+                {{ slide.tipo }}
               </span>
             </div>
 
             <h2
               class="mt-4 text-2xl font-black leading-tight text-white sm:text-3xl lg:text-4xl"
             >
-              {{ course.title }}
+              {{ slide.titulo }}
             </h2>
 
-            <p class="mt-2 text-sm leading-relaxed text-white/70 sm:text-base">
-              {{ course.duration }} · {{ course.instructor }}
+            <p
+              v-if="slide.subtitulo"
+              class="mt-2 text-sm leading-relaxed text-white/70 sm:text-base"
+            >
+              {{ slide.subtitulo }}
             </p>
 
-            <div class="mt-3 flex flex-wrap items-center gap-3">
-              <div
-                class="flex items-center gap-1 text-sm font-bold text-[#F5B400]"
-              >
-                <Star class="h-4 w-4 fill-current" />
-                <span>{{ formatCourseRating(course.rating!) }}</span>
-              </div>
-              <span class="text-xs text-white/50">
-                ({{ formatReviewCount(course.reviewCount!) }} valoraciones)
-              </span>
-              <strong class="text-lg font-black text-white">
-                {{ formatCoursePrice(course) }}
-              </strong>
-            </div>
-
-            <div class="mt-5 flex flex-wrap gap-3">
+            <div v-if="slide.ctaTexto?.trim()" class="mt-5 flex flex-wrap gap-3">
               <Button
-                v-if="
-                  course.progress > 0 ||
-                  course.status === 'En curso' ||
-                  course.status === 'Completado'
-                "
                 class="h-11 rounded-none bg-[#F5B400] px-6 font-bold text-[#07152B] hover:bg-amber-400"
-                @click="emit('continueCourse', course.id)"
+                @click="emit('cta', slide)"
               >
-                Continuar curso
-              </Button>
-              <Button
-                v-else-if="course.pricing === 'paid'"
-                class="h-11 rounded-none bg-[#F5B400] px-6 font-bold text-[#07152B] hover:bg-amber-400"
-                @click="emit('addToCart', course.id)"
-              >
-                Agregar
-              </Button>
-              <Button
-                v-else
-                class="h-11 rounded-none bg-[#F5B400] px-6 font-bold text-[#07152B] hover:bg-amber-400"
-                @click="emit('continueCourse', course.id)"
-              >
-                Inscribirme gratis
+                {{ slide.ctaTexto }}
               </Button>
             </div>
           </div>
@@ -196,80 +166,50 @@ watch(
       </div>
     </div>
 
-    <Button
-      class="absolute left-3 top-1/2 z-10 -translate-y-1/2 rounded-none bg-black/35 text-white hover:bg-black/55 active:-translate-y-1/2"
-      size="icon"
-      variant="ghost"
-      type="button"
-      aria-label="Curso anterior"
-      @click="prev"
-    >
-      <ChevronLeft class="h-5 w-5" />
-    </Button>
-    <Button
-      class="absolute right-3 top-1/2 z-10 -translate-y-1/2 rounded-none bg-black/35 text-white hover:bg-black/55 active:-translate-y-1/2"
-      size="icon"
-      variant="ghost"
-      type="button"
-      aria-label="Siguiente curso"
-      @click="next"
-    >
-      <ChevronRight class="h-5 w-5" />
-    </Button>
-
-    <div
-      class="absolute bottom-4 left-1/2 z-10 flex -translate-x-1/2 gap-2"
-    >
+    <template v-if="visibles.length > 1">
       <button
-        v-for="(course, i) in enrichedCourses"
-        :key="course.id"
         type="button"
-        class="relative h-1.5 overflow-hidden transition-all duration-300"
-        :class="
-          i === activeIndex
-            ? 'w-12 bg-[#F5B400]'
-            : 'w-8 bg-white/45 hover:bg-white/65'
-        "
-        :aria-label="`Ver curso ${i + 1}`"
-        @click="goTo(i)"
+        class="absolute left-3 top-1/2 z-10 grid h-9 w-9 -translate-y-1/2 place-items-center bg-black/40 text-white hover:bg-black/60"
+        aria-label="Anterior"
+        @click="prev"
       >
-        <span
-          v-if="i === activeIndex && !isPaused"
-          class="hero-dot-progress absolute inset-0 bg-[#F5B400]/70"
-          :style="{ animationDuration: `${intervalMs}ms` }"
-        />
+        <ChevronLeft class="h-5 w-5" />
       </button>
-    </div>
+      <button
+        type="button"
+        class="absolute right-3 top-1/2 z-10 grid h-9 w-9 -translate-y-1/2 place-items-center bg-black/40 text-white hover:bg-black/60"
+        aria-label="Siguiente"
+        @click="next"
+      >
+        <ChevronRight class="h-5 w-5" />
+      </button>
+      <div
+        class="absolute bottom-4 left-1/2 z-10 flex -translate-x-1/2 gap-2"
+      >
+        <button
+          v-for="(_, i) in visibles"
+          :key="i"
+          type="button"
+          class="h-1 w-6 transition"
+          :class="i === activeIndex ? 'bg-[#F5B400]' : 'bg-white/40'"
+          :aria-label="`Slide ${i + 1}`"
+          @click="goTo(i)"
+        />
+      </div>
+    </template>
   </section>
 </template>
 
 <style scoped>
 .hero-banner__viewport {
-  aspect-ratio: 16 / 9;
+  aspect-ratio: 21 / 9;
+  min-height: 220px;
+  max-height: min(420px, 58vh);
 }
-
-@media (min-width: 640px) {
+@media (max-width: 640px) {
   .hero-banner__viewport {
-    aspect-ratio: 2.6 / 1;
+    aspect-ratio: 4 / 3;
+    max-height: 360px;
   }
-}
-
-@media (min-width: 1024px) {
-  .hero-banner__viewport {
-    aspect-ratio: 3.2 / 1;
-  }
-}
-
-@keyframes dot-fill {
-  from {
-    clip-path: inset(0 100% 0 0);
-  }
-  to {
-    clip-path: inset(0 0 0 0);
-  }
-}
-
-.hero-dot-progress {
-  animation: dot-fill linear forwards;
 }
 </style>

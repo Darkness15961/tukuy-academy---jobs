@@ -21,6 +21,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { toast } from "@/lib/toast";
 import { usePortalContext } from "../composables/usePortalContext";
 
 const portal = usePortalContext();
@@ -57,6 +58,7 @@ let saveTimeout: ReturnType<typeof setTimeout> | null = null;
 function simulateSave(section: string) {
   if (saveTimeout) clearTimeout(saveTimeout);
   savedMessage.value = section;
+  toast.success(`${section} actualizado correctamente`);
   saveTimeout = setTimeout(() => {
     savedMessage.value = "";
   }, 2500);
@@ -86,7 +88,7 @@ function simulateSave(section: string) {
               Ajustes de tu cuenta
             </h1>
             <p
-              class="mt-3 max-w-3xl text-sm leading-7 text-[#41516A] sm:text-base"
+              class="mt-3 max-w-3xl text-sm leading-7 text-muted-foreground sm:text-base"
             >
               Gestiona tu correo, contraseña, notificaciones y preferencias de
               seguridad para mantener tu cuenta protegida.

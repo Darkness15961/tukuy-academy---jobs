@@ -28,6 +28,7 @@ import type {
   UnidadOrganizacional,
   VinculacionUnidad,
 } from "@/portal-organizacion/types/estructura-organizacional.types";
+import { toast } from "@/lib/toast";
 
 type TipoAlumno = "TODOS" | "INTERNO" | "EXTERNO";
 type SeveridadEstado = "success" | "danger" | "info" | "warn";
@@ -283,10 +284,19 @@ function formatoFecha(fecha: string | null | undefined) {
 }
 
 async function aprobarPendientes(alumno: FilaAlumno) {
-  for (const matricula of alumno.matriculasPendientes) {
-    await organizacionService.aprobarSolicitudMatricula(matricula.id);
+  try {
+    for (const matricula of alumno.matriculasPendientes) {
+      await organizacionService.aprobarSolicitudMatricula(matricula.id);
+    }
+    await cargarPagina();
+    toast.success("Matrículas aprobadas", {
+      description: `${alumno.nombre}: acceso habilitado.`,
+    });
+  } catch (err) {
+    toast.error("No se pudo aprobar", {
+      description: err instanceof Error ? err.message : undefined,
+    });
   }
-  await cargarPagina();
 }
 
 function exportarResultados() {
@@ -320,6 +330,9 @@ function exportarResultados() {
   enlace.download = "alumnos-organizacion.csv";
   enlace.click();
   URL.revokeObjectURL(url);
+  toast.success("Exportación lista", {
+    description: "Se descargó el CSV de alumnos.",
+  });
 }
 </script>
 

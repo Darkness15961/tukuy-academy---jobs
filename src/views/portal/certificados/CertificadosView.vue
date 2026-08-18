@@ -24,6 +24,7 @@ import { academicoService } from "@/api/services/academico.service";
 import { secundariaGatewayService } from "@/api/services/secundaria-gateway.service";
 import type { Course } from "@/types/academia";
 import { downloadPortfolioPdf } from "@/lib/certificado-pdf";
+import { toast } from "@/lib/toast";
 import {
   reemplazarMetaCertificadosAlumno,
   type MetaCertificadoAlumno,
@@ -66,7 +67,7 @@ onMounted(async () => {
         title: item.curso,
         category: "Academia",
         duration: `${Number(item.horasCertificadas ?? 0) || 1} h`,
-        level: "Certificado",
+        level: "Intermedio",
         mode: "Virtual",
         progress: 100,
         status: "Completado",
@@ -83,6 +84,7 @@ onMounted(async () => {
     reemplazarMetaCertificadosAlumno(entradasMeta);
   } catch (error) {
     console.warn("No se pudieron cargar certificados del alumno", error);
+    toast.error("No se pudieron cargar tus certificados.");
   } finally {
     cargandoCertificados.value = false;
   }
@@ -219,9 +221,11 @@ async function handleDownloadPortfolio() {
         simulatedCertificates.value,
         portal.user.value,
       );
+      toast.success("Portafolio descargado.");
     }
   } catch (err) {
     console.error("Error downloading portfolio:", err);
+    toast.error("No se pudo descargar el portafolio.");
   } finally {
     isDownloadingPortfolio.value = false;
   }
@@ -254,6 +258,7 @@ async function handleVerifyCode() {
           mode: verificado.estado,
         },
       };
+      toast.success("Certificado verificado.");
       return;
     }
     if (verificado?.estado === "REVOCADO") {
@@ -262,6 +267,7 @@ async function handleVerifyCode() {
         message:
           "Este certificado fue revocado y ya no es válido para verificación pública.",
       };
+      toast.error(verificationResult.value.message);
       return;
     }
     verificationResult.value = {
@@ -269,6 +275,7 @@ async function handleVerifyCode() {
       message:
         "El código ingresado no corresponde a ningún certificado válido o emitido en la plataforma.",
     };
+    toast.error(verificationResult.value.message);
   } catch (causa) {
     verificationResult.value = {
       success: false,
@@ -277,6 +284,7 @@ async function handleVerifyCode() {
           ? causa.message
           : "No se pudo verificar el certificado en este momento.",
     };
+    toast.error(verificationResult.value.message);
   } finally {
     isVerifying.value = false;
   }

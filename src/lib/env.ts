@@ -13,6 +13,8 @@ type EnvConfig = {
    * sdk = checkout pop-up Token/Generate (izipay-session) legado.
    */
   pagoModo: "simulacion" | "dankira" | "sdk";
+  /** Checkout de cursos (carrito / Izipay). false = inscripción directa gratis. */
+  pasarelaCursos: boolean;
   isProduction: boolean;
 };
 
@@ -38,6 +40,7 @@ function readEnv(): EnvConfig {
       : pagoModoRaw === "sdk"
         ? "sdk"
         : "simulacion";
+  const pasarelaCursos = import.meta.env.VITE_PASARELA_CURSOS === "true";
 
   if (authProvider === "supabase") {
     if (!supabasePrimaryUrl || !supabasePrimaryAnonKey) {
@@ -76,6 +79,7 @@ function readEnv(): EnvConfig {
     useMock,
     secundariaCursos,
     pagoModo,
+    pasarelaCursos,
     isProduction,
   };
 }

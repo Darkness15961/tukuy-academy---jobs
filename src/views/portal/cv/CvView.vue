@@ -21,10 +21,14 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
+import { urlFotoPerfilReal } from "@/lib/foto-perfil";
 import { usePerfilLaboral } from "@/modulos/perfil-laboral/composables/usePerfilLaboral";
 import { useRouter } from "vue-router";
 
 const portal = usePerfilLaboral();
+const fotoPerfil = computed(() =>
+  urlFotoPerfilReal(portal.user.value?.avatarUrl),
+);
 const router = useRouter();
 
 const showUploadModal = ref(false);
@@ -448,10 +452,19 @@ const recommendedCourses = computed(() =>
               >
                 <div class="flex items-center gap-4">
                   <img
+                    v-if="fotoPerfil"
                     class="h-20 w-20 shrink-0 rounded-md border border-border bg-card object-cover shadow-sm ring-1 ring-border"
-                    src="/img/vistasimg/perfilfoto.png"
+                    :src="fotoPerfil"
                     :alt="portal.user.value.name"
+                    referrerpolicy="no-referrer"
                   />
+                  <div
+                    v-else
+                    class="grid h-20 w-20 shrink-0 place-items-center rounded-md border border-border bg-primary/10 text-xl font-black tracking-wide text-primary shadow-sm ring-1 ring-border"
+                    aria-hidden="true"
+                  >
+                    {{ portal.user.value.initials }}
+                  </div>
                   <div>
                     <p
                       class="text-xs font-semibold uppercase text-muted-foreground"

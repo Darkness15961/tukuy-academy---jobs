@@ -20,7 +20,8 @@ import { aprendizajeService } from "@/api/services/aprendizaje.service";
 import { useAuth } from "@/composables/useAuth";
 import { useCarrito } from "@/composables/useCarrito";
 import { useCursos } from "@/composables/useCursos";
-import { cursoEstaMatriculado } from "@/lib/acceso-curso";
+import { cursoEstaMatriculado, cursoEsDePago } from "@/lib/acceso-curso";
+import { inicialesNombre, urlFotoPerfilReal } from "@/lib/foto-perfil";
 import {
   enrichCourse,
   formatCourseRating,
@@ -132,7 +133,7 @@ function iniciarInscripcion() {
     return;
   }
 
-  if (cursoPresentado.value.pricing === "paid") {
+  if (cursoPresentado.value && cursoEsDePago(cursoPresentado.value)) {
     comprarAhora();
     return;
   }
@@ -144,6 +145,13 @@ function iniciarInscripcion() {
   }
   router.push({ name: "login", query: { continuar: destino } });
 }
+
+const fotoInstructor = computed(() =>
+  urlFotoPerfilReal(detalle.value?.instructor.foto),
+);
+const inicialesInstructor = computed(() =>
+  inicialesNombre(detalle.value?.instructor.nombre, "DO"),
+);
 </script>
 
 <template>
@@ -221,16 +229,23 @@ function iniciarInscripcion() {
 
             <div class="mt-8 flex items-center gap-4 border-l-4 border-[#F5B400] pl-5">
               <img
-                :src="detalle.instructor.foto"
+                v-if="fotoInstructor"
+                :src="fotoInstructor"
                 :alt="detalle.instructor.nombre"
                 class="h-14 w-14 object-cover"
               />
+              <div
+                v-else
+                class="grid h-14 w-14 place-items-center bg-[#F5B400]/20 text-sm font-black text-[#F5B400]"
+              >
+                {{ inicialesInstructor }}
+              </div>
               <div>
                 <p class="text-xs uppercase tracking-widest text-white/50">
                   Formación a cargo de
                 </p>
                 <p class="mt-1 font-bold">{{ detalle.instructor.nombre }}</p>
-                <p class="text-sm text-white/60">
+                <p v-if="detalle.instructor.cargo" class="text-sm text-white/60">
                   {{ detalle.instructor.cargo }}
                 </p>
               </div>
@@ -258,7 +273,7 @@ function iniciarInscripcion() {
 
             <div class="p-6">
               <div
-                v-if="cursoPresentado.pricing === 'paid'"
+                v-if="cursoPresentado && cursoEsDePago(cursoPresentado)"
                 class="flex flex-wrap items-end gap-3"
               >
                 <strong class="text-3xl font-black text-white">
@@ -283,7 +298,8 @@ function iniciarInscripcion() {
 
               <div
                 v-if="
-                  cursoPresentado.pricing === 'paid' &&
+                  cursoPresentado &&
+                  cursoEsDePago(cursoPresentado) &&
                   isAuthenticated &&
                   !yaMatriculado
                 "
@@ -314,7 +330,7 @@ function iniciarInscripcion() {
                 {{
                   yaMatriculado
                     ? "Continuar curso"
-                    : cursoPresentado.pricing === "paid"
+                    : cursoPresentado && cursoEsDePago(cursoPresentado)
                       ? "Iniciar sesión para comprar"
                       : isAuthenticated
                         ? "Inscribirme gratis"
@@ -415,25 +431,44 @@ function iniciarInscripcion() {
             </p>
             <div class="mt-5 flex items-center gap-4">
               <img
-                :src="detalle.instructor.foto"
+                v-if="fotoInstructor"
+                :src="fotoInstructor"
                 :alt="detalle.instructor.nombre"
                 class="h-24 w-24 object-cover"
               />
+              <div
+                v-else
+                class="grid h-24 w-24 place-items-center bg-[#0B3A78]/10 text-lg font-black text-[#0B3A78]"
+              >
+                {{ inicialesInstructor }}
+              </div>
               <div>
                 <h2 class="text-xl font-black">
                   {{ detalle.instructor.nombre }}
                 </h2>
-                <p class="mt-1 text-sm leading-5 text-[#52657A]">
+                <p
+                  v-if="detalle.instructor.cargo"
+                  class="mt-1 text-sm leading-5 text-[#52657A]"
+                >
                   {{ detalle.instructor.cargo }}
                 </p>
               </div>
             </div>
 
-            <p class="mt-6 text-sm leading-7 text-[#52657A]">
+            <p
+              v-if="detalle.instructor.biografia"
+              class="mt-6 text-sm leading-7 text-[#52657A]"
+            >
               {{ detalle.instructor.biografia }}
             </p>
+            <p v-else class="mt-6 text-sm leading-7 text-[#52657A]">
+              El docente aún no publicó su biografía.
+            </p>
 
-            <div class="mt-6 border-t border-[#E8EDF5] pt-5">
+            <div
+              v-if="detalle.instructor.experiencia.length"
+              class="mt-6 border-t border-[#E8EDF5] pt-5"
+            >
               <h3 class="font-black">Experiencia profesional</h3>
               <ul class="mt-4 grid gap-3">
                 <li

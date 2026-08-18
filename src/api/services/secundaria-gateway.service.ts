@@ -1,5 +1,6 @@
 import { useContextoSesion } from "@/composables/useContextoSesion";
 import { AUTH_TOKEN_KEY, INSTALACION_TUKUY_ACADEMY_ID } from "@/lib/constants";
+import { mensajeUsuarioDeError } from "@/lib/mensaje-error";
 import { supabasePrincipal } from "@/lib/supabase";
 import type {
   BootstrapAlumnoSecundaria,
@@ -64,6 +65,7 @@ const FRAGMENTOS_POR_ACCION: Record<string, FragmentoClave[] | "*"> = {
   "guardar-curso": ["cursos"],
   "publicar-curso": ["cursos"],
   "actualizar-estado-curso": ["cursos"],
+  "eliminar-curso": ["cursos"],
   "revisar-contenido": ["cursos"],
   "observar-curso": ["cursos"],
   "aprobar-curso": ["cursos"],
@@ -173,6 +175,9 @@ export function invalidarCacheSecundaria() {
   for (const k of [...revalidacionPorClave.keys()]) {
     if (k.startsWith(`${clave}:`)) revalidacionPorClave.delete(k);
   }
+  void import("@/lib/storage-academia")
+    .then((m) => m.invalidarCacheMedia())
+    .catch(() => undefined);
 }
 
 function invalidarPorMutacion(action: string) {
@@ -188,7 +193,7 @@ function invalidarPorMutacion(action: string) {
 export class ErrorGatewaySecundaria extends Error {
   code?: string;
   constructor(message: string, code?: string) {
-    super(message);
+    super(mensajeUsuarioDeError(message));
     this.name = "ErrorGatewaySecundaria";
     this.code = code;
   }
@@ -207,9 +212,9 @@ async function cuerpoErrorGateway(
     };
     if (!cuerpo.error && !cuerpo.code) return null;
     return {
-      message:
-        [cuerpo.error, cuerpo.details].filter(Boolean).join(" — ") ||
-        "La secundaria no respondió correctamente.",
+      message: mensajeUsuarioDeError(
+        cuerpo.error || "La secundaria no respondió correctamente.",
+      ),
       code: cuerpo.code,
     };
   };
@@ -229,7 +234,9 @@ async function cuerpoErrorGateway(
   }
 
   return {
-    message: error?.message || "La secundaria no respondió correctamente.",
+    message: mensajeUsuarioDeError(
+      error?.message || "La secundaria no respondió correctamente.",
+    ),
   };
 }
 
@@ -401,10 +408,16 @@ export const secundariaGatewayService = {
       if (existente) return existente;
       const promesa = invocar<BootstrapAlumnoSecundaria>("bootstrap-alumno")
         .then((data) => {
-          fusionarCache({
-            cursos: data.cursos,
-            misCursos: data.misCursos,
-          });
+          // No cachear respuestas con advertencias (RPC fallida → vacío engañoso).
+          const advertencias = (
+            data as { advertencias?: string[] }
+          ).advertencias;
+          if (!advertencias?.length) {
+            fusionarCache({
+              cursos: data.cursos,
+              misCursos: data.misCursos,
+            });
+          }
           return data;
         })
         .finally(() => {
@@ -895,6 +908,15 @@ export const secundariaGatewayService = {
     );
   },
 
+  async eliminarCurso(
+    cursoId: string,
+  ): Promise<{ ok: true; curso: CursoSecundaria }> {
+    return invocarMutacion<{ ok: true; curso: CursoSecundaria }>(
+      "eliminar-curso",
+      { cursoId },
+    );
+  },
+
   async listarCertificadosEmitidos() {
     return invocar<{
       ok: true;
@@ -937,17 +959,27 @@ export const secundariaGatewayService = {
     claveAlmacenamiento: string;
     tamanoBytes?: number;
     huellaDocumento?: string;
+    /** Snapshot plantilla Principal → datos_historicos.plantilla */
+    datosPlantilla?: {
+      id: string;
+      nombre?: string;
+      cantidadFirmantes?: number;
+      versionPlantilla?: string;
+      instalacionId?: string;
+    } | null;
   }) {
     return invocarMutacion<{
       ok: true;
       certificadoId: string;
       documentoId?: string;
       claveAlmacenamiento: string;
+      plantillaId?: string | null;
     }>("actualizar-documento-certificado", {
       certificadoId: entrada.certificadoId,
       claveAlmacenamiento: entrada.claveAlmacenamiento,
       tamanoBytes: entrada.tamanoBytes ?? null,
       huellaDocumento: entrada.huellaDocumento ?? null,
+      datosPlantilla: entrada.datosPlantilla ?? null,
     });
   },
 

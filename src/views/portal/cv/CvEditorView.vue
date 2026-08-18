@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { usePerfilLaboral } from "@/modulos/perfil-laboral/composables/usePerfilLaboral";
+import { toast } from "@/lib/toast";
 import type { WorkExperience } from "@/types/academia";
 
 const portal = usePerfilLaboral();
@@ -67,6 +68,7 @@ let saveTimeout: ReturnType<typeof setTimeout> | null = null;
 function showNotification(msg: string) {
   if (saveTimeout) clearTimeout(saveTimeout);
   savedMessage.value = msg;
+  toast.success(msg);
   saveTimeout = setTimeout(() => {
     savedMessage.value = "";
   }, 3000);

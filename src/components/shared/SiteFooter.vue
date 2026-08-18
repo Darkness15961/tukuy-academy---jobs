@@ -74,8 +74,8 @@ function handleFooterLink() {
             isDark ? 'text-white/65' : 'text-muted-foreground',
           ]"
         >
-          Plataforma simulada para capacitación, CV inteligente, certificados
-          verificables y oportunidades laborales para perfiles de obra.
+          Plataforma de capacitación, certificados verificables y empleabilidad
+          para perfiles de obra.
         </p>
 
         <div
@@ -85,7 +85,7 @@ function handleFooterLink() {
           ]"
         >
           <span class="h-2 w-2 rounded-full bg-emerald-400" />
-          Soporte demo disponible
+          Soporte disponible
         </div>
       </div>
 

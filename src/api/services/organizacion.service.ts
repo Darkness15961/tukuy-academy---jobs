@@ -502,7 +502,7 @@ function invalidarCachesOrganizacion(recurso?: string) {
     cacheSnapshotEstructura = null;
     inflightSnapshotEstructura = null;
     organizacionPrincipalService.invalidarOrganigrama(
-      contextoActual().organizacionId,
+      contextoActual().organizacionId ?? undefined,
     );
   }
   if (afectaUsuarios) {

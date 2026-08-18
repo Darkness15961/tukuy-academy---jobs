@@ -25,6 +25,7 @@ import {
   type CursoAdministrado,
 } from "@/api/services/administracion.service";
 import type { EstadoRevisionCurso } from "../data/administracion.mock";
+import { toast } from "@/lib/toast";
 
 type CursoRevision = CursoAdministrado;
 
@@ -61,9 +62,9 @@ async function sincronizarDesdeSecundaria() {
     const resultado =
       await administracionService.sincronizarCatalogoDesdeSecundaria();
     cursos.value = resultado.catalogo;
-    mensaje.value = resultado.publicadosAhora
+    toast.success(resultado.publicadosAhora
       ? `Se registraron ${resultado.publicadosAhora} curso(s) de la secundaria en el catálogo principal.`
-      : `Catálogo al día (${resultado.totalSecundaria} en secundaria).`;
+      : `Catálogo al día (${resultado.totalSecundaria} en secundaria).`);
   } catch (causa) {
     error.value =
       causa instanceof Error
@@ -131,7 +132,7 @@ async function aprobar(curso: CursoRevision) {
       estado: "APROBADO",
     });
     await cargar();
-    mensaje.value = `${curso.titulo} fue aprobado y publicado en el catálogo principal.`;
+    toast.success(`${curso.titulo} fue aprobado y publicado en el catálogo principal.`);
   } catch (causa) {
     error.value =
       causa instanceof Error ? causa.message : "No se pudo aprobar el curso.";
@@ -158,7 +159,7 @@ async function confirmarDecision() {
   await administracionService.cursos.actualizar(cursoSeleccionado.value.id, {
     estado: "OBSERVADO",
   });
-  mensaje.value = `${cursoSeleccionado.value.titulo} fue devuelto al docente con observaciones.`;
+  toast.success(`${cursoSeleccionado.value.titulo} fue devuelto al docente con observaciones.`);
   cursoSeleccionado.value = null;
   accionPendiente.value = null;
 }

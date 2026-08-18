@@ -25,6 +25,7 @@ import EditorPermisosAgrupados, {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { toast } from "@/lib/toast";
 import {
   accesosPrincipalService,
   type AccesoPrincipal,
@@ -405,13 +406,13 @@ async function guardarAcceso() {
         instalacionRef: formulario.instalacionRef,
         ...overrides,
       });
-      mensaje.value = `Perfil de ${formulario.correo} actualizado a ${perfilSeleccionado.value?.nombre ?? ""}.`;
+      toast.success(`Perfil de ${formulario.correo} actualizado a ${perfilSeleccionado.value?.nombre ?? ""}.`);
     } else {
       await accesosPrincipalService.asignar({
         ...formulario,
         ...overrides,
       });
-      mensaje.value = `Perfil ${perfilSeleccionado.value?.nombre ?? ""} asignado a ${formulario.correo}.`;
+      toast.success(`Perfil ${perfilSeleccionado.value?.nombre ?? ""} asignado a ${formulario.correo}.`);
       if (!identidadSeleccionada.value) pagina.value = 1;
     }
     dialogoAsignar.value = false;
@@ -430,21 +431,25 @@ async function guardarAcceso() {
 
 async function guardarPermisosAcceso() {
   const acceso = accesoSeleccionado.value;
-  if (!acceso?.funcionId || acceso.perfilCodigo === "SUPER_ADMIN") return;
+  const funcionId = acceso?.funcionId;
+  const perfilCodigo = acceso?.perfilCodigo;
+  if (!acceso || !funcionId || !perfilCodigo || perfilCodigo === "SUPER_ADMIN") {
+    return;
+  }
   guardandoPermisos.value = true;
   errorDialogo.value = "";
   try {
     const overrides = overridesDesdeSeleccion(
       permisosEditando.value,
-      acceso.perfilCodigo,
+      perfilCodigo,
     );
     await accesosPrincipalService.actualizar({
-      funcionId: acceso.funcionId,
-      perfilCodigo: acceso.perfilCodigo,
+      funcionId,
+      perfilCodigo,
       instalacionRef: acceso.instalacionRef,
       ...overrides,
     });
-    mensaje.value = `Permisos de ${acceso.perfilNombre} actualizados.`;
+    toast.success(`Permisos de ${acceso.perfilNombre} actualizados.`);
     await cargarIdentidades();
   } catch (causa) {
     errorDialogo.value =
@@ -461,7 +466,7 @@ async function alternarEstado(acceso: AccesoPrincipal) {
   const estado = acceso.estadoFuncion === "ACTIVA" ? "SUSPENDIDA" : "ACTIVA";
   try {
     await accesosPrincipalService.cambiarEstado(acceso.funcionId, estado);
-    mensaje.value = `${acceso.perfilNombre}: ${estado === "ACTIVA" ? "reactivado" : "suspendido"}.`;
+    toast.success(`${acceso.perfilNombre}: ${estado === "ACTIVA" ? "reactivado" : "suspendido"}.`);
     await cargarIdentidades();
   } catch (causa) {
     errorDialogo.value =
@@ -473,7 +478,7 @@ async function quitarAcceso(acceso: AccesoPrincipal) {
   if (!acceso.funcionId || acceso.perfilCodigo === "SUPER_ADMIN") return;
   try {
     await accesosPrincipalService.cambiarEstado(acceso.funcionId, "REVOCADA");
-    mensaje.value = `${acceso.perfilNombre} retirado de ${acceso.nombre}.`;
+    toast.success(`${acceso.perfilNombre} retirado de ${acceso.nombre}.`);
     if (accesoSeleccionado.value?.funcionId === acceso.funcionId) {
       accesoSeleccionado.value = null;
     }
@@ -639,7 +644,7 @@ onBeforeUnmount(() => {
               <div v-if="data.accesos.length" class="flex flex-wrap gap-1.5">
                 <Tag
                   v-for="acceso in data.accesos"
-                  :key="acceso.funcionId ?? acceso.perfilCodigo"
+                  :key="acceso.funcionId ?? acceso.perfilCodigo ?? acceso.identidadId"
                   :severity="acceso.estadoFuncion === 'ACTIVA' ? 'info' : 'secondary'"
                   :value="acceso.perfilNombre ?? 'Perfil'"
                 />
@@ -728,8 +733,8 @@ onBeforeUnmount(() => {
               Esta persona aún no tiene perfiles. Añade el primero.
             </div>
             <div
-              v-for="acceso in identidadSeleccionada.accesos"
-              :key="acceso.funcionId ?? acceso.perfilCodigo"
+              v-for="(acceso, indiceAcceso) in identidadSeleccionada.accesos"
+              :key="acceso.funcionId ?? acceso.perfilCodigo ?? `acceso-${indiceAcceso}`"
               role="button"
               tabindex="0"
               class="grid cursor-pointer gap-2 border border-border p-4 text-left transition hover:border-primary/40"

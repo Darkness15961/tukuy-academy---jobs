@@ -25,6 +25,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useContextoSesion } from "@/composables/useContextoSesion";
 import type { EstadoCursoDocente } from "@/portal-docente/types/docente.types";
+import { toast } from "@/lib/toast";
 
 const router = useRouter();
 const route = useRoute();
@@ -35,6 +36,8 @@ const cargando = ref(true);
 const cursos = ref<CursoDocente[]>([]);
 const menuCursoId = ref<string>();
 const cursoVistaPrevia = ref<CursoDocente>();
+const cursoPendienteEliminar = ref<CursoDocente>();
+const eliminandoCurso = ref(false);
 const aviso = ref("");
 const esGestionOrganizacion = computed(() =>
   route.path.startsWith("/organizacion/"),
@@ -79,9 +82,20 @@ const ambitoActivo = computed(() =>
 
 const cursosDelContexto = computed(() => {
   const idsAlcance = contextoActivo.value?.alcance?.cursoIds;
+  const usuarioId = contextoActivo.value?.usuarioId?.trim();
   return cursos.value.filter((curso) => {
     if (apiConfig.secundariaCursos) {
-      // La secundaria ya es el límite de la org; el alcance mock no aplica.
+      if (
+        !esGestionOrganizacion.value &&
+        contextoActivo.value?.portal === "docente"
+      ) {
+        const esAutor =
+          Boolean(usuarioId) && curso.docenteResponsableId === usuarioId;
+        const asignado = Boolean(
+          idsAlcance?.length && idsAlcance.includes(curso.id),
+        );
+        if (!esAutor && !asignado) return false;
+      }
       if (ambitoActivo.value === "INDEPENDIENTE") {
         return (
           curso.ambito === "INDEPENDIENTE" ||
@@ -190,11 +204,33 @@ async function duplicar(curso: CursoDocente) {
 }
 
 async function archivar(curso: CursoDocente) {
-  const archivado = await docenteService.archivarCurso(curso.id);
-  const indice = cursos.value.findIndex((item) => item.id === archivado.id);
-  if (indice >= 0) cursos.value[indice] = archivado;
+  cursoPendienteEliminar.value = curso;
   menuCursoId.value = undefined;
-  aviso.value = "El curso fue archivado y conserva todo su contenido.";
+}
+
+async function confirmarEliminarCurso() {
+  const curso = cursoPendienteEliminar.value;
+  if (!curso || eliminandoCurso.value) return;
+  eliminandoCurso.value = true;
+  try {
+    const eliminado = esGestionOrganizacion.value
+      ? await docenteService.archivarCurso(curso.id)
+      : await docenteService.eliminarCurso(curso.id);
+    const indice = cursos.value.findIndex((item) => item.id === eliminado.id);
+    if (indice >= 0) cursos.value[indice] = eliminado;
+    aviso.value =
+      "El curso quedó oculto del catálogo. Quienes ya estaban inscritos conservan su acceso.";
+    toast.success("Curso oculto del catálogo.");
+    cursoPendienteEliminar.value = undefined;
+  } catch (causa) {
+    toast.error(
+      causa instanceof Error
+        ? causa.message
+        : "No se pudo eliminar el curso.",
+    );
+  } finally {
+    eliminandoCurso.value = false;
+  }
 }
 </script>
 
@@ -308,10 +344,11 @@ async function archivar(curso: CursoDocente) {
               Duplicar curso
             </button>
             <button
+              v-if="curso.estado !== 'ARCHIVADO'"
               class="px-3 py-2 text-left text-red-600 hover:bg-red-500/10"
               @click="archivar(curso)"
             >
-              Archivar curso
+              Ocultar del catálogo
             </button>
           </div>
         </div>
@@ -424,6 +461,37 @@ async function archivar(curso: CursoDocente) {
           <Button @click="editarCurso(cursoVistaPrevia)"
             >Editar contenido</Button
           >
+        </div>
+      </article>
+    </div>
+
+    <div
+      v-if="cursoPendienteEliminar"
+      class="fixed inset-0 z-50 grid place-items-center bg-slate-950/70 p-4"
+      @click.self="cursoPendienteEliminar = undefined"
+    >
+      <article class="w-full max-w-lg border border-border bg-card p-6 shadow-2xl">
+        <h2 class="text-lg font-black">¿Ocultar este curso del catálogo?</h2>
+        <p class="mt-2 text-sm text-muted-foreground">
+          <strong class="text-foreground">{{ cursoPendienteEliminar.titulo }}</strong>
+          dejará de mostrarse a nuevos alumnos. Quienes ya están inscritos siguen
+          viendo el contenido, progreso y certificados.
+        </p>
+        <div class="mt-6 flex justify-end gap-2">
+          <Button
+            variant="outline"
+            :disabled="eliminandoCurso"
+            @click="cursoPendienteEliminar = undefined"
+          >
+            Cancelar
+          </Button>
+          <Button
+            variant="destructive"
+            :disabled="eliminandoCurso"
+            @click="confirmarEliminarCurso"
+          >
+            {{ eliminandoCurso ? "Ocultando…" : "Sí, ocultar" }}
+          </Button>
         </div>
       </article>
     </div>

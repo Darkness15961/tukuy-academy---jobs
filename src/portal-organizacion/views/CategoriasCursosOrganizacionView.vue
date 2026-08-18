@@ -15,6 +15,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useContextoSesion } from "@/composables/useContextoSesion";
 import type { CategoriaCursoEntidad } from "@/modulos/comunidad/types/entidad-publica.types";
+import { toast } from "@/lib/toast";
 import {
   categoriasCursosService,
   type CursoClasificadoEntidad,
@@ -100,8 +101,7 @@ onMounted(() => {
 
 async function crear() {
   error.value = "";
-  mensaje.value = "";
-  if (!puedeGestionar.value) {
+    if (!puedeGestionar.value) {
     error.value = "No tienes permiso para crear categorías.";
     return;
   }
@@ -113,7 +113,7 @@ async function crear() {
   try {
     const creada = await categoriasCursosService.crear({ ...formulario });
     await cargar();
-    mensaje.value = `Categoría “${creada.nombre}” creada.`;
+    toast.success(`Categoría “${creada.nombre}” creada.`);
     formulario.nombre = "";
     formulario.descripcion = "";
     formulario.color = "#0B3A78";
@@ -132,10 +132,9 @@ async function cambiarEstado(categoria: CategoriaCursoEntidad) {
   const estado = categoria.estado === "ACTIVA" ? "INACTIVA" : "ACTIVA";
   await categoriasCursosService.actualizar(categoria.id, { estado });
   await cargar();
-  mensaje.value =
-    estado === "ACTIVA"
+  toast.success(estado === "ACTIVA"
       ? `“${categoria.nombre}” activada.`
-      : `“${categoria.nombre}” desactivada.`;
+      : `“${categoria.nombre}” desactivada.`);
 }
 
 async function eliminar(categoria: CategoriaCursoEntidad) {
@@ -145,7 +144,7 @@ async function eliminar(categoria: CategoriaCursoEntidad) {
   try {
     await categoriasCursosService.eliminar(categoria.id);
     await cargar();
-    mensaje.value = `Se eliminó “${categoria.nombre}”.`;
+    toast.success(`Se eliminó “${categoria.nombre}”.`);
   } catch (err) {
     error.value =
       err instanceof Error ? err.message : "No se pudo eliminar.";

@@ -1,6 +1,7 @@
 import { computed, onMounted, ref } from "vue";
 
 import { cursosService } from "@/api/services/cursos.service";
+import { toast } from "@/lib/toast";
 import type { Course } from "@/types/academia";
 
 /** Estado compartido: evita refetch al remount y permite pintar con datos previos. */
@@ -26,8 +27,13 @@ async function fetchCourses(
     try {
       courses.value = await cursosService.getAll();
       cargadoUnaVez.value = true;
-    } catch {
+    } catch (causa) {
       error.value = "No se pudieron cargar los cursos";
+      toast.error(
+        causa instanceof Error
+          ? causa.message
+          : "No se pudieron cargar los cursos",
+      );
     } finally {
       loading.value = false;
       fetchEnCurso = null;
@@ -44,7 +50,12 @@ export function asegurarCursosCargados() {
 
 export function useCursos() {
   onMounted(() => {
-    void fetchCourses({ silencioso: cargadoUnaVez.value });
+    // Si quedó vacío (p. ej. secundaria sin publicados), reintentar al entrar.
+    const forzar = cargadoUnaVez.value && courses.value.length === 0;
+    void fetchCourses({
+      silencioso: cargadoUnaVez.value && !forzar,
+      forzar,
+    });
   });
 
   const completedCourses = computed(() =>

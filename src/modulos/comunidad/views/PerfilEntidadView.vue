@@ -21,7 +21,9 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCarrito } from "@/composables/useCarrito";
 import { matricularCurso } from "@/lib/acceso-curso";
+import { pasarelaCursosHabilitada } from "@/lib/pasarela-cursos";
 import { entidadesComunidadService } from "../services/entidades.service";
+import { toast } from "@/lib/toast";
 import type {
   CategoriaCursoEntidad,
   CursoPerfilEntidad,
@@ -141,10 +143,9 @@ async function matricular(curso: CursoPerfilEntidad) {
     // Habilita el reproductor del portal con el mismo id de catálogo.
     await matricularCurso(curso.id);
     matriculadosIds.value = new Set([...matriculadosIds.value, curso.id]);
-    mensaje.value =
-      matricula.origenAcceso === "APROBACION"
+    toast.success(matricula.origenAcceso === "APROBACION"
         ? `Solicitud de matrícula enviada para “${curso.titulo}”.`
-        : `Te inscribiste correctamente en “${curso.titulo}” como alumno ${matricula.condicionAlInscribirse.toLowerCase()}.`;
+        : `Te inscribiste correctamente en “${curso.titulo}” como alumno ${matricula.condicionAlInscribirse.toLowerCase()}.`);
   } catch (err) {
     error.value = err instanceof Error ? err.message : "No se pudo completar la matrícula.";
   } finally {
@@ -169,7 +170,7 @@ function estaInscrito(cursoId: string) {
 function etiquetaAccionCurso(curso: CursoPerfilEntidad) {
   if (estaInscrito(curso.id)) return "Continuar";
   if (cursoProcesando.value === curso.id) return "Procesando…";
-  if (curso.gratuito || curso.precio <= 0) return "Inscribirme";
+  if (curso.gratuito || curso.precio <= 0 || !pasarelaCursosHabilitada) return "Inscribirme";
   return isInCart(curso.id) ? "En carrito" : "Agregar";
 }
 
@@ -179,14 +180,13 @@ async function ejecutarAccionCurso(curso: CursoPerfilEntidad) {
     return;
   }
 
-  if (!curso.gratuito && curso.precio > 0) {
+  if (pasarelaCursosHabilitada && !curso.gratuito && curso.precio > 0) {
     if (isInCart(curso.id)) {
-      mensaje.value =
-        "Este curso ya está en tu carrito. Ábrelo desde el ícono para pagar.";
+      toast.success("Este curso ya está en tu carrito. Ábrelo desde el ícono para pagar.");
       return;
     }
     addToCart(curso.id);
-    mensaje.value = `“${curso.titulo}” se agregó al carrito. Sigue explorando o paga desde el ícono.`;
+    toast.success(`“${curso.titulo}” se agregó al carrito. Sigue explorando o paga desde el ícono.`);
     return;
   }
 
@@ -202,8 +202,7 @@ async function unirse() {
     return;
   }
   if (entidad.value.requiereDniEnrolamiento && !/^\d{8}$/.test(dniSolicitud.value.trim())) {
-    mensaje.value = "";
-    error.value = "Ingresa un DNI de 8 dígitos para continuar.";
+        error.value = "Ingresa un DNI de 8 dígitos para continuar.";
     return;
   }
   procesando.value = true;
@@ -216,7 +215,7 @@ async function unirse() {
         : undefined,
     );
     estado.value = resultado.estado;
-    mensaje.value = resultado.mensaje;
+    toast.success(resultado.mensaje);
     mostrarFormularioUnirse.value = false;
   } catch (err) {
     error.value =
@@ -231,7 +230,7 @@ async function contactar() {
   procesando.value = true;
   try {
     estado.value = await entidadesComunidadService.contactar(entidad.value.id);
-    mensaje.value = `Mensaje de contacto registrado para ${entidad.value.correoContacto}.`;
+    toast.success(`Mensaje de contacto registrado para ${entidad.value.correoContacto}.`);
   } finally {
     procesando.value = false;
   }

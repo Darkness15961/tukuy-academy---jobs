@@ -4,18 +4,22 @@ import {
   ErrorGatewaySecundaria,
   secundariaGatewayService,
 } from "@/api/services/secundaria-gateway.service";
+import { pasarelaCursosHabilitada } from "@/lib/pasarela-cursos";
+import { mensajeUsuarioDeError } from "@/lib/mensaje-error";
 import type { Course } from "@/types/academia";
 
 export { cursoEstadoVisibleEnCatalogoAlumno } from "@/lib/catalogo-alumno";
+export { cursoEsDePago, pasarelaCursosHabilitada } from "@/lib/pasarela-cursos";
 export { ErrorGatewaySecundaria };
 
 export function mensajeErrorMatricula(causa: unknown) {
-  if (causa instanceof ErrorGatewaySecundaria) {
-    if (causa.code === "NO_PUBLICADO") return causa.message;
+  if (causa instanceof ErrorGatewaySecundaria && causa.code === "NO_PUBLICADO") {
     return causa.message;
   }
-  if (causa instanceof Error && causa.message.trim()) return causa.message;
-  return "No se pudo completar la inscripción. Inténtalo de nuevo.";
+  return mensajeUsuarioDeError(
+    causa,
+    "No se pudo completar la inscripción. Inténtalo de nuevo.",
+  );
 }
 
 /** El alumno ya tiene acceso al reproductor (comprado, inscrito o en progreso). */
@@ -29,11 +33,13 @@ export function cursoEstaMatriculado(course: Pick<Course, "status" | "progress">
 
 /** Curso de pago sin matrícula: debe ir al carrito / checkout. */
 export function cursoRequiereCompra(course: Course) {
+  if (!pasarelaCursosHabilitada) return false;
   return course.pricing === "paid" && !cursoEstaMatriculado(course);
 }
 
-/** Curso gratuito sin matrícula: puede inscribirse directo. */
+/** Curso que puede inscribirse sin pasar por checkout. */
 export function cursoPuedeInscribirseGratis(course: Course) {
+  if (!pasarelaCursosHabilitada) return !cursoEstaMatriculado(course);
   return course.pricing === "free" && !cursoEstaMatriculado(course);
 }
 

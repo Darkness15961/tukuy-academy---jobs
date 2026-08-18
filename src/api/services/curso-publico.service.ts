@@ -2,9 +2,23 @@ import { api } from "@/api/client";
 import { apiConfig } from "@/api/config";
 import { API } from "@/api/endpoints";
 import { secundariaGatewayService } from "@/api/services/secundaria-gateway.service";
+import {
+  instructorDesdePerfil,
+  perfilDocenteService,
+} from "@/api/services/perfil-docente.service";
 import { resolveMock } from "@/api/mock";
 import { obtenerDetalleCursoPublico } from "@/portal-publico/data/detalles-cursos.mock";
-import type { Course, DetalleCursoPublico } from "@/types/academia";
+import type { Course, DetalleCursoPublico, InstructorCursoPublico } from "@/types/academia";
+
+function instructorVacio(nombre = "Docente del curso"): InstructorCursoPublico {
+  return {
+    nombre,
+    cargo: "",
+    foto: undefined,
+    biografia: "",
+    experiencia: [],
+  };
+}
 
 export const cursoPublicoService = {
   async obtenerDetalle(curso: Course): Promise<DetalleCursoPublico> {
@@ -17,21 +31,25 @@ export const cursoPublicoService = {
             modulos: [],
           })),
         ]);
-        const instructorNombre = curso.instructor?.trim() || "Docente del curso";
+        let instructor = instructorVacio(
+          curso.instructor?.trim() || "Docente del curso",
+        );
+        const autorRef = String(detalle.autorIdentidadRef ?? "").trim();
+        if (autorRef) {
+          try {
+            instructor = instructorDesdePerfil(
+              await perfilDocenteService.obtenerPublico(autorRef),
+            );
+          } catch {
+            instructor = instructorVacio(
+              curso.instructor?.trim() || instructor.nombre,
+            );
+          }
+        }
         return {
           cursoId: curso.id,
           videoPresentacion: "",
-          instructor: {
-            nombre: instructorNombre,
-            cargo: "Instructor",
-            foto:
-              "https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&w=200&q=80",
-            biografia:
-              detalle.resumen ||
-              curso.title ||
-              "Curso publicado en Tukuy Academy.",
-            experiencia: [],
-          },
+          instructor,
           modulos: (listadoModulos.modulos ?? []).map((modulo) => ({
             id: modulo.id,
             titulo: modulo.titulo,
@@ -39,7 +57,6 @@ export const cursoPublicoService = {
           })),
         };
       } catch {
-        // Si el id no es de secundaria, conserva el detalle mock de marketing.
         if (apiConfig.useMock) {
           return resolveMock(obtenerDetalleCursoPublico(curso));
         }

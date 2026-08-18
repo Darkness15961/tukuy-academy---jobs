@@ -9,7 +9,7 @@ import type { Job } from "@/types/academia";
 
 export const empleosService = {
   async getAll(): Promise<Job[]> {
-    if (apiConfig.useMock) {
+    if (apiConfig.useMock || apiConfig.sinDatosDemo) {
       return resolveMock(mapJobList(jobsMock));
     }
 

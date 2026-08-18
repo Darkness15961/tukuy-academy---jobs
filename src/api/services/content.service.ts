@@ -13,7 +13,7 @@ import type { CarouselSlide, TukuyModule, ViewId } from "@/types/academia";
 
 export const contentService = {
   async getNavItems(): Promise<{ id: ViewId; label: string }[]> {
-    if (apiConfig.useMock) {
+    if (apiConfig.useMock || apiConfig.sinDatosDemo) {
       return resolveMock(navItemsMock);
     }
 
@@ -22,7 +22,7 @@ export const contentService = {
   },
 
   async getCarouselSlides(): Promise<CarouselSlide[]> {
-    if (apiConfig.useMock) {
+    if (apiConfig.useMock || apiConfig.sinDatosDemo) {
       return resolveMock(carouselSlidesMock);
     }
 
@@ -31,7 +31,7 @@ export const contentService = {
   },
 
   async getTukuyModules(): Promise<TukuyModule[]> {
-    if (apiConfig.useMock) {
+    if (apiConfig.useMock || apiConfig.sinDatosDemo) {
       return resolveMock(tukuyModulesMock);
     }
 
@@ -40,7 +40,7 @@ export const contentService = {
   },
 
   async getHeroImage(): Promise<string> {
-    if (apiConfig.useMock) {
+    if (apiConfig.useMock || apiConfig.sinDatosDemo) {
       return resolveMock(heroImageMock);
     }
 

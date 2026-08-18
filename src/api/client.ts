@@ -2,6 +2,8 @@ import axios from "axios";
 
 import { apiConfig } from "@/api/config";
 import { env } from "@/lib/env";
+import { mensajeUsuarioDeError } from "@/lib/mensaje-error";
+import { toast } from "@/lib/toast";
 import {
   AUTH_TOKEN_KEY,
   CONTEXTO_SESION_KEY,
@@ -59,6 +61,20 @@ api.interceptors.response.use(
       if (!apiConfig.useMock && window.location.pathname !== "/login") {
         window.location.assign("/login");
       }
+    } else if (error.response?.status && error.response.status >= 400) {
+      const crudo =
+        (typeof error.response.data?.error === "string" &&
+          error.response.data.error) ||
+        (typeof error.response.data?.message === "string" &&
+          error.response.data.message) ||
+        error.message;
+      const mensaje = mensajeUsuarioDeError(crudo);
+      error.message = mensaje;
+      const omitirToast = Boolean(
+        (error.config as { skipErrorToast?: boolean } | undefined)
+          ?.skipErrorToast,
+      );
+      if (!omitirToast) toast.error(mensaje);
     }
     return Promise.reject(error);
   },

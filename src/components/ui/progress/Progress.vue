@@ -10,7 +10,7 @@ withDefaults(defineProps<{ modelValue?: number; class?: string }>(), {
   <div
     :class="
       cn(
-        'relative h-2 w-full overflow-hidden rounded-full bg-slate-200',
+        'relative h-2 w-full overflow-hidden rounded-full bg-muted',
         $props.class,
       )
     "

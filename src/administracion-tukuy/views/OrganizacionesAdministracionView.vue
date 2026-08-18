@@ -27,6 +27,7 @@ import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { toast } from "@/lib/toast";
 
 const cargando = ref(true);
 const organizaciones = ref<OrganizacionPrincipal[]>([]);
@@ -124,7 +125,7 @@ async function crearOrganizacion() {
   try {
     await operacionPrincipalService.crearOrganizacion({ ...alta });
     dialogoAlta.value = false;
-    mensaje.value = "Empresa, tenant, instalación y responsables creados. El aprovisionamiento secundario quedó pendiente.";
+    toast.success("Empresa, tenant, instalación y responsables creados. El aprovisionamiento secundario quedó pendiente.");
     await cargar();
   } catch (causa) {
     error.value = causa instanceof Error ? causa.message : "No se pudo crear la organización.";
@@ -150,7 +151,7 @@ async function guardarConexion() {
   guardandoConexion.value = true; error.value = "";
   try {
     await provisionamientoPrincipalService.configurar({ instalacionId: conexionOrganizacion.value.id, servidorRef: conexion.servidorRef, nombreBaseLogico: conexion.nombreBaseLogico, secretoRef: conexion.secretoRef, region: conexion.region, versionEsquema: conexion.versionEsquema });
-    conexion.estado = "PENDIENTE"; mensaje.value = "Conexión secundaria registrada. Falta cargar el secreto y verificarla."; await cargar();
+    conexion.estado = "PENDIENTE"; toast.success("Conexión secundaria registrada. Falta cargar el secreto y verificarla."); await cargar();
   } catch (causa) { error.value = causa instanceof Error ? causa.message : "No se pudo guardar la conexión."; }
   finally { guardandoConexion.value = false; }
 }
@@ -173,7 +174,7 @@ async function verificarConexion() {
       typeof salud.membresiasOrganizacion === "number"
         ? ` Membresías org: ${salud.membresiasOrganizacion}.`
         : "";
-    mensaje.value = `Secundaria ${salud.estado.toLowerCase()}: ${salud.tablasPublicas} tablas públicas y ${salud.accesosSincronizados} accesos sincronizados.${membresiasOrg}${extraSync}`;
+    toast.success(`Secundaria ${salud.estado.toLowerCase()}: ${salud.tablasPublicas} tablas públicas y ${salud.accesosSincronizados} accesos sincronizados.${membresiasOrg}${extraSync}`);
     await cargar();
   } catch (causa) {
     error.value =
@@ -189,7 +190,7 @@ async function inventariarSecundaria() {
   try {
     const inventario = await secundariaGatewayService.inventariar();
     inventarioTablas.value = inventario.tablas;
-    mensaje.value = `Inventario secundario: ${inventario.totalTablas} tablas públicas.`;
+    toast.success(`Inventario secundario: ${inventario.totalTablas} tablas públicas.`);
   } catch (causa) {
     error.value =
       causa instanceof Error ? causa.message : "No se pudo inventariar la secundaria.";
@@ -208,9 +209,9 @@ async function probarCursosSecundaria() {
       .slice(0, 3)
       .map((curso) => curso.titulo)
       .join(" · ");
-    mensaje.value = listado.total
+    toast.success(listado.total
       ? `Cursos tipados en secundaria: ${listado.total}.${titulos ? ` Ej.: ${titulos}` : ""}`
-      : "Cursos tipados en secundaria: 0 (tabla lista, sin filas o falta seed).";
+      : "Cursos tipados en secundaria: 0 (tabla lista, sin filas o falta seed).");
   } catch (causa) {
     error.value =
       causa instanceof Error ? causa.message : "No se pudieron leer cursos de la secundaria.";
@@ -236,7 +237,7 @@ async function cambiarModulo(modulo: ModuloPrincipal) {
   if (!organizacionModulos.value) return;
   try {
     await modulosPrincipalService.guardar(organizacionModulos.value.id, modulo);
-    mensaje.value = `${modulo.nombre} fue ${modulo.habilitado ? "habilitado" : "deshabilitado"}.`;
+    toast.success(`${modulo.nombre} fue ${modulo.habilitado ? "habilitado" : "deshabilitado"}.`);
     await cargar();
   } catch (causa) {
     modulo.habilitado = !modulo.habilitado;

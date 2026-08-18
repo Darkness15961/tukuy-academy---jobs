@@ -137,30 +137,83 @@ const logoEntidad = computed(() => {
   );
 });
 
-const navegacion = computed(() => [
-  { etiqueta: "Inicio", ruta: "/docente/inicio", icono: Home },
-  { etiqueta: "Mis cursos", ruta: "/docente/cursos", icono: BookOpen, permiso: "cursos.ver" },
-  { etiqueta: "Estudiantes", ruta: "/docente/estudiantes", icono: UsersRound, permiso: "estudiantes.ver" },
-  {
-    etiqueta: "Evaluaciones",
-    ruta: "/docente/evaluaciones",
-    icono: CheckSquare,
-    permiso: "evaluaciones.calificar",
-    contador: evaluacionesPendientes.value,
-  },
-  {
-    etiqueta: "Calificaciones",
-    ruta: "/docente/calificaciones",
-    icono: GraduationCap,
-    permiso: "calificaciones.gestionar",
-  },
-  { etiqueta: "Certificados", ruta: "/docente/certificados", icono: Award, permiso: "certificados.emitir" },
-  { etiqueta: "Sesiones", ruta: "/docente/sesiones", icono: Video, permiso: "sesiones.gestionar" },
-  { etiqueta: "Calendario en vivo", ruta: "/docente/calendario", icono: CalendarDays, permiso: "sesiones.gestionar" },
-  { etiqueta: "Mensajes", ruta: "/docente/mensajes", icono: MessageSquare, permiso: "mensajes.enviar" },
-  { etiqueta: "Analítica", ruta: "/docente/analitica", icono: BarChart3, permiso: "analitica.ver" },
-  { etiqueta: "Ingresos", ruta: "/docente/ingresos", icono: DollarSign, permiso: "ingresos.ver" },
-].filter((item) => !item.permiso || tienePermiso(item.permiso)));
+type ItemNavegacionDocente = {
+  etiqueta: string;
+  ruta: string;
+  icono: typeof Home;
+  permiso?: string;
+  contador?: number;
+  proximamente?: boolean;
+};
+
+const navegacion = computed((): ItemNavegacionDocente[] =>
+  (
+    [
+      { etiqueta: "Inicio", ruta: "/docente/inicio", icono: Home },
+      {
+        etiqueta: "Mis cursos",
+        ruta: "/docente/cursos",
+        icono: BookOpen,
+        permiso: "cursos.ver",
+      },
+      {
+        etiqueta: "Estudiantes",
+        ruta: "/docente/estudiantes",
+        icono: UsersRound,
+        permiso: "estudiantes.ver",
+      },
+      {
+        etiqueta: "Evaluaciones",
+        ruta: "/docente/evaluaciones",
+        icono: CheckSquare,
+        permiso: "evaluaciones.calificar",
+        contador: evaluacionesPendientes.value,
+      },
+      {
+        etiqueta: "Calificaciones",
+        ruta: "/docente/calificaciones",
+        icono: GraduationCap,
+        permiso: "calificaciones.gestionar",
+      },
+      {
+        etiqueta: "Certificados",
+        ruta: "/docente/certificados",
+        icono: Award,
+        permiso: "certificados.emitir",
+      },
+      {
+        etiqueta: "Sesiones",
+        ruta: "/docente/sesiones",
+        icono: Video,
+        permiso: "sesiones.gestionar",
+      },
+      {
+        etiqueta: "Calendario en vivo",
+        ruta: "/docente/calendario",
+        icono: CalendarDays,
+        permiso: "sesiones.gestionar",
+      },
+      {
+        etiqueta: "Mensajes",
+        ruta: "/docente/mensajes",
+        icono: MessageSquare,
+        permiso: "mensajes.enviar",
+      },
+      {
+        etiqueta: "Analítica",
+        ruta: "/docente/analitica",
+        icono: BarChart3,
+        permiso: "analitica.ver",
+      },
+      {
+        etiqueta: "Ingresos",
+        ruta: "/docente/ingresos",
+        icono: DollarSign,
+        permiso: "ingresos.ver",
+      },
+    ] satisfies ItemNavegacionDocente[]
+  ).filter((item) => !item.permiso || tienePermiso(item.permiso)),
+);
 
 const otrasFunciones = computed(() =>
   esDocenciaIndependiente.value

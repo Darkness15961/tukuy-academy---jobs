@@ -14,8 +14,10 @@ export type ItemAprendizaje = {
   questions?: number;
   grade?: number;
   description: string;
-  /** URL o ID de YouTube para ítems tipo video. */
+  /** URL del video (YouTube, TikTok o Drive). */
   videoUrl?: string;
+  /** Origen del video. Si falta, se detecta por la URL. */
+  videoFuente?: "youtube" | "tiktok" | "drive";
 };
 
 export type RecursoAprendizaje = {

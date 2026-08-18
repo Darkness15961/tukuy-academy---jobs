@@ -10,20 +10,23 @@ import {
   Star,
   Video,
 } from "lucide-vue-next";
-import { computed, ref, watch, watchEffect } from "vue";
+import { computed, nextTick, ref, watch, watchEffect } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 import { cursoPublicoService } from "@/api/services/curso-publico.service";
+import EsqueletoDetalleCurso from "@/components/shared/EsqueletoDetalleCurso.vue";
 import PortalSection from "@/components/shared/PortalSection.vue";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { Skeleton } from "@/components/ui/skeleton";
+import { asegurarCursosCargados } from "@/composables/useCursos";
 import {
   formatCourseRating,
   formatReviewCount,
   enrichCourse,
 } from "@/lib/presentacion-curso";
-import { cursoEstaMatriculado } from "@/lib/acceso-curso";
+import { cursoEstaMatriculado, cursoEsDePago } from "@/lib/acceso-curso";
+import { toast } from "@/lib/toast";
+import { inicialesNombre, urlFotoPerfilReal } from "@/lib/foto-perfil";
 import type { DetalleCursoPublico } from "@/types/academia";
 import { usePortalContext } from "../composables/usePortalContext";
 
@@ -47,24 +50,48 @@ const progreso = computed(() =>
 );
 
 const detalle = ref<DetalleCursoPublico | null>(null);
-const cargandoDetalle = ref(false);
+const cargandoVista = ref(true);
+const errorCarga = ref("");
 const moduloAbierto = ref<string | null>(null);
+let secuenciaCarga = 0;
 
-watch(
-  curso,
-  async (cursoActual) => {
-    detalle.value = null;
-    moduloAbierto.value = null;
-    if (!cursoActual) return;
-    cargandoDetalle.value = true;
-    try {
-      detalle.value = await cursoPublicoService.obtenerDetalle(cursoActual);
-    } finally {
-      cargandoDetalle.value = false;
+async function cargarVista() {
+  const seq = ++secuenciaCarga;
+  cargandoVista.value = true;
+  errorCarga.value = "";
+  detalle.value = null;
+  moduloAbierto.value = null;
+
+  try {
+    await asegurarCursosCargados();
+    await portal.sincronizarProgresosCursos();
+    await nextTick();
+    if (seq !== secuenciaCarga) return;
+
+    const cursoActual = portal.courses.value.find(
+      (item) => item.id === cursoId.value,
+    );
+    if (!cursoActual) {
+      errorCarga.value = "Este curso no está disponible";
+      toast.error(errorCarga.value);
+      return;
     }
-  },
-  { immediate: true },
-);
+
+    detalle.value = await cursoPublicoService.obtenerDetalle(cursoActual);
+    if (seq !== secuenciaCarga) return;
+  } catch (causa) {
+    if (seq !== secuenciaCarga) return;
+    errorCarga.value =
+      causa instanceof Error
+        ? causa.message
+        : "No se pudo cargar el detalle del curso.";
+    toast.error(errorCarga.value);
+  } finally {
+    if (seq === secuenciaCarga) cargandoVista.value = false;
+  }
+}
+
+watch(cursoId, () => void cargarVista(), { immediate: true });
 
 watchEffect(() => {
   if (!moduloAbierto.value && detalle.value?.modulos[0]) {
@@ -105,7 +132,7 @@ function accionPrincipal() {
     continuarCurso();
     return;
   }
-  if (cursoPresentado.value.pricing === "paid") {
+  if (cursoEsDePago(cursoPresentado.value)) {
     comprarAhora();
     return;
   }
@@ -116,9 +143,18 @@ const etiquetaPrincipal = computed(() => {
   if (yaMatriculado.value) {
     return progreso.value >= 100 ? "Revisar curso" : "Continuar curso";
   }
-  if (cursoPresentado.value?.pricing === "paid") return "Comprar ahora";
+  if (cursoPresentado.value && cursoEsDePago(cursoPresentado.value)) {
+    return "Comprar ahora";
+  }
   return "Inscribirme gratis";
 });
+
+const fotoInstructor = computed(() =>
+  urlFotoPerfilReal(detalle.value?.instructor.foto),
+);
+const inicialesInstructor = computed(() =>
+  inicialesNombre(detalle.value?.instructor.nombre, "DO"),
+);
 </script>
 
 <template>
@@ -198,16 +234,23 @@ const etiquetaPrincipal = computed(() => {
               class="mt-7 flex items-center gap-4 border-l-4 border-[#F5B400] pl-4"
             >
               <img
-                :src="detalle.instructor.foto"
+                v-if="fotoInstructor"
+                :src="fotoInstructor"
                 :alt="detalle.instructor.nombre"
                 class="h-12 w-12 object-cover"
               />
+              <div
+                v-else
+                class="grid h-12 w-12 place-items-center bg-[#F5B400]/20 text-xs font-black text-[#F5B400]"
+              >
+                {{ inicialesInstructor }}
+              </div>
               <div>
                 <p class="text-xs uppercase tracking-widest text-white/50">
                   Formación a cargo de
                 </p>
                 <p class="mt-0.5 font-bold">{{ detalle.instructor.nombre }}</p>
-                <p class="text-sm text-white/60">
+                <p v-if="detalle.instructor.cargo" class="text-sm text-white/60">
                   {{ detalle.instructor.cargo }}
                 </p>
               </div>
@@ -263,7 +306,7 @@ const etiquetaPrincipal = computed(() => {
                   Continúa desde donde lo dejaste.
                 </p>
               </template>
-              <template v-else-if="cursoPresentado.pricing === 'paid'">
+              <template v-else-if="cursoPresentado && cursoEsDePago(cursoPresentado)">
                 <div class="flex flex-wrap items-end gap-3">
                   <strong class="text-3xl font-black text-white">
                     {{ formatPrecio(cursoPresentado.price) }}
@@ -287,7 +330,7 @@ const etiquetaPrincipal = computed(() => {
               </strong>
 
               <div
-                v-if="cursoPresentado.pricing === 'paid' && !yaMatriculado"
+                v-if="cursoPresentado && cursoEsDePago(cursoPresentado) && !yaMatriculado"
                 class="mt-5 grid gap-2"
               >
                 <Button
@@ -317,13 +360,6 @@ const etiquetaPrincipal = computed(() => {
                 {{ etiquetaPrincipal }}
                 <ArrowRight class="h-4 w-4" />
               </Button>
-
-              <p
-                v-if="portal.mensajeAccesoCurso.value"
-                class="mt-3 text-sm text-[#F5B400]"
-              >
-                {{ portal.mensajeAccesoCurso.value }}
-              </p>
 
               <div class="mt-5 grid gap-2.5 border-t border-white/15 pt-4">
                 <p class="flex items-center gap-2 text-sm text-white/70">
@@ -424,25 +460,47 @@ const etiquetaPrincipal = computed(() => {
             </p>
             <div class="mt-4 flex items-center gap-4">
               <img
-                :src="detalle.instructor.foto"
+                v-if="fotoInstructor"
+                :src="fotoInstructor"
                 :alt="detalle.instructor.nombre"
                 class="h-20 w-20 object-cover"
               />
+              <div
+                v-else
+                class="grid h-20 w-20 place-items-center bg-primary/10 text-lg font-black text-primary"
+              >
+                {{ inicialesInstructor }}
+              </div>
               <div>
                 <h2 class="text-lg font-black text-foreground">
                   {{ detalle.instructor.nombre }}
                 </h2>
-                <p class="mt-1 text-sm leading-5 text-muted-foreground">
+                <p
+                  v-if="detalle.instructor.cargo"
+                  class="mt-1 text-sm leading-5 text-muted-foreground"
+                >
                   {{ detalle.instructor.cargo }}
                 </p>
               </div>
             </div>
 
-            <p class="mt-5 text-sm leading-7 text-muted-foreground">
+            <p
+              v-if="detalle.instructor.biografia"
+              class="mt-5 text-sm leading-7 text-muted-foreground"
+            >
               {{ detalle.instructor.biografia }}
             </p>
+            <p
+              v-else
+              class="mt-5 text-sm leading-7 text-muted-foreground"
+            >
+              El docente aún no publicó su biografía.
+            </p>
 
-            <div class="mt-5 border-t border-border pt-4">
+            <div
+              v-if="detalle.instructor.experiencia.length"
+              class="mt-5 border-t border-border pt-4"
+            >
               <h3 class="font-black text-foreground">Experiencia profesional</h3>
               <ul class="mt-3 grid gap-2.5">
                 <li
@@ -460,22 +518,7 @@ const etiquetaPrincipal = computed(() => {
       </section>
     </div>
 
-    <div
-      v-else-if="portal.coursesLoading.value || cargandoDetalle"
-      class="grid gap-6 border border-border bg-card p-6"
-      aria-busy="true"
-    >
-      <Skeleton class="h-8 w-48" />
-      <Skeleton class="h-12 w-full max-w-2xl" />
-      <div class="grid gap-6 lg:grid-cols-2">
-        <Skeleton class="aspect-video w-full" />
-        <div class="grid gap-3">
-          <Skeleton class="h-6 w-40" />
-          <Skeleton class="h-10 w-full" />
-          <Skeleton class="h-10 w-full" />
-        </div>
-      </div>
-    </div>
+    <EsqueletoDetalleCurso v-else-if="cargandoVista" />
 
     <div
       v-else
@@ -486,7 +529,7 @@ const etiquetaPrincipal = computed(() => {
           Curso no encontrado
         </p>
         <h1 class="mt-3 text-3xl font-black text-foreground">
-          Este curso no está disponible
+          {{ errorCarga || "Este curso no está disponible" }}
         </h1>
         <Button class="mt-6" @click="volverAlCatalogo">
           Volver al catálogo

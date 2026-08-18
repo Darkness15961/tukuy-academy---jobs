@@ -1,5 +1,11 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { S3Client, PutObjectCommand, GetObjectCommand } from "npm:@aws-sdk/client-s3@3.787.0";
+import {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand,
+  ListObjectsV2Command,
+  HeadObjectCommand,
+} from "npm:@aws-sdk/client-s3@3.787.0";
 import { getSignedUrl } from "npm:@aws-sdk/s3-request-presigner@3.787.0";
 
 const json = (body: unknown, status = 200, headers: HeadersInit = {}) =>
@@ -37,7 +43,16 @@ function cors(req: Request) {
   };
 }
 
-type Kind = "portada" | "material" | "entrega" | "certificado";
+type Kind =
+  | "portada"
+  | "material"
+  | "entrega"
+  | "certificado"
+  | "fondo-certificado"
+  | "anuncio-portal";
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function s3Client() {
   const region = Deno.env.get("AWS_REGION") ?? "us-east-2";
@@ -49,7 +64,6 @@ function s3Client() {
   return new S3Client({
     region,
     credentials: { accessKeyId, secretAccessKey },
-    // Evita x-amz-checksum-* en la URL firmada (el browser PUT no los envía).
     requestChecksumCalculation: "WHEN_REQUIRED",
     responseChecksumValidation: "WHEN_REQUIRED",
   });
@@ -68,12 +82,41 @@ function publicBaseUrl() {
   return `https://${bucketName()}.s3.${region}.amazonaws.com`;
 }
 
-/** Prefijos alineados a la bucket policy (portadas/*, materiales/*, entregas/*, certificados/*). */
+/**
+ * Prefijos del bucket (por uso):
+ * - portadas/                 → portadas de cursos
+ * - materiales/               → materiales descargables
+ * - anuncios-portal/          → carrusel / anuncios del portal alumno (por org)
+ * - entregas/                 → entregas de alumnos (privado)
+ * - certificados/documentos/  → PDF emitidos (privado)
+ * - certificados/fondos/      → fondos del diseño (público)
+ */
 function prefijoKind(kind: Kind) {
   if (kind === "portada") return "portadas";
   if (kind === "material") return "materiales";
-  if (kind === "certificado") return "certificados";
+  if (kind === "anuncio-portal") return "anuncios-portal";
+  if (kind === "certificado") return "certificados/documentos";
+  if (kind === "fondo-certificado") return "certificados/fondos";
   return "entregas";
+}
+
+function esKindPublico(kind: Kind) {
+  return (
+    kind === "portada" ||
+    kind === "material" ||
+    kind === "fondo-certificado"
+  );
+}
+
+function puedeFirmarDescarga(objectKey: string) {
+  return (
+    objectKey.startsWith("entregas/") ||
+    objectKey.startsWith("entrega/") ||
+    objectKey.startsWith("certificados/") ||
+    objectKey.startsWith("portadas/") ||
+    objectKey.startsWith("materiales/") ||
+    objectKey.startsWith("anuncios-portal/")
+  );
 }
 
 function sanitizarNombre(nombre: string) {
@@ -84,6 +127,12 @@ function sanitizarNombre(nombre: string) {
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "")
     .slice(0, 80) || "archivo";
+}
+
+function leerInstalacionId(entrada: Record<string, unknown>) {
+  const raw =
+    typeof entrada.instalacionId === "string" ? entrada.instalacionId.trim() : "";
+  return UUID_RE.test(raw) ? raw : "";
 }
 
 Deno.serve(async (req) => {
@@ -113,19 +162,33 @@ Deno.serve(async (req) => {
       return json({ error: "Sesion invalida" }, 401, corsHeaders);
     }
 
-    const entrada = await req.json().catch(() => ({}));
+    const entrada = (await req.json().catch(() => ({}))) as Record<
+      string,
+      unknown
+    >;
     const action = typeof entrada.action === "string" ? entrada.action : "";
     const bucket = bucketName();
     const client = s3Client();
 
     if (action === "presign-upload") {
       const kindRaw = String(entrada.kind ?? "").toLowerCase();
-      const kind = (["portada", "material", "entrega", "certificado"].includes(kindRaw)
+      const kind = ([
+        "portada",
+        "material",
+        "entrega",
+        "certificado",
+        "fondo-certificado",
+        "anuncio-portal",
+      ].includes(kindRaw)
         ? kindRaw
         : "") as Kind | "";
       if (!kind) {
         return json(
-          { ok: false, error: "kind debe ser portada | material | entrega | certificado" },
+          {
+            ok: false,
+            error:
+              "kind debe ser portada | material | entrega | certificado | fondo-certificado | anuncio-portal",
+          },
           400,
           corsHeaders,
         );
@@ -138,15 +201,30 @@ Deno.serve(async (req) => {
         typeof entrada.fileName === "string" && entrada.fileName.trim()
           ? sanitizarNombre(entrada.fileName.trim())
           : "archivo";
-      // Namespace por tenant: aísla los objetos de cada organización.
-      const UUID_RE =
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-      const instalacionId =
-        typeof entrada.instalacionId === "string" &&
-          UUID_RE.test(entrada.instalacionId.trim())
-          ? entrada.instalacionId.trim()
-          : "";
+      const instalacionId = leerInstalacionId(entrada);
+      if (kind === "anuncio-portal" && !instalacionId) {
+        return json(
+          {
+            ok: false,
+            error: "anuncio-portal requiere instalacionId (UUID de la organización)",
+          },
+          400,
+          corsHeaders,
+        );
+      }
+      const fileSize = Number(entrada.fileSize ?? 0);
+      if (kind === "anuncio-portal" && fileSize > 1024 * 1024) {
+        return json(
+          {
+            ok: false,
+            error: "La imagen del anuncio no puede pesar más de 1 MB.",
+          },
+          400,
+          corsHeaders,
+        );
+      }
       const segmentoTenant = instalacionId ? `${instalacionId}/` : "";
+      // anuncios-portal/{instalacionId}/{userId}/{uuid}-nombre.jpg
       const objectKey =
         `${prefijoKind(kind)}/${segmentoTenant}${usuario.user.id}/${crypto.randomUUID()}-${fileName}`;
 
@@ -160,10 +238,9 @@ Deno.serve(async (req) => {
         { expiresIn: 60 * 5 },
       );
 
-      const publicUrl =
-        kind === "entrega" || kind === "certificado"
-          ? null
-          : `${publicBaseUrl()}/${objectKey}`;
+      const publicUrl = esKindPublico(kind)
+        ? `${publicBaseUrl()}/${objectKey}`
+        : null;
 
       return json(
         {
@@ -173,6 +250,7 @@ Deno.serve(async (req) => {
           publicUrl,
           contentType,
           expiresIn: 300,
+          prefix: prefijoKind(kind),
         },
         200,
         corsHeaders,
@@ -185,13 +263,13 @@ Deno.serve(async (req) => {
       if (!objectKey || objectKey.includes("..")) {
         return json({ ok: false, error: "objectKey requerido" }, 400, corsHeaders);
       }
-      if (
-        !objectKey.startsWith("entregas/") &&
-        !objectKey.startsWith("entrega/") &&
-        !objectKey.startsWith("certificados/")
-      ) {
+      if (!puedeFirmarDescarga(objectKey)) {
         return json(
-          { ok: false, error: "Solo se firman descargas de entregas/ o certificados/" },
+          {
+            ok: false,
+            error:
+              "Solo se firman descargas de anuncios-portal/, portadas/, materiales/, entregas/ o certificados/",
+          },
           403,
           corsHeaders,
         );
@@ -203,6 +281,172 @@ Deno.serve(async (req) => {
       );
       return json(
         { ok: true, objectKey, downloadUrl, expiresIn: 600 },
+        200,
+        corsHeaders,
+      );
+    }
+
+    /** Lista objetos en anuncios-portal/{instalacionId}/ para reutilizar en UI. */
+    if (action === "listar-anuncios-portal") {
+      const instalacionId = leerInstalacionId(entrada);
+      if (!instalacionId) {
+        return json(
+          { ok: false, error: "instalacionId requerido" },
+          400,
+          corsHeaders,
+        );
+      }
+      const prefix = `anuncios-portal/${instalacionId}/${usuario.user.id}/`;
+      try {
+        const listed = await client.send(
+          new ListObjectsV2Command({
+            Bucket: bucket,
+            Prefix: prefix,
+            MaxKeys: 100,
+          }),
+        );
+        const imagenes = (listed.Contents ?? [])
+          .filter((obj) => {
+            const key = obj.Key ?? "";
+            if (!key || key.endsWith("/")) return false;
+            return /\.(jpe?g|png|webp|gif)$/i.test(key);
+          })
+          .map((obj) => {
+            const key = String(obj.Key);
+            const nombre = key.split("/").pop() || key;
+            return {
+              objectKey: key,
+              nombre,
+              bytes: obj.Size ?? 0,
+              actualizadoEn: obj.LastModified
+                ? obj.LastModified.toISOString()
+                : null,
+            };
+          })
+          .sort((a, b) =>
+            String(b.actualizadoEn ?? "").localeCompare(
+              String(a.actualizadoEn ?? ""),
+            ),
+          );
+
+        return json(
+          {
+            ok: true,
+            prefix,
+            total: imagenes.length,
+            imagenes,
+          },
+          200,
+          corsHeaders,
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        // Sin ListBucket la UI usa BD (portal_banner_imagen) + respuesta del seed.
+        if (/not authorized|AccessDenied|ListBucket/i.test(msg)) {
+          return json(
+            {
+              ok: true,
+              prefix,
+              total: 0,
+              imagenes: [],
+              aviso:
+                "IAM sin s3:ListBucket. Usa Cargar pack / subir imagen (se indexan en BD). Agrega ListBucket al usuario AWS para listar S3.",
+            },
+            200,
+            corsHeaders,
+          );
+        }
+        throw err;
+      }
+    }
+
+    /**
+     * Sube el pack base (6 imágenes) a anuncios-portal/{instalacionId}/catalogo/
+     * Usa secretos AWS del Edge. Idempotente (omite si ya existe).
+     */
+    if (action === "seed-anuncios-portal-demo") {
+      const instalacionId = leerInstalacionId(entrada);
+      if (!instalacionId) {
+        return json(
+          { ok: false, error: "instalacionId requerido" },
+          400,
+          corsHeaders,
+        );
+      }
+      const demos = [
+        {
+          slug: "gestion-obra",
+          url: "https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?auto=format&fit=crop&w=1600&q=85",
+        },
+        {
+          slug: "empleabilidad",
+          url: "https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d?auto=format&fit=crop&w=1600&q=85",
+        },
+        {
+          slug: "operaciones",
+          url: "https://images.unsplash.com/photo-1504917595217-d4dc5ebe6122?auto=format&fit=crop&w=1600&q=85",
+        },
+        {
+          slug: "oportunidades",
+          url: "https://images.unsplash.com/photo-1522202176988-66273c2fd55f?auto=format&fit=crop&w=1600&q=85",
+        },
+        {
+          slug: "datos-ia",
+          url: "https://images.unsplash.com/photo-1551434678-e076c223a692?auto=format&fit=crop&w=1600&q=85",
+        },
+        {
+          slug: "certificacion",
+          url: "https://images.unsplash.com/photo-1554224155-6726b3ff858f?auto=format&fit=crop&w=1600&q=85",
+        },
+      ];
+
+      const subidas: Array<{
+        objectKey: string;
+        slug: string;
+        estado: "creado" | "existente";
+      }> = [];
+
+      for (const demo of demos) {
+        const objectKey =
+          `anuncios-portal/${instalacionId}/catalogo/${demo.slug}.jpg`;
+        let existe = false;
+        try {
+          await client.send(
+            new HeadObjectCommand({ Bucket: bucket, Key: objectKey }),
+          );
+          existe = true;
+        } catch {
+          existe = false;
+        }
+        if (existe) {
+          subidas.push({ objectKey, slug: demo.slug, estado: "existente" });
+          continue;
+        }
+        const resp = await fetch(demo.url);
+        if (!resp.ok) {
+          throw new Error(
+            `No se pudo descargar ${demo.slug} (${resp.status})`,
+          );
+        }
+        const bytes = new Uint8Array(await resp.arrayBuffer());
+        await client.send(
+          new PutObjectCommand({
+            Bucket: bucket,
+            Key: objectKey,
+            Body: bytes,
+            ContentType: "image/jpeg",
+          }),
+        );
+        subidas.push({ objectKey, slug: demo.slug, estado: "creado" });
+      }
+
+      return json(
+        {
+          ok: true,
+          prefix: `anuncios-portal/${instalacionId}/catalogo/`,
+          total: subidas.length,
+          imagenes: subidas,
+        },
         200,
         corsHeaders,
       );

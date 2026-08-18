@@ -4,6 +4,7 @@ import { useRouter } from "vue-router";
 import { authService } from "@/api/services/auth.service";
 import { AUTH_TOKEN_KEY, USUARIO_SESION_KEY } from "@/lib/constants";
 import { env } from "@/lib/env";
+import { inicialesNombre, urlFotoPerfilReal } from "@/lib/foto-perfil";
 import {
   rutaInicioPortal,
   useContextoSesion,
@@ -13,11 +14,20 @@ import type { UserProfile } from "@/types/academia";
 import type { LoginResponseDto } from "@/types/api";
 
 const isAuthenticated = ref(!!localStorage.getItem(AUTH_TOKEN_KEY));
+
+function sanitizarPerfil(perfil: UserProfile): UserProfile {
+  return {
+    ...perfil,
+    avatarUrl: urlFotoPerfilReal(perfil.avatarUrl),
+    initials: perfil.initials || inicialesNombre(perfil.name),
+  };
+}
+
 function usuarioGuardado(): UserProfile | null {
   const valor = localStorage.getItem(USUARIO_SESION_KEY);
   if (!valor) return null;
   try {
-    return JSON.parse(valor) as UserProfile;
+    return sanitizarPerfil(JSON.parse(valor) as UserProfile);
   } catch {
     localStorage.removeItem(USUARIO_SESION_KEY);
     return null;
@@ -42,9 +52,10 @@ export function useAuth() {
     destinoDespues?: string,
     redirigirAutomaticamente = true,
   ) {
+    const usuario = sanitizarPerfil(response.user);
     localStorage.setItem(AUTH_TOKEN_KEY, response.token);
-    localStorage.setItem(USUARIO_SESION_KEY, JSON.stringify(response.user));
-    currentUser.value = response.user;
+    localStorage.setItem(USUARIO_SESION_KEY, JSON.stringify(usuario));
+    currentUser.value = usuario;
     isAuthenticated.value = true;
     if (env.authProvider === "supabase" && !response.memberships?.length) {
       limpiarSesionMultiempresa();
@@ -206,7 +217,7 @@ export function useAuth() {
       return currentUser.value;
     }
     try {
-      const usuario = await authService.me();
+      const usuario = sanitizarPerfil(await authService.me());
       currentUser.value = usuario;
       localStorage.setItem(USUARIO_SESION_KEY, JSON.stringify(usuario));
       return usuario;

@@ -27,6 +27,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { useContextoSesion } from "@/composables/useContextoSesion";
+import { toast } from "@/lib/toast";
 
 const router = useRouter();
 const { contextoActivo } = useContextoSesion();
@@ -143,6 +144,14 @@ function porcentajeConsumo(utilizado: number, limite: number) {
   return Math.min(100, Math.round((utilizado / limite) * 100));
 }
 
+async function solicitarAmpliacion() {
+  modal.value = false;
+  toast.info(
+    "Tu plan está en solo lectura. Solicita la ampliación desde Facturación o contacta a Tukuy.",
+  );
+  await router.push("/organizacion/facturacion");
+}
+
 function abrirGestionLicencia() {
   if (licencia.value?.soloLectura) {
     void solicitarAmpliacion();
@@ -173,7 +182,7 @@ async function guardar() {
   await organizacionService.guardarLicencia(actualizada);
   licencia.value = actualizada;
   modal.value = false;
-  mensaje.value = "La licencia fue actualizada en la simulación local.";
+  toast.success("La licencia fue actualizada en la simulación local.");
 }
 </script>
 

@@ -14,12 +14,12 @@ import {
   FileText,
   HelpCircle,
   Lock,
+  LogOut,
   MessageSquare,
   MoreVertical,
   Play,
   RefreshCw,
   Send,
-  Share2,
   Star,
   Upload,
   UserRound,
@@ -27,15 +27,16 @@ import {
 } from "lucide-vue-next";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import Skeleton from "primevue/skeleton";
 
 import { aprendizajeService } from "@/api/services/aprendizaje.service";
 import {
   academicoService,
   type EntregaActividadAcademica,
 } from "@/api/services/academico.service";
+import CargaPerezosaCurso from "@/components/shared/CargaPerezosaCurso.vue";
 import { Button } from "@/components/ui/button";
 import { useContextoSesion } from "@/composables/useContextoSesion";
+import { toast } from "@/lib/toast";
 import {
   cursoEstaMatriculado,
   cursoRequiereCompra,
@@ -44,8 +45,14 @@ import {
   guardarProgresoVideoSegundos,
   leerProgresoVideoSegundos,
   limpiarProgresoVideo,
-  urlEmbedYoutube,
 } from "@/lib/youtube";
+import {
+  descripcionVisibleAlumno,
+  etiquetaFuenteVideo,
+  urlAperturaVideo,
+  urlEmbedVideo,
+  type FuenteVideoCurso,
+} from "@/lib/video-curso";
 import type { Course } from "@/types/academia";
 import type {
   ContenidoCursoAprendizaje,
@@ -113,14 +120,28 @@ const activeItem = computed<ItemAprendizaje>(() => {
   };
 });
 
-const embedYoutube = computed(() => {
+const descripcionClase = computed(() =>
+  descripcionVisibleAlumno(activeItem.value.description, {
+    titulo: activeItem.value.title,
+    videoUrl: activeItem.value.videoUrl,
+  }),
+);
+
+const videoActivo = computed(() => {
   if (activeItem.value.type !== "video") return null;
   const start = leerProgresoVideoSegundos(courseId.value, activeItem.value.id);
-  return urlEmbedYoutube(activeItem.value.videoUrl, {
+  return urlEmbedVideo(activeItem.value.videoUrl, activeItem.value.videoFuente, {
     startSeconds: start > 5 ? start : 0,
-    enableJsApi: true,
   });
 });
+
+const embedVideo = computed(() => videoActivo.value?.embed ?? null);
+const fuenteVideoActiva = computed<FuenteVideoCurso>(
+  () => videoActivo.value?.fuente ?? "youtube",
+);
+const urlAperturaVideoActiva = computed(() =>
+  urlAperturaVideo(activeItem.value.videoUrl, fuenteVideoActiva.value),
+);
 
 const iframeYoutube = ref<HTMLIFrameElement | null>(null);
 let timerProgresoVideo: ReturnType<typeof setInterval> | null = null;
@@ -165,7 +186,7 @@ function cargarApiYoutube(): Promise<void> {
 
 async function montarPlayerYoutube() {
   if (activeItem.value.type !== "video" || !iframeYoutube.value) return;
-  if (!embedYoutube.value) return;
+  if (!embedVideo.value || fuenteVideoActiva.value !== "youtube") return;
   try {
     await cargarApiYoutube();
     if (!window.YT?.Player || !iframeYoutube.value) return;
@@ -213,10 +234,15 @@ function destruirPlayerYoutube() {
 }
 
 watch(
-  () => [activeItem.value.id, activeItem.value.type, embedYoutube.value] as const,
+  () =>
+    [activeItem.value.id, activeItem.value.type, embedVideo.value, fuenteVideoActiva.value] as const,
   async () => {
     destruirPlayerYoutube();
-    if (activeItem.value.type === "video" && embedYoutube.value) {
+    if (
+      activeItem.value.type === "video" &&
+      embedVideo.value &&
+      fuenteVideoActiva.value === "youtube"
+    ) {
       await nextTick();
       await montarPlayerYoutube();
     }
@@ -268,12 +294,30 @@ const itemsEnOrden = computed(() =>
   syllabusSections.value.flatMap((section) => section.items),
 );
 
+function abrirRevisionQuiz() {
+  if (!quizResult.value) return;
+  quizPreguntaIndice.value = 0;
+  quizResult.value = {
+    ...quizResult.value,
+    mostrandoRevision: true,
+  };
+}
+
+function cerrarRevisionQuiz() {
+  if (!quizResult.value) return;
+  quizResult.value = {
+    ...quizResult.value,
+    mostrandoRevision: false,
+  };
+}
+
 function actividadBloqueada(itemId: string): boolean {
   const orden = itemsEnOrden.value;
   const idx = orden.findIndex((item) => item.id === itemId);
   if (idx <= 0) return false;
   for (let i = 0; i < idx; i += 1) {
-    if (!completedItems.value.includes(orden[i].id)) return true;
+    const previo = orden[i];
+    if (previo && !completedItems.value.includes(previo.id)) return true;
   }
   return false;
 }
@@ -326,7 +370,6 @@ const errorChat = ref("");
 
 const sidebarOpen = ref(true);
 const menuMasAbierto = ref(false);
-const avisoCompartir = ref("");
 const recursosItemId = ref<string | null>(null);
 const selectorPdf = ref<HTMLInputElement | null>(null);
 const archivoSeleccionado = ref<File>();
@@ -546,6 +589,7 @@ async function persistirApuntes() {
       causa instanceof Error
         ? causa.message
         : "No se pudieron guardar los apuntes.";
+    toast.error(mensajeApuntes.value);
   } finally {
     guardandoApuntes.value = false;
   }
@@ -566,11 +610,9 @@ async function cargarChatDocente() {
     docenteCurso.value = chat.docente;
     conversacionId.value = chat.conversacionId;
     mensajesDocente.value = chat.mensajes;
-  } catch (causa) {
+  } catch {
     errorChat.value =
-      causa instanceof Error
-        ? causa.message
-        : "No se pudo abrir el chat con el docente.";
+      "El chat con el docente no está disponible por ahora. Puedes seguir el curso con normalidad.";
     docenteCurso.value = null;
     conversacionId.value = "";
     mensajesDocente.value = [];
@@ -591,9 +633,11 @@ async function enviarMensajeAlDocente() {
     );
     mensajesDocente.value = [...mensajesDocente.value, mensaje];
     textoMensajeDocente.value = "";
+    toast.success("Mensaje enviado al docente.");
   } catch (causa) {
     errorChat.value =
       causa instanceof Error ? causa.message : "No se pudo enviar el mensaje.";
+    toast.error(errorChat.value);
   } finally {
     enviandoMensaje.value = false;
   }
@@ -680,6 +724,9 @@ async function submitQuiz(itemId: string) {
           ? causa.message
           : "No se pudo calificar el cuestionario.",
     };
+    toast.error(
+      quizResult.value.error ?? "No se pudo calificar el cuestionario.",
+    );
   }
 }
 
@@ -714,18 +761,6 @@ const itemSiguienteId = computed(() => {
 function irAItemVecino(itemId: string | null) {
   if (!itemId) return;
   selectItem(itemId);
-}
-
-async function compartirCurso() {
-  try {
-    await navigator.clipboard.writeText(window.location.href);
-    avisoCompartir.value = "Enlace copiado";
-  } catch {
-    avisoCompartir.value = "No se pudo copiar el enlace";
-  }
-  window.setTimeout(() => {
-    avisoCompartir.value = "";
-  }, 1600);
 }
 
 function minutosDesdeDuracion(valor?: string) {
@@ -810,10 +845,12 @@ function seleccionarPdf(evento: Event) {
   if (!archivo) return;
   if (archivo.type !== "application/pdf") {
     errorEntrega.value = "Selecciona un archivo en formato PDF.";
+    toast.error(errorEntrega.value);
     return;
   }
   if (archivo.size > 8_000_000) {
     errorEntrega.value = "El PDF debe pesar menos de 8 MB en la demostración.";
+    toast.error(errorEntrega.value);
     return;
   }
   archivoSeleccionado.value = archivo;
@@ -823,6 +860,7 @@ async function entregarActividad() {
   if (!archivoSeleccionado.value) {
     errorEntrega.value =
       "Primero selecciona el archivo PDF que deseas entregar.";
+    toast.error(errorEntrega.value);
     return;
   }
   enviandoEntrega.value = true;
@@ -843,11 +881,13 @@ async function entregarActividad() {
       completedItems.value = [...completedItems.value, activeItem.value.id];
     }
     await persistirProgreso();
+    toast.success("Entrega registrada.");
   } catch (error) {
     errorEntrega.value =
       error instanceof Error
         ? error.message
         : "No se pudo registrar la entrega.";
+    toast.error(errorEntrega.value);
   } finally {
     enviandoEntrega.value = false;
   }
@@ -878,19 +918,19 @@ watch(courseId, cargarCurso);
 <template>
   <div
     v-if="cargando"
-    class="min-h-screen bg-background p-5 text-foreground sm:p-8"
+    aria-busy="true"
   >
-    <div class="mx-auto grid max-w-7xl gap-5">
-      <Skeleton class="h-14 w-full" />
-      <div class="grid gap-5 lg:grid-cols-[1fr_22rem]">
-        <div class="grid gap-4">
-          <Skeleton class="aspect-video w-full" />
-          <Skeleton class="h-12 w-full" />
-          <Skeleton class="h-36 w-full" />
-        </div>
-        <Skeleton class="hidden h-[42rem] w-full lg:block" />
-      </div>
-    </div>
+    <CargaPerezosaCurso
+      pantalla-completa
+      :mensajes="[
+        'Abriendo el curso…',
+        'Alistando recursos…',
+        'Cargando materiales…',
+        'Preparando módulos…',
+        'Sincronizando avance…',
+        'Casi listo…',
+      ]"
+    />
   </div>
 
   <div
@@ -915,9 +955,9 @@ watch(courseId, cargarCurso);
     class="flex h-screen flex-col bg-background font-sans text-foreground"
   >
     <header
-      class="z-20 flex h-14 shrink-0 items-center justify-between gap-3 border-b border-border bg-card px-3 sm:px-4"
+      class="z-20 flex h-14 shrink-0 items-center justify-between gap-2 border-b border-border bg-card px-2 sm:gap-3 sm:px-4"
     >
-      <div class="flex min-w-0 items-center gap-3">
+      <div class="flex min-w-0 items-center gap-2 sm:gap-3">
         <button
           type="button"
           class="hidden h-8 w-8 shrink-0 place-items-center sm:grid"
@@ -945,10 +985,13 @@ watch(courseId, cargarCurso);
         </h1>
       </div>
 
-      <div class="flex shrink-0 items-center gap-1 sm:gap-2">
-        <div class="hidden items-center gap-2 sm:flex">
+      <div class="flex shrink-0 items-center gap-1.5 sm:gap-3">
+        <div
+          class="flex items-center gap-2 rounded-none border border-primary/25 bg-primary/10 px-1.5 py-1 sm:px-2.5 sm:py-1.5"
+          :title="`Avance del curso: ${progressPercent}%`"
+        >
           <svg
-            class="h-8 w-8 -rotate-90"
+            class="h-7 w-7 shrink-0 -rotate-90 sm:h-8 sm:w-8"
             viewBox="0 0 32 32"
             aria-hidden="true"
           >
@@ -957,7 +1000,7 @@ watch(courseId, cargarCurso);
               cy="16"
               r="13"
               fill="none"
-              class="stroke-muted"
+              class="stroke-primary/20"
               stroke-width="2.5"
             />
             <circle
@@ -972,27 +1015,26 @@ watch(courseId, cargarCurso);
               :stroke-dashoffset="trazoProgreso"
             />
           </svg>
-          <span class="text-sm font-medium text-foreground">Tu progreso</span>
+          <div class="leading-tight">
+            <p class="hidden text-[10px] font-bold uppercase tracking-wide text-primary sm:block">
+              Tu progreso
+            </p>
+            <p class="text-xs font-black tabular-nums text-foreground sm:text-sm">
+              {{ progressPercent }}%
+            </p>
+          </div>
         </div>
-        <span class="text-xs font-semibold text-primary sm:hidden">
-          {{ progressPercent }}%
-        </span>
 
         <Button
-          variant="ghost"
           size="sm"
-          class="hidden text-foreground sm:inline-flex"
-          @click="compartirCurso"
+          class="shrink-0 bg-primary text-primary-foreground hover:bg-primary/90"
+          aria-label="Regresar al portal"
+          @click="goBack"
         >
-          <Share2 class="h-4 w-4" />
-          Compartir
+          <LogOut class="h-4 w-4" />
+          <span class="hidden sm:inline">Regresar al portal</span>
+          <span class="sm:hidden">Regresar</span>
         </Button>
-        <span
-          v-if="avisoCompartir"
-          class="hidden text-xs text-muted-foreground sm:inline"
-        >
-          {{ avisoCompartir }}
-        </span>
 
         <div class="relative">
           <Button
@@ -1013,20 +1055,10 @@ watch(courseId, cargarCurso);
               class="block w-full px-3 py-2 text-left text-sm hover:bg-muted"
               @click="
                 menuMasAbierto = false;
-                compartirCurso();
-              "
-            >
-              Copiar enlace
-            </button>
-            <button
-              type="button"
-              class="block w-full px-3 py-2 text-left text-sm hover:bg-muted"
-              @click="
-                menuMasAbierto = false;
                 goBack();
               "
             >
-              Salir del curso
+              Regresar al portal
             </button>
             <button
               v-if="course.mode === 'Mixto' || course.mode === 'Presencial'"
@@ -1063,8 +1095,12 @@ watch(courseId, cargarCurso);
           class="relative w-full"
           :class="
             activeItem.type === 'video'
-              ? 'aspect-video max-h-[min(70vh,720px)] bg-black'
-              : 'min-h-[min(62vh,680px)] max-h-[min(78vh,860px)] overflow-y-auto bg-background'
+              ? fuenteVideoActiva === 'tiktok'
+                ? 'min-h-[min(70vh,760px)] bg-black'
+                : 'aspect-video max-h-[min(70vh,720px)] bg-black'
+              : activeItem.type === 'quiz'
+                ? 'min-h-[min(62vh,680px)] max-h-[min(78vh,860px)] overflow-y-auto bg-gradient-to-b from-primary/[0.07] via-background to-background'
+                : 'min-h-[min(62vh,680px)] max-h-[min(78vh,860px)] overflow-y-auto bg-background'
           "
         >
           <button
@@ -1088,18 +1124,48 @@ watch(courseId, cargarCurso);
           <!-- Video Player State -->
           <template v-if="activeItem.type === 'video'">
             <iframe
-              v-if="embedYoutube"
-              :key="`${activeItem.id}-${embedYoutube}`"
+              v-if="embedVideo && fuenteVideoActiva === 'youtube'"
+              :key="`${activeItem.id}-${embedVideo}`"
               ref="iframeYoutube"
               class="absolute inset-0 h-full w-full"
-              :src="embedYoutube"
+              :src="embedVideo"
               :title="activeItem.title"
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-              allowfullscreen
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
               referrerpolicy="strict-origin-when-cross-origin"
             />
+            <iframe
+              v-else-if="embedVideo && fuenteVideoActiva === 'drive'"
+              :key="`${activeItem.id}-${embedVideo}`"
+              class="absolute inset-0 h-full w-full"
+              :src="embedVideo"
+              :title="activeItem.title"
+              allow="autoplay; encrypted-media; fullscreen"
+              referrerpolicy="no-referrer"
+            />
             <div
-              v-if="embedYoutube && !completedItems.includes(activeItem.id)"
+              v-else-if="embedVideo && fuenteVideoActiva === 'tiktok'"
+              class="absolute inset-0 flex items-center justify-center p-3"
+            >
+              <iframe
+                :key="`${activeItem.id}-${embedVideo}`"
+                class="h-full max-h-[min(70vh,720px)] w-full max-w-[min(100%,420px)] rounded-none bg-black"
+                :src="embedVideo"
+                :title="activeItem.title"
+                allow="encrypted-media; fullscreen; autoplay"
+                referrerpolicy="strict-origin-when-cross-origin"
+              />
+            </div>
+            <a
+              v-if="embedVideo && fuenteVideoActiva === 'drive' && urlAperturaVideoActiva"
+              class="absolute left-3 bottom-3 z-10 rounded-md bg-black/70 px-3 py-1.5 text-xs font-semibold text-white hover:bg-black/85"
+              :href="urlAperturaVideoActiva"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Abrir en Google Drive
+            </a>
+            <div
+              v-if="embedVideo && !completedItems.includes(activeItem.id)"
               class="absolute bottom-3 right-3 z-10"
             >
               <Button
@@ -1111,7 +1177,7 @@ watch(courseId, cargarCurso);
               </Button>
             </div>
             <div
-              v-else-if="!embedYoutube"
+              v-else-if="!embedVideo"
               class="absolute inset-0 flex flex-col items-center justify-center gap-4 text-center p-6"
             >
               <div
@@ -1122,7 +1188,7 @@ watch(courseId, cargarCurso);
               <div class="space-y-1.5">
                 <span
                   class="text-xs font-bold text-blue-400 tracking-wider uppercase"
-                  >Video de YouTube</span
+                  >Video de {{ etiquetaFuenteVideo(fuenteVideoActiva) }}</span
                 >
                 <h3
                   class="text-base font-bold text-white max-w-xl mx-auto truncate"
@@ -1131,8 +1197,9 @@ watch(courseId, cargarCurso);
                 </h3>
               </div>
               <p class="max-w-md text-xs text-slate-400">
-                Esta clase aún no tiene un enlace de YouTube. El docente puede
-                anclarlo desde el constructor del curso.
+                Esta clase aún no tiene un enlace de
+                {{ etiquetaFuenteVideo(fuenteVideoActiva) }} válido. El docente
+                puede anclarlo desde el constructor del curso.
               </p>
               <Button
                 size="sm"
@@ -1150,15 +1217,33 @@ watch(courseId, cargarCurso);
               class="px-4 py-6 sm:px-8"
             >
               <div class="mx-auto w-full max-w-3xl">
-                <p class="text-sm text-muted-foreground">
-                  {{ activeItem.title }} · nota mínima
-                  {{ notaMinimaCurso }}/20
-                </p>
+                <div
+                  class="rounded-none border border-primary/20 bg-card/90 px-4 py-3 shadow-sm sm:px-5"
+                >
+                  <p
+                    class="text-xs font-black uppercase tracking-[0.18em] text-primary"
+                  >
+                    Cuestionario
+                  </p>
+                  <p class="mt-1 text-sm font-semibold text-foreground">
+                    {{ activeItem.title }}
+                  </p>
+                  <p class="mt-0.5 text-xs text-muted-foreground">
+                    Nota mínima {{ notaMinimaCurso }}/20 para aprobar
+                  </p>
+                </div>
 
                 <div v-if="preguntaQuizActual" class="mt-6">
-                  <p class="text-sm text-muted-foreground">
-                    Pregunta {{ quizPreguntaIndice + 1 }}:
-                  </p>
+                  <div class="mb-3 flex items-center gap-2">
+                    <span
+                      class="inline-flex h-7 min-w-7 items-center justify-center rounded-none bg-primary px-2 text-xs font-black text-primary-foreground"
+                    >
+                      {{ quizPreguntaIndice + 1 }}
+                    </span>
+                    <p class="text-sm text-muted-foreground">
+                      de {{ totalPreguntasQuiz }} preguntas
+                    </p>
+                  </div>
                   <h3 class="mt-1 text-xl font-semibold text-foreground">
                     {{ preguntaQuizActual.question }}
                   </h3>
@@ -1178,27 +1263,27 @@ watch(courseId, cargarCurso);
                     <label
                       v-for="(opt, oIdx) in preguntaQuizActual.options"
                       :key="oIdx"
-                      class="flex cursor-pointer items-start gap-3 rounded-lg border px-4 py-3.5 text-sm transition"
+                      class="flex cursor-pointer items-start gap-3 rounded-none border px-4 py-3.5 text-sm transition"
                       :class="
                         selectedAnswers[quizPreguntaIndice] === oIdx
-                          ? 'border-primary bg-muted font-medium text-foreground'
-                          : 'border-border bg-card text-foreground hover:bg-muted/60'
+                          ? 'border-primary bg-primary/10 font-medium text-foreground ring-1 ring-primary/25'
+                          : 'border-border bg-card text-foreground hover:border-primary/30 hover:bg-primary/[0.04]'
                       "
                     >
                       <input
-                        type="radio"
-                        class="mt-0.5 accent-primary"
-                        :name="'pregunta-quiz-' + quizPreguntaIndice"
-                        :value="oIdx"
                         v-model="selectedAnswers[quizPreguntaIndice]"
+                        class="mt-0.5"
+                        type="radio"
+                        :name="`q-${quizPreguntaIndice}`"
+                        :value="oIdx"
                       />
-                      <span class="leading-6">{{ opt }}</span>
+                      <span>{{ opt }}</span>
                     </label>
                   </div>
 
                   <p
                     v-if="quizResult?.error"
-                    class="mt-4 text-sm text-red-600"
+                    class="mt-4 text-sm font-semibold text-destructive"
                   >
                     {{ quizResult.error }}
                   </p>
@@ -1212,7 +1297,7 @@ watch(courseId, cargarCurso);
                       <ChevronLeft class="h-4 w-4" />
                       Anterior
                     </Button>
-                    <span class="text-xs text-muted-foreground">
+                    <span class="text-xs font-semibold text-primary">
                       {{ quizPreguntaIndice + 1 }} /
                       {{ totalPreguntasQuiz }}
                     </span>
@@ -1239,7 +1324,7 @@ watch(courseId, cargarCurso);
 
                 <p
                   v-else
-                  class="mt-8 rounded-lg border border-border bg-muted/40 p-5 text-sm text-muted-foreground"
+                  class="mt-8 rounded-none border border-border bg-muted/40 p-5 text-sm text-muted-foreground"
                 >
                   Este cuestionario aún no tiene preguntas. Cuando el docente
                   las publique podrás evaluarte aquí.
@@ -1250,162 +1335,186 @@ watch(courseId, cargarCurso);
             <div v-else class="px-4 py-6 sm:px-8">
               <div class="mx-auto w-full max-w-3xl">
                 <template v-if="!quizResult.mostrandoRevision">
-                  <div class="text-center">
-                    <div class="flex justify-center">
-                      <div
-                        class="rounded-full p-5 ring-8"
+                  <div
+                    class="overflow-hidden rounded-none border shadow-sm"
+                    :class="
+                      quizResult.passed
+                        ? 'border-emerald-500/35 bg-gradient-to-b from-emerald-500/15 via-card to-card'
+                        : 'border-red-500/35 bg-gradient-to-b from-red-500/12 via-card to-card'
+                    "
+                  >
+                    <div
+                      class="h-1.5 w-full"
+                      :class="
+                        quizResult.passed ? 'bg-emerald-500' : 'bg-red-500'
+                      "
+                    />
+                    <div class="px-6 py-10 text-center sm:px-10">
+                      <div class="flex justify-center">
+                        <div
+                          class="rounded-full p-5 ring-8"
+                          :class="
+                            quizResult.passed
+                              ? 'bg-emerald-500 text-white ring-emerald-500/20'
+                              : 'bg-red-500 text-white ring-red-500/20'
+                          "
+                        >
+                          <CheckCircle2
+                            v-if="quizResult.passed"
+                            class="h-10 w-10"
+                          />
+                          <X v-else class="h-10 w-10" />
+                        </div>
+                      </div>
+                      <p
+                        class="mt-5 text-xs font-black uppercase tracking-[0.2em]"
                         :class="
                           quizResult.passed
-                            ? 'bg-emerald-500/10 ring-emerald-500/15 text-emerald-600'
-                            : 'bg-red-500/10 ring-red-500/15 text-red-600'
+                            ? 'text-emerald-700 dark:text-emerald-300'
+                            : 'text-red-700 dark:text-red-300'
                         "
                       >
-                        <CheckCircle2
-                          v-if="quizResult.passed"
-                          class="h-10 w-10"
-                        />
-                        <X v-else class="h-10 w-10" />
+                        {{
+                          quizResult.passed
+                            ? "Cuestionario aprobado"
+                            : "Cuestionario desaprobado"
+                        }}
+                      </p>
+                      <h3 class="mt-2 text-xl font-bold text-foreground">
+                        {{ activeItem.title }}
+                      </h3>
+                      <p
+                        class="mt-5 inline-flex items-center gap-2 rounded-none px-4 py-2 text-3xl font-black tabular-nums sm:text-4xl"
+                        :class="
+                          quizResult.passed
+                            ? 'bg-emerald-500/15 text-emerald-800 dark:text-emerald-200'
+                            : 'bg-red-500/15 text-red-800 dark:text-red-200'
+                        "
+                      >
+                        {{ quizResult.score }}
+                        <span class="text-lg font-bold opacity-60">/ 20</span>
+                      </p>
+                      <p class="mt-3 text-sm text-muted-foreground">
+                        {{
+                          quizResult.passed
+                            ? "Nota aprobada para acreditación."
+                            : `Requiere un mínimo de ${notaMinimaCurso} para aprobar.`
+                        }}
+                      </p>
+                      <div class="mt-7 flex flex-wrap justify-center gap-3">
+                        <Button
+                          v-if="!quizResult.passed"
+                          variant="outline"
+                          @click="reiniciarIntentoQuiz"
+                        >
+                          <RefreshCw class="mr-1.5 h-3.5 w-3.5" />
+                          Intentar de nuevo
+                        </Button>
+                        <Button
+                          v-if="quizResult.correctIndexes?.length"
+                          @click="abrirRevisionQuiz"
+                        >
+                          Ver mis respuestas
+                        </Button>
                       </div>
                     </div>
-                    <p
-                      class="mt-4 text-xs font-bold uppercase tracking-wider"
-                      :class="
-                        quizResult.passed ? 'text-emerald-600' : 'text-red-600'
-                      "
-                    >
-                      {{
-                        quizResult.passed
-                          ? "Cuestionario aprobado"
-                          : "Cuestionario desaprobado"
-                      }}
-                    </p>
-                    <h3 class="mt-1 text-xl font-bold text-foreground">
-                      {{ activeItem.title }}
-                    </h3>
-                    <p class="mt-4 text-4xl font-black text-foreground">
-                      {{ quizResult.score }} / 20
-                    </p>
-                    <p class="mt-1 text-sm text-muted-foreground">
-                      {{
-                        quizResult.passed
-                          ? "Nota aprobada para acreditación."
-                          : `Requiere un mínimo de ${notaMinimaCurso} para aprobar.`
-                      }}
-                    </p>
-                    <div class="mt-6 flex justify-center gap-3">
+                  </div>
+                </template>
+
+                <template v-else-if="preguntaQuizActual">
+                  <div
+                    class="rounded-none border border-primary/20 bg-card px-4 py-4 sm:px-5"
+                  >
+                    <div class="flex items-center justify-between gap-3">
+                      <p
+                        class="text-xs font-black uppercase tracking-[0.16em] text-primary"
+                      >
+                        Revisión · pregunta {{ quizPreguntaIndice + 1 }}
+                      </p>
                       <Button
-                        v-if="!quizResult.passed"
+                        size="sm"
+                        variant="outline"
+                        @click="cerrarRevisionQuiz"
+                      >
+                        Volver al resultado
+                      </Button>
+                    </div>
+                    <h3 class="mt-3 text-xl font-semibold text-foreground">
+                      {{ preguntaQuizActual.question }}
+                    </h3>
+                    <div
+                      v-if="preguntaQuizActual.imagenReferencia"
+                      class="mt-5 overflow-hidden border border-border bg-muted/30"
+                    >
+                      <img
+                        :src="
+                          urlPublicaMedia(preguntaQuizActual.imagenReferencia)
+                        "
+                        alt="Referencia de la pregunta"
+                        class="mx-auto max-h-72 w-full object-contain"
+                      />
+                    </div>
+                    <div class="mt-5 grid gap-3">
+                      <div
+                        v-for="(opt, oIdx) in preguntaQuizActual.options"
+                        :key="oIdx"
+                        class="rounded-none border px-4 py-3.5 text-sm"
+                        :class="
+                          oIdx ===
+                          quizResult.correctIndexes?.[quizPreguntaIndice]
+                            ? 'border-emerald-500/50 bg-emerald-500/10 text-foreground'
+                            : selectedAnswers[quizPreguntaIndice] === oIdx
+                              ? 'border-red-500/50 bg-red-500/10 text-foreground'
+                              : 'border-border bg-muted/30 text-muted-foreground'
+                        "
+                      >
+                        {{ opt }}
+                        <span
+                          v-if="
+                            oIdx ===
+                            quizResult.correctIndexes?.[quizPreguntaIndice]
+                          "
+                          class="ml-2 text-[11px] font-bold uppercase text-emerald-700 dark:text-emerald-300"
+                          >Correcta</span
+                        >
+                        <span
+                          v-else-if="
+                            selectedAnswers[quizPreguntaIndice] === oIdx
+                          "
+                          class="ml-2 text-[11px] font-bold uppercase text-red-700 dark:text-red-300"
+                          >Tu respuesta</span
+                        >
+                      </div>
+                    </div>
+                    <div class="mt-6 flex items-center justify-between gap-3">
+                      <Button
+                        variant="outline"
+                        :disabled="quizPreguntaIndice === 0"
+                        @click="quizAnterior"
+                      >
+                        <ChevronLeft class="h-4 w-4" />
+                        Anterior
+                      </Button>
+                      <span class="text-xs font-semibold text-primary">
+                        {{ quizPreguntaIndice + 1 }} /
+                        {{ totalPreguntasQuiz }}
+                      </span>
+                      <Button
+                        v-if="!esUltimaPreguntaQuiz"
+                        @click="irAPreguntaQuiz(quizPreguntaIndice + 1)"
+                      >
+                        Siguiente
+                        <ChevronRight class="h-4 w-4" />
+                      </Button>
+                      <Button
+                        v-else-if="!quizResult.passed"
                         variant="outline"
                         @click="reiniciarIntentoQuiz"
                       >
                         <RefreshCw class="mr-1.5 h-3.5 w-3.5" />
                         Intentar de nuevo
                       </Button>
-                      <Button
-                        v-if="quizResult.correctIndexes?.length"
-                        @click="
-                          quizPreguntaIndice = 0;
-                          quizResult = {
-                            ...quizResult,
-                            mostrandoRevision: true,
-                          };
-                        "
-                      >
-                        Ver mis respuestas
-                      </Button>
                     </div>
-                  </div>
-                </template>
-
-                <template v-else-if="preguntaQuizActual">
-                  <div class="flex items-center justify-between gap-3">
-                    <p class="text-sm text-muted-foreground">
-                      Revisión · pregunta {{ quizPreguntaIndice + 1 }}
-                    </p>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      @click="
-                        quizResult = {
-                          ...quizResult,
-                          mostrandoRevision: false,
-                        }
-                      "
-                    >
-                      Volver al resultado
-                    </Button>
-                  </div>
-                  <h3 class="mt-3 text-xl font-semibold text-foreground">
-                    {{ preguntaQuizActual.question }}
-                  </h3>
-                  <div
-                    v-if="preguntaQuizActual.imagenReferencia"
-                    class="mt-5 overflow-hidden border border-border bg-muted/30"
-                  >
-                    <img
-                      :src="urlPublicaMedia(preguntaQuizActual.imagenReferencia)"
-                      alt="Referencia de la pregunta"
-                      class="mx-auto max-h-72 w-full object-contain"
-                    />
-                  </div>
-                  <div class="mt-5 grid gap-3">
-                    <div
-                      v-for="(opt, oIdx) in preguntaQuizActual.options"
-                      :key="oIdx"
-                      class="rounded-lg border px-4 py-3.5 text-sm"
-                      :class="
-                        oIdx === quizResult.correctIndexes?.[quizPreguntaIndice]
-                          ? 'border-emerald-500/50 bg-emerald-500/10 text-foreground'
-                          : selectedAnswers[quizPreguntaIndice] === oIdx
-                            ? 'border-red-500/50 bg-red-500/10 text-foreground'
-                            : 'border-border bg-card text-muted-foreground'
-                      "
-                    >
-                      {{ opt }}
-                      <span
-                        v-if="
-                          oIdx ===
-                          quizResult.correctIndexes?.[quizPreguntaIndice]
-                        "
-                        class="ml-2 text-[11px] font-bold uppercase text-emerald-700"
-                        >Correcta</span
-                      >
-                      <span
-                        v-else-if="
-                          selectedAnswers[quizPreguntaIndice] === oIdx
-                        "
-                        class="ml-2 text-[11px] font-bold uppercase text-red-700"
-                        >Tu respuesta</span
-                      >
-                    </div>
-                  </div>
-                  <div class="mt-6 flex items-center justify-between gap-3">
-                    <Button
-                      variant="outline"
-                      :disabled="quizPreguntaIndice === 0"
-                      @click="quizAnterior"
-                    >
-                      <ChevronLeft class="h-4 w-4" />
-                      Anterior
-                    </Button>
-                    <span class="text-xs text-muted-foreground">
-                      {{ quizPreguntaIndice + 1 }} / {{ totalPreguntasQuiz }}
-                    </span>
-                    <Button
-                      v-if="!esUltimaPreguntaQuiz"
-                      @click="irAPreguntaQuiz(quizPreguntaIndice + 1)"
-                    >
-                      Siguiente
-                      <ChevronRight class="h-4 w-4" />
-                    </Button>
-                    <Button
-                      v-else-if="!quizResult.passed"
-                      variant="outline"
-                      @click="reiniciarIntentoQuiz"
-                    >
-                      <RefreshCw class="mr-1.5 h-3.5 w-3.5" />
-                      Intentar de nuevo
-                    </Button>
                   </div>
                 </template>
               </div>
@@ -1438,7 +1547,7 @@ watch(courseId, cargarCurso);
 
               <div class="mt-4 flex flex-wrap justify-center gap-3">
                 <Button
-                  v-if="recursosModuloActivo.length"
+                  v-if="recursosModuloActivo[0]"
                   size="sm"
                   variant="outline"
                   class="border-white/20 bg-card/10 text-white hover:bg-card/25"
@@ -1590,13 +1699,13 @@ watch(courseId, cargarCurso);
         </div>
 
         <div class="border-b border-border bg-card">
-          <nav class="flex gap-0 overflow-x-auto px-4 sm:px-6">
+          <nav class="flex gap-0 overflow-x-auto px-3 sm:px-6">
             <button
               type="button"
               class="whitespace-nowrap px-3 py-3.5 text-sm font-medium transition border-b-2 sm:px-4"
               :class="
                 activeTab === 'descripcion'
-                  ? 'border-foreground text-foreground'
+                  ? 'border-primary text-primary'
                   : 'border-transparent text-muted-foreground hover:text-foreground'
               "
               @click="activeTab = 'descripcion'"
@@ -1608,7 +1717,7 @@ watch(courseId, cargarCurso);
               class="whitespace-nowrap px-3 py-3.5 text-sm font-medium transition border-b-2 sm:px-4"
               :class="
                 activeTab === 'preguntas'
-                  ? 'border-foreground text-foreground'
+                  ? 'border-primary text-primary'
                   : 'border-transparent text-muted-foreground hover:text-foreground'
               "
               @click="activeTab = 'preguntas'"
@@ -1620,7 +1729,7 @@ watch(courseId, cargarCurso);
               class="whitespace-nowrap px-3 py-3.5 text-sm font-medium transition border-b-2 sm:px-4"
               :class="
                 activeTab === 'notas'
-                  ? 'border-foreground text-foreground'
+                  ? 'border-primary text-primary'
                   : 'border-transparent text-muted-foreground hover:text-foreground'
               "
               @click="activeTab = 'notas'"
@@ -1631,45 +1740,58 @@ watch(courseId, cargarCurso);
         </div>
 
         <!-- Tab content -->
-        <div class="p-6 sm:p-8 bg-card">
+        <div class="bg-card p-4 sm:bg-gradient-to-b sm:from-primary/[0.04] sm:to-card sm:p-8">
           <template v-if="activeTab === 'descripcion'">
-            <h2 class="text-2xl font-bold tracking-tight text-foreground">
+            <h2 class="text-xl font-bold tracking-tight text-foreground sm:text-2xl">
               {{ activeItem.title }}
             </h2>
             <div
-              class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground"
+              class="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground sm:text-sm"
             >
-              <span v-if="course.rating" class="inline-flex items-center gap-1">
+              <span
+                v-if="course.rating"
+                class="inline-flex items-center gap-1 rounded-none border border-accent/30 bg-accent/10 px-2 py-0.5 text-foreground"
+              >
                 <Star class="h-3.5 w-3.5 fill-current text-accent" />
                 {{ course.rating.toFixed(1).replace(".", ",") }}
               </span>
-              <span>{{ course.mode }}</span>
-              <span>{{ course.duration }}</span>
               <span
+                class="rounded-none border border-border bg-muted/60 px-2 py-0.5 text-foreground"
+                >{{ course.mode }}</span
+              >
+              <span
+                class="rounded-none border border-border bg-muted/60 px-2 py-0.5 text-foreground"
+                >{{ course.duration }}</span
+              >
+              <span
+                class="rounded-none border border-primary/20 bg-primary/10 px-2 py-0.5 text-primary"
                 >{{ completedItemsCount }} / {{ totalItemsCount }} clases</span
               >
               <span
+                class="rounded-none border px-2 py-0.5"
                 :class="
                   gradeStatus === 'En riesgo'
-                    ? 'text-amber-600'
-                    : 'text-foreground'
+                    ? 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300'
+                    : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
                 "
                 >{{ gradeStatus }}</span
               >
-              <span v-if="averageGrade"
+              <span
+                v-if="averageGrade"
+                class="rounded-none border border-border bg-card px-2 py-0.5"
                 >Promedio {{ averageGrade }}/20</span
               >
             </div>
             <p
-              v-if="activeItem.description"
+              v-if="descripcionClase"
               class="mt-4 max-w-3xl text-sm leading-7 text-muted-foreground"
             >
-              {{ activeItem.description }}
+              {{ descripcionClase }}
             </p>
 
             <!-- Docente del curso -->
             <div
-              class="mt-8 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-border bg-muted/40 p-4"
+              class="mt-8 flex flex-wrap items-center justify-between gap-4 rounded-none border border-primary/20 bg-primary/[0.06] p-4"
             >
               <div class="flex min-w-0 items-center gap-3">
                 <span
@@ -1678,7 +1800,7 @@ watch(courseId, cargarCurso);
                   {{ docenteCurso?.iniciales || "DO" }}
                 </span>
                 <div class="min-w-0">
-                  <p class="text-xs font-bold uppercase text-muted-foreground">
+                  <p class="text-xs font-bold uppercase tracking-wide text-primary">
                     Tu docente
                   </p>
                   <p class="truncate text-base font-black text-foreground">
@@ -1699,58 +1821,6 @@ watch(courseId, cargarCurso);
               </Button>
             </div>
 
-            <!-- What you will learn -->
-            <div class="mt-8 border-t border-border pt-6">
-              <h3 class="text-base font-bold text-foreground">
-                Lo que aprenderás en esta sesión
-              </h3>
-              <div class="mt-4 grid gap-3 sm:grid-cols-2">
-                <div
-                  class="flex gap-3 rounded-lg border border-border p-3.5 bg-muted/50"
-                >
-                  <CheckCircle2
-                    class="mt-0.5 h-4.5 w-4.5 shrink-0 text-primary"
-                  />
-                  <span class="text-sm text-muted-foreground leading-snug"
-                    >Aplicar {{ course.category.toLowerCase() }} en flujos
-                    reales de obra y campo.</span
-                  >
-                </div>
-                <div
-                  class="flex gap-3 rounded-lg border border-border p-3.5 bg-muted/50"
-                >
-                  <CheckCircle2
-                    class="mt-0.5 h-4.5 w-4.5 shrink-0 text-primary"
-                  />
-                  <span class="text-sm text-muted-foreground leading-snug"
-                    >Reforzar criterios para control operativo y oficina
-                    técnica.</span
-                  >
-                </div>
-                <div
-                  class="flex gap-3 rounded-lg border border-border p-3.5 bg-muted/50"
-                >
-                  <CheckCircle2
-                    class="mt-0.5 h-4.5 w-4.5 shrink-0 text-primary"
-                  />
-                  <span class="text-sm text-muted-foreground leading-snug"
-                    >Generar evidencias válidas para tu CV inteligente
-                    Tukuy.</span
-                  >
-                </div>
-                <div
-                  class="flex gap-3 rounded-lg border border-border p-3.5 bg-muted/50"
-                >
-                  <CheckCircle2
-                    class="mt-0.5 h-4.5 w-4.5 shrink-0 text-primary"
-                  />
-                  <span class="text-sm text-muted-foreground leading-snug"
-                    >Obtener certificado verificable al completar todas las
-                    lecciones.</span
-                  >
-                </div>
-              </div>
-            </div>
           </template>
 
           <template v-else-if="activeTab === 'preguntas'">
@@ -1777,7 +1847,7 @@ watch(courseId, cargarCurso);
                 </div>
               </div>
 
-              <p v-if="errorChat" class="text-sm font-semibold text-red-600">
+              <p v-if="errorChat" class="text-sm font-semibold text-destructive">
                 {{ errorChat }}
               </p>
 
@@ -1876,6 +1946,13 @@ watch(courseId, cargarCurso);
         </div>
       </div>
 
+      <button
+        v-if="sidebarOpen"
+        type="button"
+        class="fixed inset-x-0 top-14 bottom-0 z-30 bg-background/80 lg:hidden"
+        aria-label="Cerrar contenido del curso"
+        @click="sidebarOpen = false"
+      />
       <aside
         class="flex shrink-0 flex-col border-l border-border bg-card"
         :class="[
@@ -1926,12 +2003,28 @@ watch(courseId, cargarCurso);
                 </p>
               </div>
               <ChevronDown
-                class="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground transition-transform"
+                class="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground transition-transform duration-300 ease-out"
                 :class="{ 'rotate-180': !collapsedSections[section.id] }"
               />
             </button>
 
-            <div v-show="!collapsedSections[section.id]" class="pb-2">
+            <div
+              class="grid transition-[grid-template-rows] duration-300 ease-out"
+              :class="
+                collapsedSections[section.id]
+                  ? 'grid-rows-[0fr]'
+                  : 'grid-rows-[1fr]'
+              "
+            >
+              <div class="min-h-0 overflow-hidden">
+                <div
+                  class="pb-2 transition-opacity duration-300 ease-out"
+                  :class="
+                    collapsedSections[section.id]
+                      ? 'opacity-0'
+                      : 'opacity-100'
+                  "
+                >
               <div
                 v-for="item in section.items"
                 :key="item.id"
@@ -2045,6 +2138,8 @@ watch(courseId, cargarCurso);
                     <span class="truncate">{{ recurso.nombre }}</span>
                   </button>
                 </div>
+              </div>
+              </div>
               </div>
             </div>
           </section>

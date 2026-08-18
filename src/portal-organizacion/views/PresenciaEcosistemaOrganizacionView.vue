@@ -22,6 +22,7 @@ import { organizacionService } from "@/api/services/organizacion.service";
 import { useContextoSesion } from "@/composables/useContextoSesion";
 import { storageAcademia, urlPublicaMedia } from "@/lib/storage-academia";
 import { entidadesComunidadService } from "@/modulos/comunidad/services/entidades.service";
+import { toast } from "@/lib/toast";
 import type {
   CursoPerfilEntidad,
   EntidadPublicaComunidad,
@@ -148,8 +149,7 @@ function aplicarEntidad(entidad: EntidadPublicaComunidad) {
 
 async function guardarPerfil() {
   error.value = "";
-  mensaje.value = "";
-  if (!puedeEditar.value) {
+    if (!puedeEditar.value) {
     error.value =
       "Solo Dirección o Administración pueden personalizar la presencia pública.";
     return;
@@ -186,7 +186,7 @@ async function guardarPerfil() {
       logo: formulario.logo.trim() || undefined,
     });
     aplicarEntidad(actualizada);
-    mensaje.value = "Presencia pública actualizada. Ya se refleja en Comunidad.";
+    toast.success("Presencia pública actualizada. Ya se refleja en Comunidad.");
   } catch (err) {
     error.value =
       err instanceof Error ? err.message : "No se pudo guardar el perfil.";
@@ -206,9 +206,9 @@ async function alternarCurso(
     curso.id,
     siguiente,
   );
-  mensaje.value = siguiente
+  toast.success(siguiente
     ? `“${curso.titulo}” visible en tu perfil público.`
-    : `“${curso.titulo}” oculto del perfil público.`;
+    : `“${curso.titulo}” oculto del perfil público.`);
 }
 
 function verPerfilPublico() {
@@ -221,8 +221,7 @@ async function subirImagenPerfil(
 ) {
   if (!puedeEditar.value) return;
   error.value = "";
-  mensaje.value = "";
-  const ocupado = destino === "logo" ? subiendoLogo : subiendoPortada;
+    const ocupado = destino === "logo" ? subiendoLogo : subiendoPortada;
   const anterior =
     destino === "logo" ? formulario.logo : formulario.portada;
   ocupado.value = true;
@@ -234,10 +233,9 @@ async function subirImagenPerfil(
     const url = subida.publicUrl ?? subida.url;
     if (destino === "logo") formulario.logo = url;
     else formulario.portada = url;
-    mensaje.value =
-      destino === "logo"
+    toast.success(destino === "logo"
         ? "Logo subido. Guarda la ficha para publicarlo."
-        : "Portada subida. Guarda la ficha para publicarla.";
+        : "Portada subida. Guarda la ficha para publicarla.");
   } catch (err) {
     if (destino === "logo") formulario.logo = anterior;
     else formulario.portada = anterior;

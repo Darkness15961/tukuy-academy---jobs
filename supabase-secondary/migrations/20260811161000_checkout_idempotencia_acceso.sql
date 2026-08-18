@@ -30,7 +30,7 @@ begin
     from public.orden_compra o
     join public.item_orden i on i.orden_compra_id = o.id
     where o.comprador_identidad_ref = p_estudiante_identidad_ref
-      and upper(o.estado) in ('PAGADA', 'PAGADO', 'CONFIRMADA', 'CONFIRMADO')
+      and upper(o.estado::text) in ('PAGADA', 'PAGADO', 'CONFIRMADA', 'CONFIRMADO')
       and i.producto_ref = p_curso_id
   );
 end;

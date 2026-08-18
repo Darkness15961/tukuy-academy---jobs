@@ -67,7 +67,7 @@ const learningCourses = computed(() => {
               Continúa tus cursos y rutas de obra
             </h1>
             <p
-              class="mt-3 max-w-3xl text-sm leading-7 text-[#41516A] sm:text-base"
+              class="mt-3 max-w-3xl text-sm leading-7 text-muted-foreground sm:text-base"
             >
               Revisa tu progreso, retoma cursos activos y fortalece competencias
               conectadas a Tukuy Obra, CV inteligente y bolsa laboral.
@@ -137,7 +137,7 @@ const learningCourses = computed(() => {
               />
             </div>
             <Button
-              class="h-11 rounded-none bg-[#D6C4F2] px-4 text-[#5A35A3] hover:bg-[#CBB5EC]"
+              class="h-11 rounded-none bg-primary px-4 text-primary-foreground hover:bg-primary/90"
               type="button"
             >
               <Search class="h-4 w-4" />

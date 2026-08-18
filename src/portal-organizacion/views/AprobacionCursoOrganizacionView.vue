@@ -21,6 +21,7 @@ import {
   normalizarRequisitos,
 } from "@/lib/requisitos-curso";
 import { mapearSeccionesAModulosRevision } from "@/lib/mapear-revision-curso";
+import { toast } from "@/lib/toast";
 
 const route = useRoute();
 const router = useRouter();
@@ -106,12 +107,11 @@ onMounted(async () => {
           ),
           horasCertificables: Number(
             (curso.versionActual as { horas?: number } | undefined)?.horas ??
-              propuesta.value.horas ??
-              0,
+              (Number.parseInt(String(propuesta.value.duracion), 10) || 0),
           ),
           notaMinimaPropuesta: Number(borrador.notaMinima ?? 11),
           certificadoPropuesto: Boolean(borrador.certificado ?? true),
-          enviadaEn: propuesta.value.actualizadoEn ?? new Date().toISOString(),
+          enviadaEn: propuesta.value.enviado || new Date().toISOString(),
         };
       } catch {
         revision.value = obtenerRevisionCursoMock(
@@ -211,19 +211,20 @@ async function confirmar(
     }
 
     const nDescuentos = config.descuentos.filter((r) => r.activa !== false).length;
-    void router.push({
-      path: "/organizacion/cursos",
-      query: {
-        mensaje: publicar
-          ? `Curso aprobado y publicado · ${nDescuentos} descuento(s) guardados.`
-          : `Curso aprobado sin publicar · ${nDescuentos} descuento(s) guardados.`,
+    toast.success(
+      publicar ? "Curso aprobado y publicado" : "Curso aprobado sin publicar",
+      {
+        description: `${nDescuentos} descuento(s) · destino: ${destinoLabel}.`,
       },
-    });
+    );
+    void router.push("/organizacion/cursos");
   } catch (err) {
-    error.value =
+    const mensaje =
       err instanceof Error
         ? err.message
         : "No se pudo completar la aprobación.";
+    error.value = mensaje;
+    toast.error("No se pudo aprobar el curso", { description: mensaje });
   } finally {
     procesando.value = false;
   }

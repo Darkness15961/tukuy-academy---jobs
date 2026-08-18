@@ -6,7 +6,9 @@ import type {
 import type { Course } from "@/types/academia";
 import type {
   ContenidoCursoAprendizaje,
+  ModuloAprendizaje,
   ProgresoCursoAprendizaje,
+  TipoItemAprendizaje,
 } from "@/types/aprendizaje.types";
 import type {
   BorradorCursoDocente,
@@ -23,6 +25,11 @@ import {
   urlPublicaMedia,
 } from "@/lib/storage-academia";
 import { normalizarRequisitos } from "@/lib/requisitos-curso";
+import {
+  descripcionVisibleAlumno,
+  detectarFuenteVideo,
+  normalizarFuenteVideo,
+} from "@/lib/video-curso";
 
 const ESTADOS_DOCENTE = new Set<EstadoCursoDocente>([
   "BORRADOR",
@@ -34,8 +41,7 @@ const ESTADOS_DOCENTE = new Set<EstadoCursoDocente>([
   "ARCHIVADO",
 ]);
 
-const IMAGEN_FALLBACK =
-  "https://images.unsplash.com/photo-1503387762-592deb58ef4e?auto=format&fit=crop&w=900&q=80";
+const IMAGEN_FALLBACK = "/img/tukuyAcademia.png";
 
 type TipoItemConstructor = "lectura" | "video" | "quiz" | "assignment";
 
@@ -135,13 +141,51 @@ export function mapearCursoSecundariaADocente(
   };
 }
 
+function seccionTienePrograma(seccion: {
+  items?: unknown;
+  clases?: unknown;
+}): boolean {
+  const items = Array.isArray(seccion.items) ? seccion.items : [];
+  const clases = Array.isArray(seccion.clases) ? seccion.clases : [];
+  if (
+    items.some((raw) => {
+      const fila = raw as { titulo?: string; urlYoutube?: string; videoUrl?: string };
+      return (
+        String(fila.titulo ?? "").trim() ||
+        String(fila.urlYoutube ?? fila.videoUrl ?? "").trim()
+      );
+    })
+  ) {
+    return true;
+  }
+  return clases.some((clase) => String(clase).trim());
+}
+
+function seccionesDesdeDocumento(
+  documento: Record<string, unknown>,
+  semilla: BorradorCursoDocente,
+): unknown[] {
+  const servidor = Array.isArray(documento.secciones)
+    ? documento.secciones
+    : [];
+  if (servidor.length === 0) return semilla.secciones;
+  return servidor.map((seccion, indice) => {
+    const fila = seccion as { id?: string; items?: unknown; clases?: unknown };
+    if (seccionTienePrograma(fila)) return seccion;
+    const local = semilla.secciones[indice];
+    if (!local) return seccion;
+    return {
+      ...local,
+      id: fila.id || local.id,
+    };
+  });
+}
+
 export function mapearDocumentoABorrador(
   documento: Record<string, unknown>,
   semilla: BorradorCursoDocente,
 ): BorradorCursoDocente {
-  const seccionesRaw = Array.isArray(documento.secciones)
-    ? documento.secciones
-    : semilla.secciones;
+  const seccionesRaw = seccionesDesdeDocumento(documento, semilla);
 
   return {
     ...semilla,
@@ -205,6 +249,8 @@ export function mapearDocumentoABorrador(
                 tipo?: string;
                 urlYoutube?: string;
                 videoUrl?: string;
+                fuenteVideo?: string;
+                videoFuente?: string;
                 preguntas?: unknown;
               };
               const tipoRaw = String(fila.tipo ?? "").toLowerCase();
@@ -215,6 +261,10 @@ export function mapearDocumentoABorrador(
               const urlYoutube = String(
                 fila.urlYoutube ?? fila.videoUrl ?? "",
               ).trim();
+              const fuenteVideo =
+                normalizarFuenteVideo(fila.fuenteVideo ?? fila.videoFuente) ??
+                detectarFuenteVideo(urlYoutube) ??
+                "youtube";
               const preguntas = Array.isArray(fila.preguntas)
                 ? fila.preguntas
                     .map((pregunta) => {
@@ -249,7 +299,12 @@ export function mapearDocumentoABorrador(
                 id: fila.id ? String(fila.id) : undefined,
                 titulo: String(fila.titulo ?? clases[indice] ?? "Actividad"),
                 tipo,
-                ...(tipo === "video" && urlYoutube ? { urlYoutube } : {}),
+                ...(tipo === "video"
+                  ? {
+                      ...(urlYoutube ? { urlYoutube } : {}),
+                      fuenteVideo,
+                    }
+                  : {}),
                 ...(tipo === "quiz"
                   ? {
                       preguntas:
@@ -353,7 +408,8 @@ export function mapearContenidoAprendizajeSecundaria(
   progreso: ProgresoCursoAprendizaje;
   apuntes: string;
 } {
-  const modulos = (data.contenido.modulos ?? []).map((modulo) => ({
+  const modulos: ModuloAprendizaje[] = (data.contenido.modulos ?? []).map(
+    (modulo) => ({
     id: modulo.id,
     title: modulo.title,
     recursos: Array.isArray(modulo.recursos)
@@ -367,20 +423,31 @@ export function mapearContenidoAprendizajeSecundaria(
           }))
           .filter((recurso) => recurso.nombre && recurso.contenido)
       : [],
-    items: (modulo.items ?? []).map((item) => ({
-      id: item.id,
-      title: item.title,
-      type:
+    items: (modulo.items ?? []).map((item) => {
+      const type: TipoItemAprendizaje =
         item.type === "video" ||
         item.type === "quiz" ||
         item.type === "assignment"
           ? item.type
-          : ("reading" as const),
-      duration: item.duration ?? undefined,
-      description: item.description,
-      videoUrl: item.videoUrl ? String(item.videoUrl) : undefined,
-    })),
-  }));
+          : "reading";
+      return {
+        id: item.id,
+        title: item.title,
+        type,
+        duration: item.duration ?? undefined,
+        description: descripcionVisibleAlumno(item.description, {
+          titulo: item.title,
+          videoUrl: item.videoUrl ? String(item.videoUrl) : undefined,
+        }),
+        videoUrl: item.videoUrl ? String(item.videoUrl) : undefined,
+        videoFuente:
+          item.videoFuente ??
+          (item.videoUrl ? detectarFuenteVideo(item.videoUrl) : null) ??
+          undefined,
+      };
+    }),
+  }),
+  );
 
   const items = modulos.flatMap((modulo) => modulo.items);
   const itemsCompletados = data.itemsCompletados ?? [];

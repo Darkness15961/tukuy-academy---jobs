@@ -43,6 +43,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useContextoSesion } from "@/composables/useContextoSesion";
 import type { EstadoCursoDocente } from "@/portal-docente/types/docente.types";
+import { toast } from "@/lib/toast";
 
 type Pestaña = "REVISION" | "CATALOGO" | "CONTENIDO";
 type ModoModal = "APROBAR" | "REASIGNAR";
@@ -67,6 +68,8 @@ const contenidos = ref<CursoDocente[]>([]);
 const asignaciones = ref<AsignacionOrganizacion[]>([]);
 const menuCursoId = ref<string>();
 const cursoVistaPrevia = ref<CursoDocente>();
+const cursoPendienteOcultar = ref<CursoDocente>();
+const ocultandoCurso = ref(false);
 const avisoContenido = ref("");
 const nodosInternos = ref<
   Array<{ label: string; value: string; usuarios: number }>
@@ -216,12 +219,32 @@ async function duplicarContenido(curso: CursoDocente) {
   avisoContenido.value = "Se creó una copia editable del curso.";
 }
 
-async function archivarContenido(curso: CursoDocente) {
-  const archivado = await docenteService.archivarCurso(curso.id);
-  const indice = contenidos.value.findIndex((item) => item.id === archivado.id);
-  if (indice >= 0) contenidos.value[indice] = archivado;
+function solicitarOcultarContenido(curso: CursoDocente) {
+  cursoPendienteOcultar.value = curso;
   menuCursoId.value = undefined;
-  avisoContenido.value = "El curso fue archivado y conserva todo su contenido.";
+}
+
+async function confirmarOcultarContenido() {
+  const curso = cursoPendienteOcultar.value;
+  if (!curso || ocultandoCurso.value) return;
+  ocultandoCurso.value = true;
+  try {
+    const archivado = await docenteService.archivarCurso(curso.id);
+    const indice = contenidos.value.findIndex((item) => item.id === archivado.id);
+    if (indice >= 0) contenidos.value[indice] = archivado;
+    avisoContenido.value =
+      "El curso quedó oculto del catálogo. Quienes ya estaban inscritos conservan su acceso.";
+    toast.success("Curso oculto del catálogo.");
+    cursoPendienteOcultar.value = undefined;
+  } catch (causa) {
+    toast.error(
+      causa instanceof Error
+        ? causa.message
+        : "No se pudo ocultar el curso del catálogo.",
+    );
+  } finally {
+    ocultandoCurso.value = false;
+  }
 }
 
 const tituloModal = computed(() =>
@@ -283,9 +306,6 @@ onMounted(async () => {
         ).size,
       }));
 
-    if (typeof route.query.mensaje === "string" && route.query.mensaje) {
-      mensaje.value = route.query.mensaje;
-    }
     if (typeof route.query.observar === "string" && route.query.observar) {
       const curso = propuestas.value.find((item) => item.id === route.query.observar);
       if (curso) abrirObservacion(curso);
@@ -525,7 +545,7 @@ async function confirmarConfiguracion() {
             descuentoAplicaA: payload.descuentoAplicaA,
             descuentoArea: payload.descuentoArea,
           })}`;
-    mensaje.value = `“${curso.titulo}” publicado · ${resumenDto} · ${destinoLabel}.`;
+    toast.success(`“${curso.titulo}” publicado · ${resumenDto} · ${destinoLabel}.`);
   } finally {
     procesando.value = false;
   }
@@ -540,7 +560,7 @@ async function confirmarObservacion() {
       observacion.value.trim(),
     );
     await recargarPropuestas();
-    mensaje.value = `Se enviaron observaciones a ${cursoSeleccionado.value.docente}.`;
+    toast.success(`Se enviaron observaciones a ${cursoSeleccionado.value.docente}.`);
     modalObservar.value = false;
   } finally {
     procesando.value = false;
@@ -561,7 +581,7 @@ async function quitarAsignacion(titulo: string) {
       ),
     );
     await recargarAsignaciones();
-    mensaje.value = `Se quitó la asignación de “${titulo}”.`;
+    toast.success(`Se quitó la asignación de “${titulo}”.`);
   } finally {
     procesando.value = false;
   }
@@ -720,10 +740,11 @@ async function quitarAsignacion(titulo: string) {
                 Duplicar curso
               </button>
               <button
+                v-if="curso.estado !== 'ARCHIVADO'"
                 class="px-3 py-2 text-left text-red-600 hover:bg-red-500/10"
-                @click="archivarContenido(curso)"
+                @click="solicitarOcultarContenido(curso)"
               >
-                Archivar curso
+                Ocultar del catálogo
               </button>
             </div>
           </div>
@@ -1139,5 +1160,36 @@ async function quitarAsignacion(titulo: string) {
         </Button>
       </template>
     </Dialog>
+
+    <div
+      v-if="cursoPendienteOcultar"
+      class="fixed inset-0 z-50 grid place-items-center bg-slate-950/70 p-4"
+      @click.self="cursoPendienteOcultar = undefined"
+    >
+      <article class="w-full max-w-lg border border-border bg-card p-6 shadow-2xl">
+        <h2 class="text-lg font-black">¿Ocultar este curso del catálogo?</h2>
+        <p class="mt-2 text-sm text-muted-foreground">
+          <strong class="text-foreground">{{ cursoPendienteOcultar.titulo }}</strong>
+          dejará de mostrarse a nuevos alumnos. Quienes ya están inscritos siguen
+          viendo el contenido, progreso y certificados.
+        </p>
+        <div class="mt-6 flex justify-end gap-2">
+          <Button
+            variant="outline"
+            :disabled="ocultandoCurso"
+            @click="cursoPendienteOcultar = undefined"
+          >
+            Cancelar
+          </Button>
+          <Button
+            variant="destructive"
+            :disabled="ocultandoCurso"
+            @click="confirmarOcultarContenido"
+          >
+            {{ ocultandoCurso ? "Ocultando…" : "Sí, ocultar" }}
+          </Button>
+        </div>
+      </article>
+    </div>
   </section>
 </template>

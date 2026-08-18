@@ -101,11 +101,12 @@ const cursos = {
   async listar(): Promise<CursoAdministrado[]> {
     if (apiConfig.secundariaCursos) {
       const { data, error } = await supabasePrincipal().rpc(
-        "admin_listar_cursos_catalogo",
-        { p_instalacion_id: INSTALACION_TUKUY_ACADEMY_ID },
+        "admin_listar_cursos_catalogo" as never,
+        { p_instalacion_id: INSTALACION_TUKUY_ACADEMY_ID } as never,
       );
       if (error) throw new Error(error.message);
-      const cursosCatalogo = (data?.cursos ?? []) as CursoCatalogoPrincipal[];
+      const cursosCatalogo = ((data as { cursos?: CursoCatalogoPrincipal[] } | null)
+        ?.cursos ?? []) as CursoCatalogoPrincipal[];
       return cursosCatalogo.map(mapearCursoCatalogo);
     }
     return cursosRepositorio.listar();
@@ -356,9 +357,39 @@ export const administracionService = {
   },
 
   async obtenerResumenEcosistema() {
-    if (apiConfig.useMock) return { ...resumenEcosistemaAdmin };
-    const { data } = await api.get(API.administracion.ecosistema);
-    return data as ResumenEcosistemaAdmin;
+    const snap = await (
+      await import("@/api/services/ecosistema-admin.service")
+    ).obtenerSnapshotEcosistemaAdmin();
+    // Compat: ya no devolvemos KPIs inventados de bolsa/comunidad.
+    return {
+      sesionesEnVivo: {
+        programadas: 0,
+        hoy: 0,
+        enVivo: 0,
+        finalizadasMes: 0,
+        organizacionesConCalendario: 0,
+      },
+      certificados: {
+        emitidosMes: 0,
+        verificacionesPublicas: 0,
+        pendientesEmision: 0,
+        revocados: 0,
+      },
+      marketplace: {
+        ordenesMes: 0,
+        ingresosCursosPen: 0,
+        carritosAbiertos: 0,
+        pagosIzipayOk: 0,
+        pagosIzipayFallidos: 0,
+      },
+      comunidadBolsa: {
+        publicacionesReportadas: 0,
+        vacantesActivas: 0,
+        postulacionesMes: 0,
+        entidadesPublicas: 0,
+      },
+      _snapshot: snap,
+    } as ResumenEcosistemaAdmin & { _snapshot?: unknown };
   },
 
   async obtenerPanel() {
@@ -386,19 +417,15 @@ export const administracionService = {
   },
 
   async obtenerOperacionEcosistema() {
-    const [ecosistema, listaCertificados, listaOrdenes, listaSesiones] =
-      await Promise.all([
-        this.obtenerResumenEcosistema(),
-        certificados.listar(),
-        ordenesMarketplace.listar(),
-        sesiones.listar(),
-      ]);
-
+    const snap = await (
+      await import("@/api/services/ecosistema-admin.service")
+    ).obtenerSnapshotEcosistemaAdmin();
     return {
-      resumen: ecosistema,
-      certificados: listaCertificados,
-      ordenes: listaOrdenes,
-      sesiones: listaSesiones,
+      resumen: await this.obtenerResumenEcosistema(),
+      certificados: [] as CertificadoOperacionAdmin[],
+      ordenes: [] as OrdenMarketplaceAdmin[],
+      sesiones: [] as SesionGlobalAdmin[],
+      snapshot: snap,
     };
   },
 };

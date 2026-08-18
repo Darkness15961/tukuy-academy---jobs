@@ -9,6 +9,7 @@ import {
 import { ref } from "vue";
 
 import { Button } from "@/components/ui/button";
+import { inicialesNombre, urlFotoPerfilReal } from "@/lib/foto-perfil";
 import type { PublicacionComunidad } from "../types/comunidad.types";
 
 const props = defineProps<{
@@ -46,10 +47,18 @@ const nombresTipo: Record<PublicacionComunidad["tipo"], string> = {
   <article class="border border-border bg-card">
     <div class="flex items-start gap-4 p-5 sm:p-6">
       <img
+        v-if="urlFotoPerfilReal(publicacion.autor.avatar)"
         :src="publicacion.autor.avatar"
         :alt="publicacion.autor.nombre"
         class="h-12 w-12 shrink-0 object-cover"
       />
+      <div
+        v-else
+        class="grid h-12 w-12 shrink-0 place-items-center bg-primary/10 text-xs font-black text-primary"
+        aria-hidden="true"
+      >
+        {{ inicialesNombre(publicacion.autor.nombre) }}
+      </div>
       <div class="min-w-0 flex-1">
         <div class="flex flex-wrap items-center gap-2">
           <h2 class="font-black">{{ publicacion.autor.nombre }}</h2>
@@ -131,7 +140,19 @@ const nombresTipo: Record<PublicacionComunidad["tipo"], string> = {
         :key="item.id"
         class="mb-4 flex items-start gap-3 last:mb-0"
       >
-        <img :src="item.autor.avatar" :alt="item.autor.nombre" class="h-9 w-9 object-cover" />
+        <img
+          v-if="urlFotoPerfilReal(item.autor.avatar)"
+          :src="item.autor.avatar"
+          :alt="item.autor.nombre"
+          class="h-9 w-9 object-cover"
+        />
+        <div
+          v-else
+          class="grid h-9 w-9 shrink-0 place-items-center bg-primary/10 text-[10px] font-black text-primary"
+          aria-hidden="true"
+        >
+          {{ inicialesNombre(item.autor.nombre) }}
+        </div>
         <div class="flex-1 bg-card p-3">
           <p class="text-xs font-black">{{ item.autor.nombre }}</p>
           <p class="mt-1 text-sm leading-6 text-muted-foreground">{{ item.contenido }}</p>

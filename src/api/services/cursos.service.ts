@@ -15,6 +15,19 @@ import { useContextoSesion } from "@/composables/useContextoSesion";
 import type { CourseDto } from "@/types/api";
 import type { Course } from "@/types/academia";
 
+/** Último listado secundaria: cuántos cursos había vs cuántos salen al alumno. */
+export type MetaCatalogoAlumno = {
+  totalSecundaria: number;
+  visibles: number;
+  ocultosPorEstado: number;
+};
+
+let metaCatalogoAlumno: MetaCatalogoAlumno | null = null;
+
+export function obtenerMetaCatalogoAlumno() {
+  return metaCatalogoAlumno;
+}
+
 function catalogoLocal(): Course[] {
   return fusionarCatalogoConEntidades(mapCourseList(coursesMock));
 }
@@ -25,6 +38,7 @@ export const cursosService = {
     // Solo el portal estudiante consulta secundaria (bootstrap / mis-cursos).
     // Landing pública, org, docente y admin no deben disparar 401 sin sesión.
     if (portal !== "estudiante") {
+      metaCatalogoAlumno = null;
       if (apiConfig.useMock || !portal) {
         return resolveMock(catalogoLocal());
       }
@@ -51,7 +65,8 @@ export const cursosService = {
       const porMatricula = new Map(
         mis.cursos.map((item) => [item.cursoId, item]),
       );
-      const desdeCatalogo = listado.cursos
+      const brutos = Array.isArray(listado?.cursos) ? listado.cursos : [];
+      const desdeCatalogo = brutos
         .filter(
           (curso) =>
             porMatricula.has(curso.id) ||
@@ -61,11 +76,25 @@ export const cursosService = {
           mapearCursoSecundariaAPortal(curso, porMatricula.get(curso.id)),
         );
       const soloMatricula = mis.cursos
-        .filter((item) => !listado.cursos.some((curso) => curso.id === item.cursoId))
+        .filter((item) => !brutos.some((curso) => curso.id === item.cursoId))
         .map(mapearMatriculaAPortal);
+
+      metaCatalogoAlumno = {
+        totalSecundaria: brutos.length,
+        visibles: brutos.filter((c) =>
+          cursoEstadoVisibleEnCatalogoAlumno(c.estado),
+        ).length,
+        ocultosPorEstado: brutos.filter(
+          (c) =>
+            !cursoEstadoVisibleEnCatalogoAlumno(c.estado) &&
+            !porMatricula.has(c.id),
+        ).length,
+      };
+
       return [...desdeCatalogo, ...soloMatricula];
     }
 
+    metaCatalogoAlumno = null;
     if (apiConfig.useMock) {
       return resolveMock(catalogoLocal());
     }

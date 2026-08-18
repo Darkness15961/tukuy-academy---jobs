@@ -43,6 +43,12 @@ export type PortalContext = {
   scopeFilter: Ref<"all" | "for-you">;
   dateFilter: Ref<"all" | "recent" | "closing-soon" | "this-month">;
   coursesLoading: Ref<boolean>;
+  coursesError: Ref<string | null>;
+  metaCatalogoAlumno: ComputedRef<{
+    totalSecundaria: number;
+    visibles: number;
+    ocultosPorEstado: number;
+  } | null>;
   jobsLoading: Ref<boolean>;
   contentLoading: Ref<boolean>;
   openingCertificateId: Ref<string | null>;

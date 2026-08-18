@@ -450,6 +450,26 @@ export const aprendizajeService = {
       if (Number.isFinite(Number(resultado.score))) {
         notas[actividadId] = Number(resultado.score);
       }
+      const cert = resultado.certificado ?? null;
+      if (cert?.ok !== false && cert?.certificadoId) {
+        void import("@/api/services/docente.service")
+          .then(({ docenteService }) =>
+            docenteService.asegurarPdfCertificado({
+              id: String(cert.codigo ?? cert.certificadoId),
+              certificadoId: String(cert.certificadoId),
+              nombre: "Estudiante",
+              curso: "Curso",
+              fecha: new Date().toISOString().slice(0, 10),
+              estado: "EMITIDO",
+              codigoVerificacion: cert.codigo
+                ? String(cert.codigo)
+                : undefined,
+            }),
+          )
+          .catch((err) =>
+            console.warn("[aprendizaje] PDF auto-cert no generado:", err),
+          );
+      }
       return {
         score: Number(resultado.score ?? 0),
         passed: Boolean(resultado.passed),
@@ -461,7 +481,7 @@ export const aprendizajeService = {
         notas,
         progreso,
         estado: progreso >= 100 ? "Completado" : "En curso",
-        certificado: resultado.certificado ?? null,
+        certificado: cert,
       };
     }
 

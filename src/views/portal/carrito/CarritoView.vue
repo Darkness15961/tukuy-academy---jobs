@@ -18,6 +18,7 @@ import {
   usePasarelaIzipay,
 } from "@/composables/usePasarelaIzipay";
 import { enrichCourse } from "@/lib/presentacion-curso";
+import { toast } from "@/lib/toast";
 import type { Course } from "@/types/academia";
 import { entidadesComunidadService } from "@/modulos/comunidad/services/entidades.service";
 import { usePortalContext } from "../composables/usePortalContext";
@@ -77,6 +78,7 @@ watch(
     await entidadesComunidadService.sincronizarMatriculaTrasPago(ids);
     matriculaAplicada.value = true;
     clearCart();
+    toast.success("Pago confirmado. Ya puedes entrar a tus cursos.");
   },
 );
 
@@ -92,6 +94,7 @@ async function finalizarCompra() {
   }
   clearCart();
   pasarela.reiniciar();
+  toast.success("Matrícula activada. Te llevamos a tus cursos.");
   await router.push("/tukuy-academy/mi-aprendizaje");
 }
 
@@ -153,7 +156,7 @@ function irACursos() {
           <section class="border border-border bg-card">
             <div class="border-b border-border px-5 py-4">
               <h2 class="text-lg font-black">Cursos en el carrito</h2>
-              <p class="mt-1 text-sm text-[#64748B]">
+              <p class="mt-1 text-sm text-muted-foreground">
                 {{ cursosCarrito.length }} curso(s) seleccionado(s)
               </p>
             </div>
@@ -175,7 +178,7 @@ function irACursos() {
                 <h3 class="mt-2 text-lg font-black leading-snug">
                   {{ curso.title }}
                 </h3>
-                <p class="mt-2 text-sm text-[#64748B]">
+                <p class="mt-2 text-sm text-muted-foreground">
                   {{ curso.instructor }} · {{ curso.duration }}
                 </p>
                 <p class="mt-3 text-sm font-bold text-foreground">
@@ -187,7 +190,7 @@ function irACursos() {
                 </p>
                 <p
                   v-if="curso.pricing !== 'paid'"
-                  class="mt-2 text-xs text-[#64748B]"
+                  class="mt-2 text-xs text-muted-foreground"
                 >
                   Este curso no requiere pago. Puedes inscribirte desde el
                   catálogo.
@@ -278,7 +281,7 @@ function irACursos() {
             >
               <div>
                 <p class="text-sm font-bold leading-snug">{{ curso.title }}</p>
-                <p class="mt-1 text-xs text-[#64748B]">{{ curso.level }}</p>
+                <p class="mt-1 text-xs text-muted-foreground">{{ curso.level }}</p>
               </div>
               <strong class="text-sm font-black">
                 {{ formatPrecioSoles(curso.price ?? 0) }}
@@ -287,7 +290,7 @@ function irACursos() {
 
             <div
               v-if="!cursosPagados.length"
-              class="text-sm leading-6 text-[#64748B]"
+              class="text-sm leading-6 text-muted-foreground"
             >
               Aún no tienes cursos de pago en el carrito.
             </div>
@@ -300,7 +303,7 @@ function irACursos() {
                 {{ formatPrecioSoles(subtotal) }}
               </strong>
             </div>
-            <p class="mt-2 text-right text-xs text-[#64748B]">
+            <p class="mt-2 text-right text-xs text-muted-foreground">
               Importe final autorizado por el servidor (precio del catálogo)
             </p>
 

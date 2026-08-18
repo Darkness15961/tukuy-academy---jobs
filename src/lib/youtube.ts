@@ -75,7 +75,9 @@ export function leerProgresoVideoSegundos(
   actividadId: string,
 ): number {
   const valor = leerMapaProgresoVideo()[claveProgresoVideo(cursoId, actividadId)];
-  return Number.isFinite(valor) && valor > 0 ? Math.floor(valor) : 0;
+  return typeof valor === "number" && Number.isFinite(valor) && valor > 0
+    ? Math.floor(valor)
+    : 0;
 }
 
 export function guardarProgresoVideoSegundos(

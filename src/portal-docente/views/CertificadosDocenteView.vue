@@ -25,6 +25,7 @@ import Select from "primevue/select";
 import { useContextoSesion } from "@/composables/useContextoSesion";
 import { organizacionService } from "@/api/services/organizacion.service";
 import { apiConfig } from "@/api/config";
+import { toast } from "@/lib/toast";
 
 const props = withDefaults(
   defineProps<{
@@ -188,10 +189,9 @@ async function emitir(pendienteId: string) {
       pendientesFirma.value = await docenteService.listarPendientesFirma();
     }
     const requiereFirma = emitido.requiereFirmaInstitucional === true;
-    mensaje.value = requiereFirma
+    toast.success(requiereFirma
       ? "Certificado preparado. Falta la firma institucional para publicarlo."
-      : "Certificado emitido y enviado al estudiante.";
-    setTimeout(() => (mensaje.value = ""), 3500);
+      : "Certificado emitido y enviado al estudiante.");
   } catch (causa) {
     error.value =
       causa instanceof Error
@@ -213,8 +213,7 @@ async function firmar(item: {
     pendientesFirma.value = pendientesFirma.value.filter(
       (fila) => fila.firmaId !== item.firmaId,
     );
-    mensaje.value = `Firma institucional aplicada · ${item.nombre} · ${item.curso}`;
-    setTimeout(() => (mensaje.value = ""), 3000);
+    toast.success(`Firma institucional aplicada · ${item.nombre} · ${item.curso}`);
     emitidos.value = await docenteService.certificados.listar();
   } catch (causa) {
     error.value =
@@ -235,11 +234,9 @@ async function exportar() {
         // Evita que el navegador bloquee descargas en ráfaga.
         await new Promise((r) => setTimeout(r, 250));
       }
-      mensaje.value =
-        listaPdf.length === 1
+      toast.success(listaPdf.length === 1
           ? "PDF del certificado descargado."
-          : `${listaPdf.length} PDFs de certificados descargados.`;
-      setTimeout(() => (mensaje.value = ""), 2500);
+          : `${listaPdf.length} PDFs de certificados descargados.`);
     } catch {
       error.value = "No se pudieron generar los PDF de certificados.";
     }

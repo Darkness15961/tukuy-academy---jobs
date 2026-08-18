@@ -27,13 +27,16 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
+import { urlFotoPerfilReal } from "@/lib/foto-perfil";
 import { portalPathByView } from "@/lib/portal-routes";
 import type { WorkExperience } from "@/types/academia";
 import { usePortalContext } from "../composables/usePortalContext";
 
 const portal = usePortalContext();
 const router = useRouter();
-const profilePhotoSrc = "/img/vistasimg/perfilfoto.png";
+const fotoPerfil = computed(() =>
+  urlFotoPerfilReal(portal.user.value?.avatarUrl),
+);
 const ecosistemaAbierto = ref(false);
 
 const herramientasEcosistema = [
@@ -152,10 +155,19 @@ function irCertificados() {
           <div class="relative flex flex-col gap-6">
             <div class="flex items-start gap-4">
               <img
+                v-if="fotoPerfil"
                 class="h-24 w-24 rounded-2xl border border-white/20 object-cover shadow-xl sm:h-28 sm:w-28"
-                :src="profilePhotoSrc"
+                :src="fotoPerfil"
                 :alt="`Foto de ${portal.user.value.name}`"
+                referrerpolicy="no-referrer"
               />
+              <div
+                v-else
+                class="grid h-24 w-24 place-items-center rounded-2xl border border-white/20 bg-white/10 text-2xl font-black tracking-wide text-white shadow-xl sm:h-28 sm:w-28 sm:text-3xl"
+                aria-hidden="true"
+              >
+                {{ portal.user.value.initials }}
+              </div>
               <div class="min-w-0 pt-1">
                 <Badge
                   class="bg-white/10 text-white ring-1 ring-white/15"

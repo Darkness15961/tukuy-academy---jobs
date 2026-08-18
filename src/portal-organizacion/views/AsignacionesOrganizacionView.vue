@@ -14,6 +14,7 @@ import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import type { EstructuraOrganizacional, NivelOrganizacional, UnidadOrganizacional, VinculacionUnidad } from "@/portal-organizacion/types/estructura-organizacional.types";
+import { toast } from "@/lib/toast";
 
 type Asignacion = AsignacionOrganizacion;
 
@@ -137,32 +138,46 @@ function porcentaje(asignacion: Asignacion) {
 
 async function crear() {
   const curso = opcionesCursos.value.find((item) => item.value === nuevaAsignacion.cursoId);
-  if (!curso) return;
-  const fecha = nuevaAsignacion.vence
-    ? new Intl.DateTimeFormat("es-PE", {
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-        timeZone: "UTC",
-      }).format(new Date(`${nuevaAsignacion.vence}T00:00:00Z`))
-    : "Sin fecha límite";
-  const creada = await organizacionService.asignaciones.crear({
-    id: `asig-${Date.now()}`,
-    cursoId: curso.value,
-    curso: curso.label,
-    destino:
-      nuevaAsignacion.destinoId === "ENTIDAD"
-        ? "Toda la organización"
-        : opcionesDestinos.value.find((item) => item.value === nuevaAsignacion.destinoId)?.label ?? "Nodo no disponible",
-    destinoUnidadId: nuevaAsignacion.destinoId === "ENTIDAD" ? undefined : nuevaAsignacion.destinoId,
-    incluirDescendientes: true,
-    asignados: cantidadDestino(nuevaAsignacion.destinoId),
-    completados: 0,
-    vence: fecha,
-    obligatorio: nuevaAsignacion.obligatorio,
-  });
-  lista.value.unshift(creada);
-  modal.value = false;
+  if (!curso) {
+    toast.warning("Elige un curso", {
+      description: "Selecciona el curso a asignar.",
+    });
+    return;
+  }
+  try {
+    const fecha = nuevaAsignacion.vence
+      ? new Intl.DateTimeFormat("es-PE", {
+          day: "2-digit",
+          month: "short",
+          year: "numeric",
+          timeZone: "UTC",
+        }).format(new Date(`${nuevaAsignacion.vence}T00:00:00Z`))
+      : "Sin fecha límite";
+    const creada = await organizacionService.asignaciones.crear({
+      id: `asig-${Date.now()}`,
+      cursoId: curso.value,
+      curso: curso.label,
+      destino:
+        nuevaAsignacion.destinoId === "ENTIDAD"
+          ? "Toda la organización"
+          : opcionesDestinos.value.find((item) => item.value === nuevaAsignacion.destinoId)?.label ?? "Nodo no disponible",
+      destinoUnidadId: nuevaAsignacion.destinoId === "ENTIDAD" ? undefined : nuevaAsignacion.destinoId,
+      incluirDescendientes: true,
+      asignados: cantidadDestino(nuevaAsignacion.destinoId),
+      completados: 0,
+      vence: fecha,
+      obligatorio: nuevaAsignacion.obligatorio,
+    });
+    lista.value.unshift(creada);
+    modal.value = false;
+    toast.success("Asignación creada", {
+      description: `“${curso.label}” → ${creada.destino}.`,
+    });
+  } catch (err) {
+    toast.error("No se pudo crear la asignación", {
+      description: err instanceof Error ? err.message : undefined,
+    });
+  }
 }
 
 function verProgreso(asignacion: Asignacion) {
