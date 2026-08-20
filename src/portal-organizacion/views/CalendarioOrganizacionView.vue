@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useContextoSesion } from "@/composables/useContextoSesion";
+import { USUARIO_SESION_KEY } from "@/lib/constants";
 import type { SesionEnVivoOrganizacion } from "@/portal-organizacion/types/sesiones-en-vivo.types";
 
 const { contextoActivo } = useContextoSesion();
@@ -26,13 +27,24 @@ const procesando = ref(false);
 const formulario = reactive({
   titulo: "",
   cursoId: "",
-  docenteNombre: "Ing. Diana Chávez",
-  docenteEmail: "diana.chavez@cipcusco.org.pe",
+  docenteNombre: "",
+  docenteEmail: "",
   fechaHora: "",
   duracionMinutos: 60,
   emailsInvitados: "",
   notas: "",
 });
+
+function aplicarDocenteDesdeSesion() {
+  try {
+    const raw = localStorage.getItem(USUARIO_SESION_KEY);
+    const perfil = raw ? (JSON.parse(raw) as { name?: string; email?: string }) : null;
+    if (perfil?.name) formulario.docenteNombre = perfil.name;
+    if (perfil?.email) formulario.docenteEmail = perfil.email;
+  } catch {
+    // Sin perfil local.
+  }
+}
 
 async function cargar() {
   if (!contextoActivo.value) return;
@@ -45,6 +57,7 @@ async function cargar() {
 }
 
 onMounted(async () => {
+  aplicarDocenteDesdeSesion();
   try {
     await cargar();
   } finally {
@@ -63,6 +76,7 @@ function abrirProgramar(cursoId: string) {
   formulario.titulo = "";
   formulario.emailsInvitados = "";
   formulario.notas = "";
+  aplicarDocenteDesdeSesion();
   const base = new Date();
   base.setMinutes(0, 0, 0);
   base.setHours(16, 0, 0, 0);

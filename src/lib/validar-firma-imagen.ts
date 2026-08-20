@@ -25,7 +25,7 @@ export type ChequeoFirma = {
 export const REQUISITOS_FIRMA_TEXTO = [
   "Formato: PNG (recomendado) o JPG.",
   "Fondo: transparente (PNG) o blanco limpio.",
-  "Tamaño: entre 300×100 y 1200×400 px (aprox.).",
+  "Tamaño: entre 300×100",
   "Nitidez: firma clara, sin pixelado fuerte.",
   "Peso máximo: 1 MB.",
   "Color: tinta negra o azul.",

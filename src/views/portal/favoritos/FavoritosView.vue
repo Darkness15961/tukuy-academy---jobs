@@ -3,6 +3,8 @@ import { Heart, Search, Sparkles, Star, TrendingUp } from "lucide-vue-next";
 import { computed, ref } from "vue";
 
 import TarjetaCursoTendencia from "@/components/shared/TarjetaCursoTendencia.vue";
+import EsqueletoCursoTendencia from "@/components/shared/EsqueletoCursoTendencia.vue";
+import EsqueletoPortalLista from "@/components/shared/EsqueletoPortalLista.vue";
 import PortalSection from "@/components/shared/PortalSection.vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -63,7 +65,12 @@ const metrics = computed(() => [
 </script>
 
 <template>
-  <PortalSection wide :centered="false">
+  <EsqueletoPortalLista
+    v-if="portal.coursesLoading.value && !portal.courses.value.length"
+    metricas
+  />
+
+  <PortalSection v-else wide :centered="false">
     <section class="grid gap-7">
       <!-- Hero header -->
       <div
@@ -182,7 +189,18 @@ const metrics = computed(() => [
 
       <!-- Course grid -->
       <div
-        v-if="displayCourses.length"
+        v-if="portal.coursesLoading.value"
+        class="grid gap-5 sm:grid-cols-2 xl:grid-cols-3"
+      >
+        <EsqueletoCursoTendencia
+          v-for="i in 6"
+          :key="`fav-skeleton-${i}`"
+          fluid
+        />
+      </div>
+
+      <div
+        v-else-if="displayCourses.length"
         class="grid gap-5 sm:grid-cols-2 xl:grid-cols-3"
       >
         <TarjetaCursoTendencia
@@ -193,6 +211,7 @@ const metrics = computed(() => [
           :show-detail="false"
           :in-cart="portal.isInCart(course.id)"
           :is-favorite="true"
+          :inscribiendo="portal.estaInscribiendoCurso(course.id)"
           @add-to-cart="portal.handleAddToCart(course.id)"
           @continue-course="portal.openSimuladorCurso(course)"
           @select="portal.verDetalleCurso(course)"
@@ -201,7 +220,10 @@ const metrics = computed(() => [
       </div>
 
       <!-- Empty state -->
-      <Card v-else class="border-border shadow-none">
+      <Card
+        v-else-if="!portal.coursesLoading.value"
+        class="border-border shadow-none"
+      >
         <CardContent class="grid place-items-center gap-4 py-16 text-center">
           <div
             class="grid h-16 w-16 place-items-center rounded-none bg-rose-500/10"

@@ -917,6 +917,15 @@ export const secundariaGatewayService = {
     );
   },
 
+  async eliminarCursoPermanente(
+    cursoId: string,
+  ): Promise<{ ok: true; curso: CursoSecundaria }> {
+    return invocarMutacion<{ ok: true; curso: CursoSecundaria }>(
+      "eliminar-curso-permanente",
+      { cursoId },
+    );
+  },
+
   async listarCertificadosEmitidos() {
     return invocar<{
       ok: true;
@@ -1201,6 +1210,22 @@ export const secundariaGatewayService = {
         estado: "DISPONIBLE" | "POR_LIQUIDAR" | "PAGADO";
       }>;
     }>("list-ingresos");
+  },
+
+  async obtenerDuracionYoutube(urlOId: string) {
+    return invocar<
+      | {
+          ok: true;
+          videoId: string;
+          segundos: number;
+          minutos: number;
+        }
+      | {
+          ok: false;
+          code?: string;
+          error?: string;
+        }
+    >("youtube-duracion", { url: urlOId });
   },
 
   async abrirChatCursoAlumno(cursoId: string) {

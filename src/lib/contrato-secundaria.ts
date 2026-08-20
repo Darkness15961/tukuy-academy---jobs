@@ -170,6 +170,10 @@ export type CursoSecundaria = {
   totalModulos?: number;
   totalEdiciones?: number;
   versiones?: VersionCursoSecundaria[];
+  /** Suma de duracion_minutos de actividades activas (versión actual). */
+  duracionMinutosTotal?: number;
+  /** Actividades activas de la versión actual. */
+  totalLecciones?: number;
 };
 
 export type ListadoCursosSecundaria = {

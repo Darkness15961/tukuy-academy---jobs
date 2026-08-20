@@ -4,6 +4,7 @@ import { computed } from "vue";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import ImagenPortadaCurso from "@/components/shared/ImagenPortadaCurso.vue";
 import { Progress } from "@/components/ui/progress";
 import { cursoEsDePago } from "@/lib/acceso-curso";
 import type { Course } from "@/types/academia";
@@ -49,10 +50,15 @@ const statusBadgeClass = computed(() => {
     "
   >
     <div class="relative w-fit">
-      <img
+      <ImagenPortadaCurso
         :src="course.image"
         :alt="course.title"
-        class="h-14 w-14 rounded-none object-cover sm:h-16 sm:w-16"
+        :object-position="course.imagenPosicion"
+        :contenedor-class="
+          compact
+            ? 'h-14 w-14 shrink-0 sm:h-16 sm:w-16'
+            : 'h-24 w-24 shrink-0'
+        "
       />
       <Button
         class="absolute -right-1 -top-1 h-7 w-7 rounded-none bg-card shadow-sm"

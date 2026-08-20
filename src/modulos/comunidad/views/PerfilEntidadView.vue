@@ -18,6 +18,7 @@ import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 import { Button } from "@/components/ui/button";
+import ImagenPortadaCurso from "@/components/shared/ImagenPortadaCurso.vue";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCarrito } from "@/composables/useCarrito";
 import { matricularCurso } from "@/lib/acceso-curso";
@@ -461,7 +462,11 @@ async function contactar() {
                     @click="verDetalleCurso(curso)"
                     @keydown.enter.prevent="verDetalleCurso(curso)"
                   >
-                    <img :src="curso.imagen" :alt="curso.titulo" class="h-36 w-full object-cover" />
+                    <ImagenPortadaCurso
+                      :src="curso.imagen"
+                      :alt="curso.titulo"
+                      contenedor-class="h-36 w-full"
+                    />
                     <div class="p-4">
                       <p class="text-[10px] font-black uppercase tracking-wide text-emerald-700 dark:text-emerald-400">Público · {{ nombresCategorias(curso) }}</p>
                       <h4 class="mt-2 font-black">{{ curso.titulo }}</h4>
@@ -502,7 +507,12 @@ async function contactar() {
                     @keydown.enter.prevent="verDetalleCurso(curso)"
                   >
                     <div class="relative">
-                      <img :src="curso.imagen" :alt="curso.titulo" class="h-36 w-full object-cover" :class="!accesos[curso.id]?.disponible ? 'grayscale' : ''" />
+                      <ImagenPortadaCurso
+                        :src="curso.imagen"
+                        :alt="curso.titulo"
+                        contenedor-class="h-36 w-full"
+                        :imagen-class="!accesos[curso.id]?.disponible ? 'grayscale' : ''"
+                      />
                       <span class="absolute left-3 top-3 inline-flex items-center gap-1 bg-[#07152B] px-2 py-1 text-[10px] font-black uppercase text-white"><LockKeyhole class="h-3 w-3" /> Interno</span>
                     </div>
                     <div class="p-4">

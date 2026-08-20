@@ -37,6 +37,7 @@ const emit = defineEmits<{
 
 const viewport = ref<HTMLElement | null>(null);
 const lienzo = ref<HTMLElement | null>(null);
+const arbol = ref<HTMLElement | null>(null);
 const escala = ref(1);
 // Escala que equivale a "100%" para el usuario (se fija al ajustar)
 const escalaBase = ref(1);
@@ -53,38 +54,57 @@ function cambiarEscala(incremento: number) {
   escala.value = limitarEscala(
     Number((escala.value + incremento).toFixed(2)),
   );
+  nextTick(() => centrarScroll());
+}
+
+function centrarScroll() {
+  const caja = viewport.value;
+  if (!caja) return;
+  caja.scrollTo({
+    left: Math.max(0, (caja.scrollWidth - caja.clientWidth) / 2),
+    top: Math.max(0, (caja.scrollHeight - caja.clientHeight) / 2),
+    behavior: "smooth",
+  });
 }
 
 function restablecerEscala() {
-  // Vuelve a la escala ajustada (que es el "100%" del usuario)
   escala.value = escalaBase.value;
-  nextTick(() => viewport.value?.scrollTo({ left: 0, behavior: "smooth" }));
+  nextTick(() => centrarScroll());
 }
 
 async function ajustarAlDiagrama() {
   if (!viewport.value || !lienzo.value) return;
 
-  // Medir el ancho natural del lienzo compensando el zoom CSS actual.
-  const rectLienzo = lienzo.value.getBoundingClientRect();
-  const anchoNatural = Math.max(rectLienzo.width / escala.value, 1);
-
-  // El ancho disponible en el viewport (clientWidth ya excluye el scrollbar)
-  const anchoDisponible = Math.max(viewport.value.clientWidth, 1);
-
-  const escalaObjetivo = limitarEscala(
-    Number((anchoDisponible / anchoNatural).toFixed(2)),
-  );
-
-  escala.value = escalaObjetivo;
-  // Actualizar la base: este ajuste es el nuevo "100%"
-  escalaBase.value = escalaObjetivo;
-
-  // Esperar dos frames para que el browser complete el reflow del zoom CSS
+  escala.value = 1;
+  await nextTick();
   await new Promise<void>((resolve) =>
     requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
   );
 
-  viewport.value?.scrollTo({ left: 0, behavior: "smooth" });
+  const pieza = arbol.value ?? lienzo.value;
+  const rectArbol = pieza.getBoundingClientRect();
+  const anchoNatural = Math.max(rectArbol.width, 1);
+  const altoNatural = Math.max(rectArbol.height, 1);
+  const anchoDisponible = Math.max(viewport.value.clientWidth - 48, 1);
+  const altoDisponible = Math.max(viewport.value.clientHeight - 32, 1);
+
+  const escalaObjetivo = limitarEscala(
+    Number(
+      Math.min(
+        1,
+        anchoDisponible / anchoNatural,
+        altoDisponible / altoNatural,
+      ).toFixed(2),
+    ),
+  );
+
+  escala.value = escalaObjetivo;
+  escalaBase.value = escalaObjetivo;
+
+  await new Promise<void>((resolve) =>
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+  );
+  centrarScroll();
 }
 
 // Al montar, auto-ajustar para que el organigrama llene el espacio disponible.
@@ -151,7 +171,7 @@ onMounted(async () => {
     </div>
 
     <div ref="viewport" class="organigrama-viewport">
-      <div ref="lienzo" class="organigrama-lienzo" :style="{ zoom: escala }">
+      <div ref="lienzo" class="organigrama-lienzo">
         <div class="guias-niveles" aria-hidden="true">
           <div
             v-for="nivel in niveles"
@@ -166,43 +186,51 @@ onMounted(async () => {
             <div class="guia-nivel-banda" />
           </div>
         </div>
-        <div class="entidad-raiz">
-          <span class="entidad-marca">
-            <img
-              v-if="logoEntidad"
-              :src="logoEntidad"
-              :alt="nombreEntidad"
-              class="entidad-logo"
-            />
-            <Building2 v-else class="h-5 w-5" />
-          </span>
-          <div class="entidad-contenido">
-            <div class="entidad-identidad">
-              <small>Entidad</small>
-              <strong>{{ nombreEntidad || "Organización" }}</strong>
+        <div
+          ref="arbol"
+          class="organigrama-escala"
+          :style="{ zoom: escala }"
+        >
+          <div class="organigrama-arbol">
+            <div class="entidad-raiz">
+              <span class="entidad-marca">
+                <img
+                  v-if="logoEntidad"
+                  :src="logoEntidad"
+                  :alt="nombreEntidad"
+                  class="entidad-logo"
+                />
+                <Building2 v-else class="h-5 w-5" />
+              </span>
+              <div class="entidad-contenido">
+                <div class="entidad-identidad">
+                  <small>Entidad</small>
+                  <strong>{{ nombreEntidad || "Organización" }}</strong>
+                </div>
+                <span v-if="nombreEstructura" class="entidad-estructura">
+                  {{ nombreEstructura }}
+                </span>
+              </div>
             </div>
-            <span v-if="nombreEstructura" class="entidad-estructura">
-              {{ nombreEstructura }}
-            </span>
+
+            <ul v-if="nodos.length" class="organigrama-raices">
+              <NodoOrganigrama
+                v-for="nodo in nodos"
+                :key="nodo.id"
+                :nodo="nodo"
+                @seleccionar="emit('seleccionar', $event)"
+                @agregar-subnivel="emit('agregarSubnivel', $event)"
+                @agregar-mismo-nivel="
+                  (nodoHermano, lado) =>
+                    emit('agregarMismoNivel', nodoHermano, lado)
+                "
+              />
+            </ul>
+            <p v-else class="py-10 text-center text-sm text-muted-foreground">
+              Agrega la primera unidad para generar el organigrama.
+            </p>
           </div>
         </div>
-
-        <ul v-if="nodos.length" class="organigrama-raices">
-          <NodoOrganigrama
-            v-for="nodo in nodos"
-            :key="nodo.id"
-            :nodo="nodo"
-            @seleccionar="emit('seleccionar', $event)"
-            @agregar-subnivel="emit('agregarSubnivel', $event)"
-            @agregar-mismo-nivel="
-              (nodoHermano, lado) =>
-                emit('agregarMismoNivel', nodoHermano, lado)
-            "
-          />
-        </ul>
-        <p v-else class="py-10 text-center text-sm text-muted-foreground">
-          Agrega la primera unidad para generar el organigrama.
-        </p>
       </div>
     </div>
   </div>
@@ -210,7 +238,10 @@ onMounted(async () => {
 
 <style scoped>
 .organigrama-contenedor {
+  display: flex;
   min-width: 0;
+  min-height: 36rem;
+  flex-direction: column;
   overflow: hidden;
   background:
     linear-gradient(
@@ -296,8 +327,9 @@ onMounted(async () => {
 .organigrama-viewport {
   width: 100%;
   min-width: 0;
-  overflow-x: auto;
-  overflow-y: hidden;
+  flex: 1;
+  min-height: 28rem;
+  overflow: auto;
   scrollbar-color: var(--color-primary)
     color-mix(in srgb, var(--color-muted) 80%, transparent);
   scrollbar-width: auto;
@@ -319,21 +351,36 @@ onMounted(async () => {
 
 .organigrama-lienzo {
   position: relative;
+  display: flex;
+  box-sizing: border-box;
+  width: max(100%, max-content);
+  min-width: 100%;
+  min-height: 100%;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 2rem 3rem 2.75rem 3.25rem;
+}
+
+.organigrama-escala {
+  position: relative;
+  z-index: 1;
+}
+
+.organigrama-arbol {
+  display: flex;
   width: max-content;
-  min-width: max-content;
-  padding: 2rem 3.75rem 3rem 4.25rem;
+  flex-direction: column;
+  align-items: center;
 }
 
 /* ── Guías de nivel ── */
 .guias-niveles {
   position: absolute;
   z-index: 0;
-  /* El primer nivel de nodos empieza en ~9.55rem desde el tope del lienzo */
-  top: 9.55rem;
+  top: 9.1rem;
   right: 0;
   bottom: 0;
   left: 0;
-  /* sin overflow:hidden para que se extienda al ancho real del contenido */
   min-width: 100%;
   pointer-events: none;
 }
@@ -405,8 +452,10 @@ onMounted(async () => {
   display: flex;
   position: relative;
   z-index: 1;
-  width: min(32rem, calc(100vw - 3rem));
-  margin: 0 auto;
+  box-sizing: border-box;
+  width: 20rem;
+  max-width: 20rem;
+  margin: 0;
   align-items: center;
   gap: 0.75rem;
   border-top: 4px solid var(--color-accent);
@@ -484,7 +533,10 @@ onMounted(async () => {
   position: relative;
   z-index: 1;
   display: flex;
+  width: max-content;
+  max-width: none;
   justify-content: center;
+  align-items: flex-start;
   margin: 0;
   list-style: none;
   padding: 2rem 0 0;

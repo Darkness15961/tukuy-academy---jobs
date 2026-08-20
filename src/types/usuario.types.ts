@@ -14,6 +14,9 @@ export type UserProfile = {
   name: string;
   initials: string;
   avatarUrl?: string;
+  email?: string;
+  phone?: string;
+  authProvider?: string;
   trade: string;
   specialty: string;
   location: string;

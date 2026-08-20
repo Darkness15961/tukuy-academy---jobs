@@ -5,15 +5,21 @@ import { cn } from "@/lib/utils";
 withDefaults(
   defineProps<{
     variant?: "light" | "dark";
+    /** Ocupa el ancho de la celda en grids (catálogo, Mi aprendizaje). */
+    fluid?: boolean;
   }>(),
   {
     variant: "light",
+    fluid: false,
   },
 );
 </script>
 
 <template>
-  <article class="flex w-[280px] shrink-0 snap-start flex-col gap-3">
+  <article
+    class="flex flex-col gap-3"
+    :class="fluid ? 'w-full shrink' : 'w-[280px] shrink-0 snap-start'"
+  >
     <Skeleton
       :class="
         cn(

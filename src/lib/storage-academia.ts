@@ -521,9 +521,9 @@ function esUuidInstalacion(valor: string) {
 }
 
 export const storageAcademia = {
-  /** Portadas de cursos / catálogo → `portadas/`. */
-  subirPortada(archivo: File) {
-    return subirConPresign("portada", archivo);
+  /** Portadas de cursos / branding org → `portadas/`. */
+  subirPortada(archivo: File, instalacionId?: string | null) {
+    return subirConPresign("portada", archivo, instalacionId);
   },
   /** Materiales de aprendizaje → `materiales/`. */
   subirMaterial(archivo: File) {

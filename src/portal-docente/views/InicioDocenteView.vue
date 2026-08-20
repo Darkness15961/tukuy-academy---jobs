@@ -13,6 +13,7 @@ import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 
 import PortadaPanel from "@/components/shared/PortadaPanel.vue";
+import ImagenPortadaCurso from "@/components/shared/ImagenPortadaCurso.vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -243,10 +244,11 @@ function fechaActividad(fecha: string) {
               :key="curso.id"
               class="grid gap-4 p-5 sm:grid-cols-[64px_minmax(0,1fr)_100px] sm:items-center"
             >
-              <img
+              <ImagenPortadaCurso
                 :src="curso.imagen"
                 :alt="curso.titulo"
-                class="h-16 w-16 rounded-none object-cover"
+                :object-position="curso.imagenPosicion"
+                contenedor-class="h-16 w-16 shrink-0"
               />
               <div class="min-w-0">
                 <div class="flex flex-wrap items-center gap-2">
@@ -300,6 +302,12 @@ function fechaActividad(fecha: string) {
                   curso.estudiantes
                 }}</strong>
                 <span class="text-xs text-muted-foreground">estudiantes</span>
+                <span
+                  v-if="curso.duracion && curso.duracion !== '—'"
+                  class="mt-1 flex items-center gap-1 text-xs font-semibold text-foreground sm:justify-end"
+                >
+                  <Clock3 class="h-3 w-3 text-primary" />{{ curso.duracion }}
+                </span>
                 <span
                   v-if="curso.valoracion"
                   class="mt-1 flex items-center gap-1 text-xs text-accent sm:justify-end"

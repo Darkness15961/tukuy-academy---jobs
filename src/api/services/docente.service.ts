@@ -71,10 +71,6 @@ export interface ConfiguracionDocente {
   biografia: string;
   experiencia: string[];
   fotoUrl?: string;
-  avisos: boolean;
-  autenticacionDosPasos: boolean;
-  alertasInicioSesion: boolean;
-  zonaHoraria: string;
 }
 
 const contextoPredeterminado: ContextoSesion = {
@@ -718,7 +714,11 @@ function mapearCertificadoPendienteSecundaria(
 
 async function persistirPdfCertificadoEmitido(
   certificado: CertificadoEmitidoDocente,
-  opciones: { logoEntidadUrl?: string | null } = {},
+  opciones: {
+    logoEntidadUrl?: string | null;
+    plantillaCertificadoId?: string | null;
+    cantidadFirmas?: number | null;
+  } = {},
 ): Promise<CertificadoEmitidoDocente> {
   const certificadoId = certificado.certificadoId || certificado.id;
   const codigo =
@@ -735,6 +735,9 @@ async function persistirPdfCertificadoEmitido(
     const { INSTALACION_TUKUY_ACADEMY_ID, CONTEXTO_SESION_KEY } = await import(
       "@/lib/constants"
     );
+    const { clampCantidadFirmasCertificado } = await import(
+      "@/lib/certificado-curso"
+    );
 
     let instalacionId = INSTALACION_TUKUY_ACADEMY_ID;
     try {
@@ -749,8 +752,21 @@ async function persistirPdfCertificadoEmitido(
       /* usa Tukuy Academy */
     }
 
+    const config =
+      await plantillasCertificadoService.obtenerConfig(instalacionId);
+    const plantillaId = String(opciones.plantillaCertificadoId ?? "").trim();
     const plantilla =
-      await plantillasCertificadoService.obtenerDefault(instalacionId);
+      (plantillaId
+        ? config.plantillas.find((p) => p.id === plantillaId)
+        : null) ??
+      config.plantillas.find((p) => p.esDefault) ??
+      (await plantillasCertificadoService.obtenerDefault(instalacionId));
+
+    const cantidadFirmas = clampCantidadFirmasCertificado(
+      opciones.cantidadFirmas ??
+        plantilla?.layout?.cantidadFirmantesActiva ??
+        1,
+    );
 
     const blob = await blobCertificatePdf({
       holderName: certificado.nombre,
@@ -765,7 +781,7 @@ async function persistirPdfCertificadoEmitido(
       certificateCode: codigo,
       issuerName: certificado.organizacionEmisora ?? "Tukuy Academy",
       issuerLogoUrl: opciones.logoEntidadUrl || undefined,
-      plantilla,
+      plantilla: plantilla ?? undefined,
     });
     const archivo = new File(
       [blob],
@@ -773,10 +789,6 @@ async function persistirPdfCertificadoEmitido(
       { type: "application/pdf" },
     );
     const subida = await storageAcademia.subirCertificado(archivo);
-    const cantidadFirmantes =
-      plantilla?.layout?.cantidadFirmantesActiva ??
-      plantilla?.layout?.firmantes?.filter((f) => f.visible !== false).length ??
-      1;
     await secundariaGatewayService.actualizarDocumentoCertificado({
       certificadoId,
       claveAlmacenamiento: subida.objectKey,
@@ -785,11 +797,8 @@ async function persistirPdfCertificadoEmitido(
         ? {
             id: plantilla.id,
             nombre: plantilla.nombre,
-            cantidadFirmantes:
-              cantidadFirmantes === 2 || cantidadFirmantes === 3
-                ? cantidadFirmantes
-                : 1,
-            versionPlantilla: `plantilla:${plantilla.id}:f${cantidadFirmantes}`,
+            cantidadFirmantes: cantidadFirmas,
+            versionPlantilla: `plantilla:${plantilla.id}:f${cantidadFirmas}`,
             instalacionId,
           }
         : null,
@@ -1078,10 +1087,6 @@ const configuracionSemilla: ConfiguracionDocente = {
   biografia: "",
   experiencia: [],
   fotoUrl: undefined,
-  avisos: true,
-  autenticacionDosPasos: false,
-  alertasInicioSesion: true,
-  zonaHoraria: "America/Lima",
 };
 
 function clonarAnalitica(origen: AnaliticaDocente): AnaliticaDocente {
@@ -1471,6 +1476,18 @@ export const docenteService = {
   async eliminarCurso(id: string) {
     if (apiConfig.secundariaCursos) {
       const resultado = await secundariaGatewayService.eliminarCurso(id);
+      return mapearCursoSecundariaADocente(
+        resultado.curso,
+        obtenerContextoActual(),
+      );
+    }
+    return this.archivarCurso(id);
+  },
+
+  async eliminarCursoPermanente(id: string) {
+    if (apiConfig.secundariaCursos) {
+      const resultado =
+        await secundariaGatewayService.eliminarCursoPermanente(id);
       return mapearCursoSecundariaADocente(
         resultado.curso,
         obtenerContextoActual(),

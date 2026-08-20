@@ -25,7 +25,8 @@ const classes = computed(() =>
         props.variant === "default",
       "bg-secondary text-secondary-foreground hover:bg-[#0a3268] dark:hover:bg-[#243f66]":
         props.variant === "secondary",
-      "border border-input bg-card hover:bg-muted": props.variant === "outline",
+      "border border-input bg-card text-foreground hover:bg-muted":
+        props.variant === "outline",
       "hover:bg-muted": props.variant === "ghost",
       "text-primary underline-offset-4 hover:underline":
         props.variant === "link",

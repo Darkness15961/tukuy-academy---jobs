@@ -126,8 +126,11 @@ function iniciales(nombre: string, fallback?: string) {
 <style scoped>
 .nodo-rama {
   position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   list-style: none;
-  padding: 1.75rem 0.5rem 0;
+  padding: 1.75rem 0.75rem 0;
   text-align: center;
 }
 
@@ -362,7 +365,9 @@ function iniciales(nombre: string, fallback?: string) {
 .nivel-hijos {
   position: relative;
   display: flex;
+  width: max-content;
   justify-content: center;
+  align-items: flex-start;
   margin: 0;
   list-style: none;
   padding: 1.75rem 0 0;

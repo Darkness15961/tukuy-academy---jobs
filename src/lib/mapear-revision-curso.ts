@@ -2,8 +2,13 @@ import type {
   ActividadRevisionCurso,
   ModuloRevisionCurso,
   RecursoRevisionCurso,
+  RevisionAcademicaCurso,
   TipoActividadRevision,
 } from "@/portal-organizacion/types/revision-curso.types";
+import {
+  etiquetasRequisitos,
+  normalizarRequisitos,
+} from "@/lib/requisitos-curso";
 import {
   detectarFuenteVideo,
   etiquetaFuenteVideo,
@@ -144,4 +149,48 @@ export function mapearSeccionesAModulosRevision(
       actividadesDetalle: actividades,
     };
   });
+}
+
+/** Carga la revisión académica desde la BD secundaria (sin datos simulados). */
+export async function cargarRevisionAcademicaDesdeSecundaria(
+  cursoDocenteId: string,
+  tituloFallback: string,
+  enviadaEn?: string,
+): Promise<RevisionAcademicaCurso> {
+  const { secundariaGatewayService } = await import(
+    "@/api/services/secundaria-gateway.service"
+  );
+  const detalle = await secundariaGatewayService.obtenerBorrador(cursoDocenteId);
+  const borrador = (detalle.borrador ?? {}) as Record<string, unknown>;
+  const curso = (detalle.curso ?? {}) as Record<string, unknown>;
+  const secciones = Array.isArray(borrador.secciones)
+    ? (borrador.secciones as Array<Record<string, unknown>>)
+    : [];
+  const objetivos = Array.isArray(borrador.objetivos)
+    ? borrador.objetivos.map(String)
+    : String(borrador.descripcion ?? curso.resumen ?? "")
+      ? [String(borrador.descripcion ?? curso.resumen)]
+      : [];
+  const requisitos = etiquetasRequisitos(normalizarRequisitos(borrador.requisitos));
+
+  return {
+    cursoId: cursoDocenteId,
+    version: Number(curso.totalVersiones ?? 1),
+    descripcion: String(
+      borrador.descripcion ?? curso.resumen ?? tituloFallback,
+    ),
+    objetivos: objetivos.length
+      ? objetivos
+      : [`Revisar el contenido de ${tituloFallback}.`],
+    requisitos: requisitos.length ? requisitos : ["Sin requisitos enlazados"],
+    modulos: mapearSeccionesAModulosRevision(secciones, cursoDocenteId),
+    horasCertificables: Number(
+      borrador.horas ??
+        ((curso.versionActual as Record<string, unknown> | undefined)?.horas ??
+          1),
+    ),
+    notaMinimaPropuesta: Number(borrador.notaMinima ?? 11),
+    certificadoPropuesto: Boolean(borrador.certificado ?? true),
+    enviadaEn: enviadaEn ?? String(curso.actualizadoEn ?? new Date().toISOString()),
+  };
 }

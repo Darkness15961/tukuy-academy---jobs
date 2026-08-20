@@ -8,7 +8,6 @@ import {
   FileText,
   MapPin,
   ShieldCheck,
-  Sparkles,
   UserRound,
   UsersRound,
 } from "lucide-vue-next";
@@ -63,6 +62,14 @@ const herramientasEcosistema = [
   },
 ] as const;
 
+const textoOUbicacion = (valor?: string) => valor?.trim() || "Sin indicar";
+
+const resumenOficio = computed(() => {
+  const oficio = portal.user.value?.trade?.trim();
+  const zona = portal.user.value?.location?.trim();
+  return [oficio, zona].filter(Boolean).join(" · ") || "Perfil aún sin oficio ni zona";
+});
+
 const profileStats = computed(() => [
   {
     label: "Perfil",
@@ -72,23 +79,16 @@ const profileStats = computed(() => [
     class: "bg-primary/10 text-primary",
   },
   {
-    label: "Empleabilidad",
-    value: `${portal.user.value?.employabilityScore ?? 0}%`,
-    helper: "score actual",
-    icon: Sparkles,
-    class: "bg-amber-50 text-amber-700",
-  },
-  {
     label: "Certificados",
     value: String(portal.user.value?.certificates ?? 0),
-    helper: "validados",
+    helper: "emitidos",
     icon: Award,
-    class: "bg-emerald-50 text-emerald-700",
+    class: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300",
   },
   {
-    label: "Postulaciones",
-    value: String(portal.user.value?.applications ?? 0),
-    helper: "activas",
+    label: "Experiencia",
+    value: String(portal.workExperiences.value.length),
+    helper: "registros",
     icon: BriefcaseBusiness,
     class: "bg-muted text-foreground",
   },
@@ -104,16 +104,15 @@ function formatDate(dateStr?: string) {
 }
 
 const profileDetails = computed(() => [
-  { label: "Oficio", value: portal.user.value?.trade ?? "-" },
-  { label: "Especialidad", value: portal.user.value?.specialty ?? "-" },
+  { label: "Correo", value: portal.user.value?.email?.trim() || "Sin indicar" },
+  { label: "Teléfono", value: portal.user.value?.phone?.trim() || "Sin indicar" },
+  { label: "Oficio", value: textoOUbicacion(portal.user.value?.trade) },
+  { label: "Especialidad", value: textoOUbicacion(portal.user.value?.specialty) },
   {
     label: "Fecha de nacimiento",
     value: formatDate(portal.user.value?.birthDate),
   },
-  { label: "Ubicación", value: portal.user.value?.location ?? "-" },
-  { label: "Disponibilidad", value: "Inmediata" },
-  { label: "Pretensión", value: "S/ 1,800" },
-  { label: "Estado", value: "Verificado" },
+  { label: "Ubicación", value: textoOUbicacion(portal.user.value?.location) },
 ]);
 
 function statusVariant(status: WorkExperience["status"]) {
@@ -173,14 +172,13 @@ function irCertificados() {
                   class="bg-white/10 text-white ring-1 ring-white/15"
                   variant="secondary"
                 >
-                  Perfil verificado
+                  Estudiante
                 </Badge>
                 <h2 class="mt-3 text-3xl font-bold tracking-tight sm:text-4xl">
                   {{ portal.user.value.name }}
                 </h2>
                 <p class="mt-2 text-sm text-white/75">
-                  {{ portal.user.value.trade }} ·
-                  {{ portal.user.value.location }}
+                  {{ resumenOficio }}
                 </p>
               </div>
             </div>
@@ -200,7 +198,9 @@ function irCertificados() {
                   <MapPin class="h-4 w-4 text-amber-300" />
                   Zona principal
                 </div>
-                <strong class="mt-2 block text-2xl">Lima Este</strong>
+                <strong class="mt-2 block text-2xl">{{
+                  textoOUbicacion(portal.user.value.location)
+                }}</strong>
               </div>
             </div>
           </div>
@@ -333,7 +333,7 @@ function irCertificados() {
       </div>
     </section>
 
-    <section class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+    <section class="grid gap-4 md:grid-cols-3">
       <Card
         v-for="stat in profileStats"
         :key="stat.label"
@@ -472,7 +472,7 @@ function irCertificados() {
                 >Cargos, obras, módulos y evidencias.</span
               >
             </div>
-            <Badge variant="success">Conectado</Badge>
+            <Badge variant="outline">Próximamente</Badge>
           </button>
 
           <button
@@ -510,6 +510,13 @@ function irCertificados() {
         </Button>
       </CardHeader>
       <CardContent class="grid gap-4">
+        <p
+          v-if="!portal.workExperiences.value.length"
+          class="rounded-xl border border-dashed border-border bg-muted/40 p-4 text-sm text-muted-foreground"
+        >
+          Aún no hay experiencia laboral registrada. Cuando conectes Tukuy Obra
+          o la declares, aparecerá aquí.
+        </p>
         <article
           v-for="experience in portal.workExperiences.value"
           :key="experience.id"

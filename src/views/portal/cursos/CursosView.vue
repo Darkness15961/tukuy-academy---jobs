@@ -12,6 +12,7 @@ import PortadaCurso from "@/components/shared/PortadaCurso.vue";
 import SelectorFiltro from "@/components/shared/SelectorFiltro.vue";
 import TarjetaCursoTendencia from "@/components/shared/TarjetaCursoTendencia.vue";
 import EsqueletoCursoTendencia from "@/components/shared/EsqueletoCursoTendencia.vue";
+import EsqueletoPortalCursos from "@/components/shared/EsqueletoPortalCursos.vue";
 import PortalSection from "@/components/shared/PortalSection.vue";
 import { Input } from "@/components/ui/input";
 import { useContextoSesion } from "@/composables/useContextoSesion";
@@ -27,6 +28,7 @@ const portal = usePortalContext();
 const router = useRouter();
 const { contextoActivo } = useContextoSesion();
 const banners = ref<BannerPortalAlumno[]>([]);
+const cargandoBanners = ref(true);
 
 const opcionesFuente = computed(() => [
   {
@@ -76,6 +78,7 @@ const resumenFiltros = computed(() => {
 });
 
 async function cargarBanners() {
+  cargandoBanners.value = true;
   try {
     const orgId = contextoActivo.value?.organizacionId?.trim() || null;
     const lista = await portalBannersService.listarAlumno(orgId);
@@ -96,6 +99,8 @@ async function cargarBanners() {
     );
   } catch {
     banners.value = [];
+  } finally {
+    cargandoBanners.value = false;
   }
 }
 
@@ -124,178 +129,202 @@ onMounted(() => {
 </script>
 
 <template>
-  <PortalSection wide>
-    <PortadaCurso
-      :slides="banners"
-      :interval-ms="5000"
-      @cta="onCtaBanner"
-    />
+  <EsqueletoPortalCursos
+    v-if="portal.coursesLoading.value && !portal.courses.value.length"
+  />
 
-    <CarruselCursos
-      subtitle="Formación especializada"
-      title="Cursos destacados"
-    >
-      <template v-if="portal.coursesLoading.value">
-        <EsqueletoCursoTendencia v-for="i in 6" :key="i" />
-      </template>
-      <TarjetaCursoTendencia
-        v-for="course in portal.featuredCourses.value"
-        v-else
-        :key="course.id"
-        :course="course"
-        :show-detail="false"
-        :in-cart="portal.isInCart(course.id)"
-        :is-favorite="portal.isFavorite(course.id)"
-        @add-to-cart="portal.handleAddToCart(course.id)"
-        @continue-course="portal.openSimuladorCurso(course)"
-        @select="portal.verDetalleCurso(course)"
-        @toggle-favorite="portal.toggleFavorite(course.id)"
-      />
-    </CarruselCursos>
-
-    <div
-      class="relative my-2 w-full py-6 sm:my-4 sm:py-8"
-      aria-hidden="true"
-    >
-      <div class="h-px w-full bg-border" />
-      <div
-        class="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center gap-2 bg-background px-4"
-      >
-        <span class="h-1.5 w-1.5 rounded-full bg-primary" />
-        <span
-          class="text-[11px] font-black uppercase tracking-[0.2em] text-muted-foreground"
-        >
-          Catálogo
-        </span>
-        <span class="h-1.5 w-1.5 rounded-full bg-primary" />
-      </div>
-    </div>
-
-    <section
-      class="grid w-full gap-6 rounded-none border border-border bg-card/40 p-4 text-left sm:p-6 lg:p-8"
-    >
-      <div
-        class="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between"
-      >
-        <div class="max-w-3xl">
-          <p
-            class="text-sm font-black uppercase tracking-[.25em] text-primary"
-          >
-            Explorar
-          </p>
-          <h2 class="mt-3 text-3xl font-black text-foreground sm:text-4xl">
-            Catálogo de cursos
-          </h2>
-        </div>
-        <p class="shrink-0 text-sm font-semibold text-muted-foreground">
-          {{ portal.contadoresCatalogo.value.total }}
-          {{
-            portal.contadoresCatalogo.value.total === 1 ? "curso" : "cursos"
-          }}
-        </p>
-      </div>
-
-      <div
-        class="flex flex-col gap-3 border border-border bg-background p-3 sm:p-4 lg:flex-row lg:items-center"
-      >
-        <label class="relative min-w-0 flex-1">
-          <Search
-            class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
-          />
-          <Input
-            v-model="portal.searchTerm.value"
-            class="h-11 rounded-none border-border bg-background pl-10"
-            type="search"
-            placeholder="Buscar curso, entidad o categoría..."
-            aria-label="Buscar cursos"
-          />
-        </label>
-
+  <PortalSection v-else wide>
+      <div v-if="cargandoBanners" class="grid gap-3">
         <div
-          class="grid grid-cols-1 gap-2 sm:grid-cols-3 lg:w-[min(36rem,100%)] lg:shrink-0"
-        >
-          <SelectorFiltro
-            v-model="portal.fuenteFilter.value"
-            :opciones="opcionesFuente"
-            ariaLabel="Filtrar por fuente"
-          />
-          <SelectorFiltro
-            v-model="portal.accesoFilter.value"
-            :opciones="opcionesAcceso"
-            ariaLabel="Filtrar por acceso"
-          />
-          <SelectorFiltro
-            v-model="portal.pricingFilter.value"
-            :opciones="opcionesPrecio"
-            ariaLabel="Filtrar por precio"
-          />
-        </div>
+          class="aspect-[16/7] w-full min-h-[240px] max-h-[420px] animate-pulse bg-muted"
+          aria-hidden="true"
+        />
       </div>
+      <PortadaCurso
+        v-else
+        :slides="banners"
+        :interval-ms="5000"
+        @cta="onCtaBanner"
+      />
 
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <p class="text-sm text-muted-foreground">
-          <span class="font-bold text-foreground">{{
-            portal.catalogCourses.value.length
-          }}</span>
-          resultado(s) · {{ resumenFiltros }}
-        </p>
-      </div>
-
-      <div class="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
+      <CarruselCursos
+        subtitle="Formación especializada"
+        title="Cursos destacados"
+      >
+        <template v-if="portal.coursesLoading.value">
+          <EsqueletoCursoTendencia v-for="i in 6" :key="i" />
+        </template>
         <TarjetaCursoTendencia
-          v-for="course in portal.catalogCourses.value"
-          :key="`catalog-${course.id}`"
-          fluid
+          v-for="course in portal.featuredCourses.value"
+          v-else
+          :key="course.id"
           :course="course"
+          :show-detail="false"
           :in-cart="portal.isInCart(course.id)"
           :is-favorite="portal.isFavorite(course.id)"
+          :inscribiendo="portal.estaInscribiendoCurso(course.id)"
           @add-to-cart="portal.handleAddToCart(course.id)"
           @continue-course="portal.openSimuladorCurso(course)"
           @select="portal.verDetalleCurso(course)"
           @toggle-favorite="portal.toggleFavorite(course.id)"
         />
-      </div>
+      </CarruselCursos>
 
       <div
-        v-if="!portal.catalogCourses.value.length"
-        class="border border-border bg-card py-12 text-center text-sm text-muted-foreground"
+        class="relative my-2 w-full py-6 sm:my-4 sm:py-8"
+        aria-hidden="true"
       >
-        <template v-if="portal.coursesLoading.value">
-          Cargando catálogo…
-        </template>
-        <template v-else-if="portal.coursesError.value">
-          No se pudieron cargar los cursos. Inténtalo de nuevo.
-        </template>
-        <template
-          v-else-if="
-            portal.searchTerm.value ||
-            portal.fuenteFilter.value !== 'all' ||
-            portal.accesoFilter.value !== 'all' ||
-            portal.pricingFilter.value !== 'all'
-          "
+        <div class="h-px w-full bg-border" />
+        <div
+          class="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center gap-2 bg-background px-4"
         >
-          No encontramos cursos con ese filtro. Prueba otra combinación.
-        </template>
-        <template v-else>
-          <p>
-            Aún no hay cursos publicados en el catálogo del alumno.
-          </p>
-          <p
-            v-if="(portal.metaCatalogoAlumno.value?.ocultosPorEstado ?? 0) > 0"
-            class="mt-2 text-xs"
+          <span class="h-1.5 w-1.5 rounded-full bg-primary" />
+          <span
+            class="text-[11px] font-black uppercase tracking-[0.2em] text-muted-foreground"
           >
-            Hay
-            {{ portal.metaCatalogoAlumno.value?.ocultosPorEstado }}
-            curso(s) en borrador o revisión. Dirección debe
-            <strong>aprobar y publicar</strong>
-            desde Portal Organización → Catálogo.
-          </p>
-          <p v-else class="mt-2 text-xs">
-            Los cursos del docente aparecen aquí cuando la organización los
-            publica (estado Publicado o Aprobado).
-          </p>
-        </template>
+            Catálogo
+          </span>
+          <span class="h-1.5 w-1.5 rounded-full bg-primary" />
+        </div>
       </div>
-    </section>
+
+      <section
+        class="grid w-full gap-6 rounded-none border border-border bg-card/40 p-4 text-left sm:p-6 lg:p-8"
+      >
+        <div
+          class="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between"
+        >
+          <div class="max-w-3xl">
+            <p
+              class="text-sm font-black uppercase tracking-[.25em] text-primary"
+            >
+              Explorar
+            </p>
+            <h2 class="mt-3 text-3xl font-black text-foreground sm:text-4xl">
+              Catálogo de cursos
+            </h2>
+          </div>
+          <p class="shrink-0 text-sm font-semibold text-muted-foreground">
+            {{ portal.contadoresCatalogo.value.total }}
+            {{
+              portal.contadoresCatalogo.value.total === 1 ? "curso" : "cursos"
+            }}
+          </p>
+        </div>
+
+        <div
+          class="flex flex-col gap-3 border border-border bg-background p-3 sm:p-4 lg:flex-row lg:items-center"
+        >
+          <label class="relative min-w-0 flex-1">
+            <Search
+              class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+            />
+            <Input
+              v-model="portal.searchTerm.value"
+              class="h-11 rounded-none border-border bg-background pl-10"
+              type="search"
+              placeholder="Buscar curso, entidad o categoría..."
+              aria-label="Buscar cursos"
+            />
+          </label>
+
+          <div
+            class="grid grid-cols-1 gap-2 sm:grid-cols-3 lg:w-[min(36rem,100%)] lg:shrink-0"
+          >
+            <SelectorFiltro
+              v-model="portal.fuenteFilter.value"
+              :opciones="opcionesFuente"
+              ariaLabel="Filtrar por fuente"
+            />
+            <SelectorFiltro
+              v-model="portal.accesoFilter.value"
+              :opciones="opcionesAcceso"
+              ariaLabel="Filtrar por acceso"
+            />
+            <SelectorFiltro
+              v-model="portal.pricingFilter.value"
+              :opciones="opcionesPrecio"
+              ariaLabel="Filtrar por precio"
+            />
+          </div>
+        </div>
+
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <p class="text-sm text-muted-foreground">
+            <span class="font-bold text-foreground">{{
+              portal.catalogCourses.value.length
+            }}</span>
+            resultado(s) · {{ resumenFiltros }}
+          </p>
+        </div>
+
+        <div
+          v-if="portal.coursesLoading.value"
+          class="grid gap-5 sm:grid-cols-2 xl:grid-cols-4"
+        >
+          <EsqueletoCursoTendencia
+            v-for="i in 8"
+            :key="`catalog-skeleton-${i}`"
+            fluid
+          />
+        </div>
+
+        <div
+          v-else
+          class="grid gap-5 sm:grid-cols-2 xl:grid-cols-4"
+        >
+          <TarjetaCursoTendencia
+            v-for="course in portal.catalogCourses.value"
+            :key="`catalog-${course.id}`"
+            fluid
+            :course="course"
+            :in-cart="portal.isInCart(course.id)"
+            :is-favorite="portal.isFavorite(course.id)"
+            :inscribiendo="portal.estaInscribiendoCurso(course.id)"
+            @add-to-cart="portal.handleAddToCart(course.id)"
+            @continue-course="portal.openSimuladorCurso(course)"
+            @select="portal.verDetalleCurso(course)"
+            @toggle-favorite="portal.toggleFavorite(course.id)"
+          />
+        </div>
+
+        <div
+          v-if="!portal.coursesLoading.value && !portal.catalogCourses.value.length"
+          class="border border-border bg-card py-12 text-center text-sm text-muted-foreground"
+        >
+          <template v-if="portal.coursesError.value">
+            No se pudieron cargar los cursos. Inténtalo de nuevo.
+          </template>
+          <template
+            v-else-if="
+              portal.searchTerm.value ||
+              portal.fuenteFilter.value !== 'all' ||
+              portal.accesoFilter.value !== 'all' ||
+              portal.pricingFilter.value !== 'all'
+            "
+          >
+            No encontramos cursos con ese filtro. Prueba otra combinación.
+          </template>
+          <template v-else>
+            <p>
+              Aún no hay cursos publicados en el catálogo del alumno.
+            </p>
+            <p
+              v-if="(portal.metaCatalogoAlumno.value?.ocultosPorEstado ?? 0) > 0"
+              class="mt-2 text-xs"
+            >
+              Hay
+              {{ portal.metaCatalogoAlumno.value?.ocultosPorEstado }}
+              curso(s) en borrador o revisión. Dirección debe
+              <strong>aprobar y publicar</strong>
+              desde Portal Organización → Catálogo.
+            </p>
+            <p v-else class="mt-2 text-xs">
+              Los cursos del docente aparecen aquí cuando la organización los
+              publica (estado Publicado o Aprobado).
+            </p>
+          </template>
+        </div>
+      </section>
   </PortalSection>
 </template>

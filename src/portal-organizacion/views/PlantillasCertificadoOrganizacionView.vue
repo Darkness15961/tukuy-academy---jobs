@@ -1404,6 +1404,30 @@ async function eliminarPlantilla(plantilla: PlantillaCertificado) {
   }
 }
 
+async function alCambiarPermisoDocentes(permitir: boolean) {
+  if (!instalacionId.value || !esDireccionOAdmin.value || !config.value) return;
+  const anterior = config.value.docentesPuedenConfigurar;
+  config.value = { ...config.value, docentesPuedenConfigurar: permitir };
+  try {
+    config.value = await plantillasCertificadoService.setDocentesPuedenConfigurar(
+      instalacionId.value,
+      permitir,
+    );
+    toast.success(
+      permitir
+        ? "Los docentes podrán crear y usar plantillas propias."
+        : "Solo se usarán plantillas institucionales.",
+    );
+  } catch (causa) {
+    config.value = { ...config.value, docentesPuedenConfigurar: anterior };
+    toast.error(
+      causa instanceof Error
+        ? causa.message
+        : "No se pudo actualizar el permiso.",
+    );
+  }
+}
+
 watch(pasoIndex, () => {
   // Feedback de paso se maneja al avanzar / incluir elementos.
 });
@@ -1499,10 +1523,29 @@ onUnmounted(() => {
               : "diseños guardados"
           }}
         </p>
-        <Button :disabled="!puedeEditar" @click="iniciarDisenoNuevo">
-          <Plus class="h-4 w-4" />
-          Nuevo diseño
-        </Button>
+        <div class="flex flex-wrap items-center gap-3">
+          <label
+            v-if="esDireccionOAdmin && config"
+            class="flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2"
+          >
+            <div class="min-w-0">
+              <p class="text-xs font-bold text-foreground">
+                Permitir plantillas de docentes
+              </p>
+              <p class="text-[11px] text-muted-foreground">
+                Podrán crear y usar sus propios diseños en el curso
+              </p>
+            </div>
+            <ToggleSwitch
+              :model-value="config.docentesPuedenConfigurar"
+              @update:model-value="alCambiarPermisoDocentes"
+            />
+          </label>
+          <Button :disabled="!puedeEditar" @click="iniciarDisenoNuevo">
+            <Plus class="h-4 w-4" />
+            Nuevo diseño
+          </Button>
+        </div>
       </div>
 
       <Card

@@ -16,6 +16,7 @@ import { useRouter } from "vue-router";
 
 import { Button } from "@/components/ui/button";
 import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
+import ImagenPortadaCurso from "@/components/shared/ImagenPortadaCurso.vue";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { organizacionService } from "@/api/services/organizacion.service";
@@ -531,10 +532,10 @@ function alElegirArchivo(
                 :key="curso.id"
                 class="flex items-start gap-3 px-3 py-3"
               >
-                <img
+                <ImagenPortadaCurso
                   :src="curso.imagen"
                   alt=""
-                  class="h-14 w-20 shrink-0 object-cover"
+                  contenedor-class="h-14 w-20 shrink-0"
                 />
                 <div class="min-w-0 flex-1">
                   <div class="flex flex-wrap items-center gap-2">

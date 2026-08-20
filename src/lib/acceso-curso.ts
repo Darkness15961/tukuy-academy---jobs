@@ -47,26 +47,35 @@ export function cursoPuedeInscribirseGratis(course: Course) {
  * Activa acceso tras compra o inscripción gratuita.
  * Persiste progreso y actualiza el curso en memoria si está en la lista.
  */
+type OpcionesMatriculaCurso = {
+  /** Evita cambiar la tarjeta del catálogo antes de entrar al reproductor. */
+  actualizarLista?: boolean;
+};
+
+function aplicarMatriculaEnLista(curso: Course) {
+  if (!cursoEstaMatriculado(curso)) {
+    curso.status = "En curso";
+    curso.progress = Math.max(curso.progress, 0);
+  } else if (curso.status === "Disponible") {
+    curso.status = "En curso";
+  }
+}
+
 export async function matricularCurso(
   cursoId: string,
   cursos?: Course[],
+  opciones: OpcionesMatriculaCurso = {},
 ): Promise<void> {
+  const actualizarLista = opciones.actualizarLista !== false;
+  const curso = cursos?.find((item) => item.id === cursoId);
+
   if (apiConfig.secundariaCursos) {
     await secundariaGatewayService.matricularCurso(cursoId);
-    const curso = cursos?.find((item) => item.id === cursoId);
-    if (curso) {
-      if (!cursoEstaMatriculado(curso)) {
-        curso.status = "En curso";
-        curso.progress = Math.max(curso.progress, 0);
-      } else if (curso.status === "Disponible") {
-        curso.status = "En curso";
-      }
-    }
+    if (actualizarLista && curso) aplicarMatriculaEnLista(curso);
     return;
   }
 
-  const curso = cursos?.find((item) => item.id === cursoId);
-  if (curso) {
+  if (actualizarLista && curso) {
     if (!cursoEstaMatriculado(curso)) {
       curso.status = "En curso";
       curso.progress = 0;

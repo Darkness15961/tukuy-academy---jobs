@@ -10,6 +10,7 @@ import { useRoute, useRouter } from "vue-router";
 
 import PasarelaIzipaySimulada from "@/components/shared/PasarelaIzipaySimulada.vue";
 import EsqueletoPagoCurso from "@/components/shared/EsqueletoPagoCurso.vue";
+import ImagenPortadaCurso from "@/components/shared/ImagenPortadaCurso.vue";
 import { Button } from "@/components/ui/button";
 import { cursoPublicoService } from "@/api/services/curso-publico.service";
 import { useCursos } from "@/composables/useCursos";
@@ -176,10 +177,11 @@ async function irAAprendizaje() {
       </section>
 
       <aside class="self-start border border-border bg-card lg:sticky lg:top-8">
-        <img
+        <ImagenPortadaCurso
           :src="curso.image"
           :alt="curso.title"
-          class="aspect-video w-full object-cover"
+          :object-position="curso.imagenPosicion"
+          contenedor-class="aspect-video w-full"
         />
         <div class="p-7">
           <p class="text-xs font-black uppercase tracking-[.2em] text-[#0B3A78]">

@@ -2,8 +2,20 @@ import { ref } from "vue";
 import { useRouter } from "vue-router";
 
 import { authService } from "@/api/services/auth.service";
+import {
+  consumirDestinoTrasOnboarding,
+  guardarDestinoTrasOnboarding,
+  limpiarCacheOnboardingSesion,
+  onboardingAprendizajeService,
+} from "@/api/services/onboarding-aprendizaje.service";
+import { invalidarCacheSecundaria } from "@/api/services/secundaria-gateway.service";
 import { AUTH_TOKEN_KEY, USUARIO_SESION_KEY } from "@/lib/constants";
 import { env } from "@/lib/env";
+import {
+  hayRecuperacionClave,
+  limpiarRecuperacionClave,
+} from "@/lib/recuperacion-clave";
+import { invalidarCacheCursos } from "@/composables/useCursos";
 import { inicialesNombre, urlFotoPerfilReal } from "@/lib/foto-perfil";
 import {
   rutaInicioPortal,
@@ -36,10 +48,28 @@ function usuarioGuardado(): UserProfile | null {
 
 const currentUser = ref<UserProfile | null>(usuarioGuardado());
 
+export function actualizarPerfilSesion(
+  updates: Partial<UserProfile>,
+): UserProfile | null {
+  const base = currentUser.value ?? usuarioGuardado();
+  if (!base) return null;
+  const name = (updates.name ?? base.name).trim() || base.name;
+  const siguiente = sanitizarPerfil({
+    ...base,
+    ...updates,
+    name,
+    initials: inicialesNombre(name, base.initials),
+  });
+  currentUser.value = siguiente;
+  localStorage.setItem(USUARIO_SESION_KEY, JSON.stringify(siguiente));
+  return siguiente;
+}
+
 export function useAuth() {
   const router = useRouter();
   const {
     membresiasActivas,
+    contextoActivo,
     configurarMembresias,
     seleccionarContexto,
     limpiarSesionMultiempresa,
@@ -47,11 +77,70 @@ export function useAuth() {
   const loading = ref(false);
   const error = ref<string | null>(null);
 
+  function prepararCatalogoTrasLogin() {
+    invalidarCacheCursos();
+    invalidarCacheSecundaria();
+  }
+
+  async function redirigirTrasAuth(destinoDespues?: string | null) {
+    const destinoSeguro =
+      destinoDespues?.startsWith("/") &&
+      !destinoDespues.startsWith("//") &&
+      destinoDespues !== "/onboarding-aprendizaje"
+        ? destinoDespues
+        : null;
+
+    if (destinoSeguro) {
+      // Tras login/onboarding, asegurar contexto si hay un solo espacio.
+      if (membresiasActivas.value.length === 1) {
+        const membresia = membresiasActivas.value[0];
+        if (membresia) seleccionarContexto(membresia);
+      }
+      prepararCatalogoTrasLogin();
+      await router.push(destinoSeguro);
+      return;
+    }
+
+    if (membresiasActivas.value.length === 1) {
+      const membresia = membresiasActivas.value[0];
+      if (membresia) {
+        const contexto = seleccionarContexto(membresia);
+        prepararCatalogoTrasLogin();
+        await router.push(rutaInicioPortal(contexto.portal));
+        return;
+      }
+    }
+
+    prepararCatalogoTrasLogin();
+    await router.push("/seleccionar-contexto");
+  }
+
+  /**
+   * Tras el cuestionario: mismo aterrizaje que un login normal (catálogo),
+   * no restaurar rutas previas vacías (p. ej. Mi aprendizaje sin matrículas).
+   */
+  async function continuarTrasOnboarding() {
+    consumirDestinoTrasOnboarding();
+    await redirigirTrasAuth(null);
+  }
+
   async function completarSesion(
     response: LoginResponseDto,
     destinoDespues?: string,
     redirigirAutomaticamente = true,
   ) {
+    if (hayRecuperacionClave()) {
+      const usuario = sanitizarPerfil(response.user);
+      localStorage.setItem(AUTH_TOKEN_KEY, response.token);
+      localStorage.setItem(USUARIO_SESION_KEY, JSON.stringify(usuario));
+      currentUser.value = usuario;
+      isAuthenticated.value = true;
+      if (router.currentRoute.value.name !== "restablecer-clave") {
+        await router.replace({ name: "restablecer-clave" });
+      }
+      return;
+    }
+
     const usuario = sanitizarPerfil(response.user);
     localStorage.setItem(AUTH_TOKEN_KEY, response.token);
     localStorage.setItem(USUARIO_SESION_KEY, JSON.stringify(usuario));
@@ -68,25 +157,24 @@ export function useAuth() {
         ? destinoDespues
         : null;
 
-    if (destinoSeguro) {
-      await router.push(destinoSeguro);
-      return;
-    }
-
     // Al abrir manualmente "Cambiar perfil" solo actualizamos los contextos;
     // la selección automática de un único perfil pertenece al flujo de login.
     if (!redirigirAutomaticamente) return;
 
-    if (membresiasActivas.value.length === 1) {
-      const membresia = membresiasActivas.value[0];
-      if (membresia) {
-        const contexto = seleccionarContexto(membresia);
-        await router.push(rutaInicioPortal(contexto.portal));
+    try {
+      const requiere = await onboardingAprendizajeService.requiereOnboarding();
+      if (requiere) {
+        guardarDestinoTrasOnboarding(destinoSeguro);
+        if (router.currentRoute.value.name !== "onboarding-aprendizaje") {
+          await router.push({ name: "onboarding-aprendizaje" });
+        }
         return;
       }
+    } catch (err) {
+      console.warn("[auth] No se pudo verificar onboarding:", err);
     }
 
-    await router.push("/seleccionar-contexto");
+    await redirigirTrasAuth(destinoSeguro);
   }
 
   async function login(
@@ -153,7 +241,7 @@ export function useAuth() {
       error.value =
         err instanceof Error
           ? err.message
-          : "No se pudo enviar el correo de recuperación";
+          : "No se pudo enviar el enlace";
       throw err;
     } finally {
       loading.value = false;
@@ -164,6 +252,10 @@ export function useAuth() {
     loading.value = true;
     error.value = null;
     try {
+      if (hayRecuperacionClave()) {
+        await router.replace({ name: "restablecer-clave" });
+        return;
+      }
       const response = await authService.sesionActual();
       await completarSesion(response, destinoDespues);
     } catch (err) {
@@ -175,11 +267,31 @@ export function useAuth() {
     }
   }
 
+  async function restablecerClave(passwordNuevo: string) {
+    loading.value = true;
+    error.value = null;
+    try {
+      await authService.restablecerClaveConSesion(passwordNuevo);
+      limpiarRecuperacionClave();
+      const response = await authService.sesionActual();
+      await completarSesion(response);
+    } catch (err) {
+      error.value =
+        err instanceof Error
+          ? err.message
+          : "No se pudo actualizar la clave";
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  }
+
   async function sincronizarSesion(
     destinoDespues?: string,
     redirigirAutomaticamente = true,
   ) {
     if (env.authProvider !== "supabase") return;
+    if (hayRecuperacionClave()) return;
     const response = await authService.sesionActual();
     await completarSesion(
       response,
@@ -205,6 +317,7 @@ export function useAuth() {
     } finally {
       localStorage.removeItem(AUTH_TOKEN_KEY);
       localStorage.removeItem(USUARIO_SESION_KEY);
+      limpiarCacheOnboardingSesion();
       limpiarSesionMultiempresa();
       currentUser.value = null;
       isAuthenticated.value = false;
@@ -240,9 +353,12 @@ export function useAuth() {
     loginConGoogle,
     solicitarRecuperacionClave,
     completarOAuth,
+    restablecerClave,
     sincronizarSesion,
     refrescarMembresias,
+    continuarTrasOnboarding,
     logout,
     restaurarUsuario,
+    actualizarPerfilSesion,
   };
 }

@@ -11,6 +11,11 @@ import {
 import { env } from "@/lib/env";
 import { inicialesNombre, urlFotoPerfilReal } from "@/lib/foto-perfil";
 import { invalidarCacheMedia } from "@/lib/storage-academia";
+import {
+  detectarYMarcarRecuperacionClave,
+  marcarRecuperacionClave,
+  urlEsRecuperacionClave,
+} from "@/lib/recuperacion-clave";
 import { supabasePrincipal } from "@/lib/supabase";
 import type { Session, User } from "@supabase/supabase-js";
 import type {
@@ -66,17 +71,30 @@ function perfilDesdeSupabase(usuario: User): UserProfileDto {
     usuario.email?.split("@")[0] ||
     "Usuario Tukuy";
 
+  const proveedor =
+    String(usuario.app_metadata?.provider ?? "").trim().toLowerCase() ||
+    String(
+      (usuario.identities ?? [])[0]?.provider ?? "",
+    ).trim().toLowerCase() ||
+    "email";
+
   return {
     name: nombre,
     initials: inicialesNombre(nombre),
     avatarUrl: urlFotoPerfilReal(
       textoMetadata(metadata, "avatar_url", "picture"),
     ),
-    trade: "Usuario Tukuy",
-    specialty: "Perfil en construcción",
-    location: "Perú",
-    profileProgress: 28,
-    employabilityScore: 40,
+    email: usuario.email?.trim() || "",
+    phone:
+      textoMetadata(metadata, "telefono", "phone") ||
+      usuario.phone?.trim() ||
+      "",
+    authProvider: proveedor,
+    trade: "",
+    specialty: "",
+    location: "",
+    profileProgress: 0,
+    employabilityScore: 0,
     certificates: 0,
     applications: 0,
   };
@@ -89,6 +107,8 @@ type ContextoSupabase = {
   usuario_id: string;
   instalacion_organizacion_ref: string | null;
   organizacion_nombre: string;
+  organizacion_logo?: string | null;
+  organizacion_portada?: string | null;
   rol_codigo: string;
   portal: string;
   permisos: string[] | null;
@@ -125,9 +145,12 @@ async function membresiasDesdeSupabase(): Promise<MembresiaEntrada[]> {
           tipo: "EMPRESA" as const,
           estado: "ACTIVA" as const,
           logo:
-            contexto.instalacion_organizacion_ref === INSTALACION_TUKUY_ACADEMY_ID
+            contexto.organizacion_logo?.trim() ||
+            (contexto.instalacion_organizacion_ref ===
+            INSTALACION_TUKUY_ACADEMY_ID
               ? "/img/iconoTukuyAcademy.png"
-              : undefined,
+              : undefined),
+          portada: contexto.organizacion_portada?.trim() || undefined,
         }
       : null,
     rol: contexto.rol_codigo as Rol,
@@ -349,6 +372,19 @@ function mensajeAuthSupabase(mensaje: string): string {
     return "La clave debe tener al menos 6 caracteres";
   }
   if (
+    lower.includes("different from the old password") ||
+    lower.includes("should be different")
+  ) {
+    return "La clave nueva debe ser distinta.";
+  }
+  if (
+    lower.includes("expired") ||
+    lower.includes("otp_expired") ||
+    lower.includes("invalid flow state")
+  ) {
+    return "El enlace expiró o ya se usó.";
+  }
+  if (
     lower.includes("rate limit") ||
     lower.includes("too many requests") ||
     lower.includes("email rate limit")
@@ -556,11 +592,51 @@ export const authService = {
       );
     }
 
-    const redirectTo = `${env.appUrl.replace(/\/$/, "")}/auth/callback`;
+    const redirectTo = `${env.appUrl.replace(/\/$/, "")}/restablecer-clave`;
     const { error } = await supabasePrincipal().auth.resetPasswordForEmail(
       correo,
       { redirectTo },
     );
+    if (error) throw errorAuthSupabase(error);
+  },
+
+  async capturarSesionDesdeUrl() {
+    if (env.authProvider !== "supabase") {
+      throw new Error("La recuperación de clave solo está disponible con Supabase Auth");
+    }
+    detectarYMarcarRecuperacionClave();
+    const cliente = supabasePrincipal();
+    const { data: listener } = cliente.auth.onAuthStateChange((evento) => {
+      if (evento === "PASSWORD_RECOVERY") marcarRecuperacionClave();
+    });
+    try {
+      const sesion = await esperarSesionSupabase();
+      if (urlEsRecuperacionClave()) marcarRecuperacionClave();
+      return sesion;
+    } finally {
+      listener.subscription.unsubscribe();
+    }
+  },
+
+  async restablecerClaveConSesion(passwordNuevo: string): Promise<void> {
+    if (env.authProvider !== "supabase") {
+      throw new Error("La recuperación de clave solo está disponible con Supabase Auth");
+    }
+    const nuevo = passwordNuevo.trim();
+    if (nuevo.length < 8) {
+      throw new Error("La nueva clave debe tener al menos 8 caracteres.");
+    }
+    const { data, error: errorSesion } =
+      await supabasePrincipal().auth.getSession();
+    if (errorSesion) throw errorAuthSupabase(errorSesion);
+    if (!data.session) {
+      throw new Error(
+        "El enlace de recuperación no es válido o ya expiró. Solicita uno nuevo desde el inicio de sesión.",
+      );
+    }
+    const { error } = await supabasePrincipal().auth.updateUser({
+      password: nuevo,
+    });
     if (error) throw errorAuthSupabase(error);
   },
 
@@ -668,11 +744,49 @@ export const authService = {
     passwordActual: string,
     passwordNuevo: string,
   ): Promise<void> {
+    if (env.authProvider === "supabase") {
+      const actual = passwordActual.trim();
+      const nuevo = passwordNuevo.trim();
+      if (nuevo.length < 8) {
+        throw new Error("La nueva contraseña debe tener al menos 8 caracteres.");
+      }
+      const { data: sesion, error: errorSesion } =
+        await supabasePrincipal().auth.getUser();
+      if (errorSesion || !sesion.user?.email) {
+        throw new Error("No hay una sesión activa.");
+      }
+      if (actual) {
+        const { error: errorAuth } = await supabasePrincipal().auth.signInWithPassword({
+          email: sesion.user.email,
+          password: actual,
+        });
+        if (errorAuth) {
+          throw new Error("La contraseña actual no es correcta.");
+        }
+      }
+      const { error } = await supabasePrincipal().auth.updateUser({
+        password: nuevo,
+      });
+      if (error) throw errorAuthSupabase(error);
+      return;
+    }
     await api.put(API.auth.password, {
       password_actual: passwordActual,
       password: passwordNuevo,
       password_confirmation: passwordNuevo,
     });
+  },
+
+  async cambiarCorreo(correoNuevo: string): Promise<void> {
+    const correo = normalizarCorreo(correoNuevo);
+    if (!correo || !esCorreoValido(correo)) {
+      throw new Error("Ingresa un correo válido.");
+    }
+    if (env.authProvider !== "supabase") {
+      throw new Error("El cambio de correo no está disponible en este entorno.");
+    }
+    const { error } = await supabasePrincipal().auth.updateUser({ email: correo });
+    if (error) throw errorAuthSupabase(error);
   },
 
   /** Recarga membresías/permisos desde obtener_mis_contextos (post sync perfiles). */

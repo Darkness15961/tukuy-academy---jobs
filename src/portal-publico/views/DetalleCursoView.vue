@@ -21,6 +21,7 @@ import { useAuth } from "@/composables/useAuth";
 import { useCarrito } from "@/composables/useCarrito";
 import { useCursos } from "@/composables/useCursos";
 import { cursoEstaMatriculado, cursoEsDePago } from "@/lib/acceso-curso";
+import { CORREO_VENTAS } from "@/lib/constants";
 import { inicialesNombre, urlFotoPerfilReal } from "@/lib/foto-perfil";
 import {
   enrichCourse,
@@ -292,7 +293,21 @@ const inicialesInstructor = computed(() =>
                   -{{ detalle.descuento }}%
                 </span>
               </div>
-              <strong v-else class="text-3xl font-black text-[#F5B400]">
+              <p
+                v-if="cursoPresentado && cursoEsDePago(cursoPresentado) && detalle.descuento"
+                class="mt-3 text-xs leading-5 text-white/70"
+              >
+                Consulta promos:
+                <a
+                  :href="`mailto:${CORREO_VENTAS}`"
+                  class="font-bold text-[#F5B400] hover:underline"
+                  >{{ CORREO_VENTAS }}</a
+                >
+              </p>
+              <strong
+                v-else-if="!(cursoPresentado && cursoEsDePago(cursoPresentado))"
+                class="text-3xl font-black text-[#F5B400]"
+              >
                 Acceso gratuito
               </strong>
 

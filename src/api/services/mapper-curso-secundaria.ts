@@ -24,6 +24,7 @@ import {
   normalizarPosicionPortada,
   urlPublicaMedia,
 } from "@/lib/storage-academia";
+import { resolverDuracionCursoTexto } from "@/lib/duracion-curso";
 import { normalizarRequisitos } from "@/lib/requisitos-curso";
 import {
   descripcionVisibleAlumno,
@@ -116,6 +117,7 @@ export function mapearCursoSecundariaADocente(
   const organizacionId = contexto?.organizacionId ?? null;
   const organizacionNombre = contexto?.organizacionNombre ?? "Tukuy Academy";
   const estado = mapearEstado(curso.estado);
+  const duracionMinutos = Number(curso.duracionMinutosTotal ?? 0) || undefined;
 
   return {
     id: curso.id,
@@ -138,6 +140,11 @@ export function mapearCursoSecundariaADocente(
     actualizado: formatearActualizado(curso.actualizadoEn),
     docenteResponsableId: curso.autorIdentidadRef,
     origenCarga: "DOCENTE",
+    duracionMinutos,
+    duracion: resolverDuracionCursoTexto({
+      duracionMinutosTotal: duracionMinutos,
+      horasVersion: curso.versionActual?.horas,
+    }),
   };
 }
 
@@ -226,6 +233,18 @@ export function mapearDocumentoABorrador(
     nombreCertificado: String(
       documento.nombreCertificado ?? semilla.nombreCertificado ?? "",
     ),
+    plantillaCertificadoId: String(
+      documento.plantillaCertificadoId ??
+        semilla.plantillaCertificadoId ??
+        "",
+    ).trim() || undefined,
+    cantidadFirmas: (() => {
+      const n = Number(
+        documento.cantidadFirmas ?? semilla.cantidadFirmas ?? 1,
+      );
+      if (!Number.isFinite(n)) return 1;
+      return Math.min(5, Math.max(1, Math.round(n)));
+    })(),
     notaMinima: Number(documento.notaMinima ?? semilla.notaMinima ?? 11),
     vigenciaMeses: Number(documento.vigenciaMeses ?? semilla.vigenciaMeses ?? 12),
     secciones: seccionesRaw.map((seccion) => {
@@ -265,6 +284,12 @@ export function mapearDocumentoABorrador(
                 normalizarFuenteVideo(fila.fuenteVideo ?? fila.videoFuente) ??
                 detectarFuenteVideo(urlYoutube) ??
                 "youtube";
+              const duracionCruda = Number(
+                (fila as { duracionMinutos?: number; duracion_minutos?: number })
+                  .duracionMinutos ??
+                  (fila as { duracion_minutos?: number }).duracion_minutos ??
+                  0,
+              );
               const preguntas = Array.isArray(fila.preguntas)
                 ? fila.preguntas
                     .map((pregunta) => {
@@ -299,6 +324,7 @@ export function mapearDocumentoABorrador(
                 id: fila.id ? String(fila.id) : undefined,
                 titulo: String(fila.titulo ?? clases[indice] ?? "Actividad"),
                 tipo,
+                ...(duracionCruda > 0 ? { duracionMinutos: duracionCruda } : {}),
                 ...(tipo === "video"
                   ? {
                       ...(urlYoutube ? { urlYoutube } : {}),
@@ -356,12 +382,16 @@ export function mapearCursoSecundariaAPortal(
   const gratuito =
     curso.gratuito === true || (curso.gratuito !== false && precio <= 0);
   const dePago = !gratuito && precio > 0;
+  const duracionTexto = resolverDuracionCursoTexto({
+    duracionMinutosTotal: curso.duracionMinutosTotal,
+    horasVersion: curso.versionActual?.horas,
+  });
 
   return {
     id: curso.id,
     title: curso.titulo,
     category: curso.categoria || "Academia",
-    duration: `${Math.max(1, Number(curso.versionActual?.horas ?? 1))} h`,
+    duration: duracionTexto === "—" ? "—" : duracionTexto,
     level: "Intermedio",
     mode: mapearModalidadPortal(curso.modalidad),
     progress: progreso,
@@ -370,6 +400,7 @@ export function mapearCursoSecundariaAPortal(
     price: dePago ? precio : 0,
     imageTone: "from-slate-700 to-slate-900",
     image: urlPublicaMedia(curso.portadaClave, IMAGEN_FALLBACK),
+    imagenPosicion: normalizarPosicionPortada(curso.imagenPosicion),
     origen: "tukuy",
     alcance: "PUBLICO",
     estadoPublicacion: curso.estado,
@@ -394,6 +425,9 @@ export function mapearMatriculaAPortal(item: MatriculaCursoSecundaria): Course {
     image: urlPublicaMedia(
       (item as { portadaClave?: string | null }).portadaClave,
       IMAGEN_FALLBACK,
+    ),
+    imagenPosicion: normalizarPosicionPortada(
+      (item as { imagenPosicion?: string | null }).imagenPosicion,
     ),
     origen: "tukuy",
     alcance: "PUBLICO",

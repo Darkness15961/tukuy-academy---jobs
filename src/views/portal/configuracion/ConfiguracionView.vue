@@ -1,20 +1,23 @@
 <script setup lang="ts">
 import {
   Bell,
-  ChevronRight,
   Eye,
   EyeOff,
-  Globe,
   KeyRound,
-  Lock,
   Mail,
   Palette,
   Phone,
   Shield,
   UserRound,
 } from "lucide-vue-next";
-import { ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 
+import { authService } from "@/api/services/auth.service";
+import {
+  cuentaAlumnoService,
+  preferenciasPorDefecto,
+  type PreferenciasCuenta,
+} from "@/api/services/cuenta-alumno.service";
 import PortalSection from "@/components/shared/PortalSection.vue";
 import SelectorTema from "@/components/shared/SelectorTema.vue";
 import { Badge } from "@/components/ui/badge";
@@ -23,47 +26,198 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { toast } from "@/lib/toast";
 import { usePortalContext } from "../composables/usePortalContext";
+import EditorNombreCuenta from "@/components/shared/EditorNombreCuenta.vue";
 
 const portal = usePortalContext();
 
-// Simulated form state
-const email = ref("carlos.quispe@email.com");
-const phone = ref("+51 987 654 321");
-const birthDate = ref(portal.user.value?.birthDate ?? "1995-04-12");
-
-function saveBirthDate() {
-  if (portal.updateUserProfile) {
-    portal.updateUserProfile({ birthDate: birthDate.value });
-  }
-  simulateSave("Fecha de nacimiento");
-}
+const email = ref(portal.user.value?.email || "");
+const phone = ref(portal.user.value?.phone || "");
+const birthDate = ref(portal.user.value?.birthDate || "");
+const preferencias = ref<PreferenciasCuenta>(preferenciasPorDefecto());
+const proveedor = ref(portal.user.value?.authProvider || "email");
+const cargando = ref(true);
+const guardando = ref("");
 
 const currentPassword = ref("");
 const newPassword = ref("");
 const confirmPassword = ref("");
 const showCurrentPassword = ref(false);
 const showNewPassword = ref(false);
-const language = ref("es");
-const notifications = ref({
-  courses: true,
-  jobs: true,
-  certificates: true,
-  marketing: false,
+
+const cuentaGoogle = computed(
+  () =>
+    proveedor.value.includes("google") || proveedor.value.includes("oauth"),
+);
+
+const etiquetaProveedor = computed(() => {
+  if (cuentaGoogle.value) return "Google";
+  if (proveedor.value === "email") return "Correo y contraseña";
+  return proveedor.value || "Correo";
 });
-const twoFactor = ref(false);
 
-const savedMessage = ref("");
-let saveTimeout: ReturnType<typeof setTimeout> | null = null;
+const avisos = [
+  {
+    clave: "courses" as const,
+    titulo: "Nuevos cursos y contenidos",
+    detalle: "Avisos de publicaciones en tus cursos y en el catálogo.",
+  },
+  {
+    clave: "jobs" as const,
+    titulo: "Oportunidades laborales",
+    detalle: "Alertas de vacantes cuando esté activa la bolsa Tukuy.",
+  },
+  {
+    clave: "certificates" as const,
+    titulo: "Certificados y logros",
+    detalle: "Confirmaciones cuando se emita una constancia.",
+  },
+  {
+    clave: "marketing" as const,
+    titulo: "Novedades y promociones",
+    detalle: "Ofertas y noticias de Tukuy Academy.",
+  },
+];
 
-function simulateSave(section: string) {
-  if (saveTimeout) clearTimeout(saveTimeout);
-  savedMessage.value = section;
-  toast.success(`${section} actualizado correctamente`);
-  saveTimeout = setTimeout(() => {
-    savedMessage.value = "";
-  }, 2500);
+async function cargarCuenta() {
+  cargando.value = true;
+  try {
+    const cuenta = await cuentaAlumnoService.obtener();
+    email.value = cuenta.correo || portal.user.value?.email || "";
+    phone.value = cuenta.telefono || portal.user.value?.phone || "";
+    birthDate.value =
+      cuenta.fechaNacimiento || portal.user.value?.birthDate || "";
+    preferencias.value = cuenta.preferencias;
+    proveedor.value = cuenta.proveedor || portal.user.value?.authProvider || "email";
+  } catch {
+    email.value = portal.user.value?.email || "";
+    phone.value = portal.user.value?.phone || "";
+    birthDate.value = portal.user.value?.birthDate || "";
+    proveedor.value = portal.user.value?.authProvider || "email";
+  } finally {
+    cargando.value = false;
+  }
+}
+
+async function persistirPreferencias() {
+  preferencias.value = await cuentaAlumnoService
+    .guardar({ preferencias: preferencias.value })
+    .then((cuenta) => cuenta.preferencias);
+}
+
+async function guardarCorreo() {
+  if (cuentaGoogle.value) {
+    toast.info("El correo de una cuenta Google se cambia en Google, no aquí.");
+    return;
+  }
+  guardando.value = "correo";
+  try {
+    await authService.cambiarCorreo(email.value);
+    toast.success("Revisa tu bandeja: confirma el correo nuevo para aplicarlo.");
+  } catch (causa) {
+    toast.error(causa instanceof Error ? causa.message : "No se pudo cambiar el correo.");
+  } finally {
+    guardando.value = "";
+  }
+}
+
+async function guardarTelefono() {
+  guardando.value = "telefono";
+  try {
+    if (portal.updateUserProfile) {
+      await portal.updateUserProfile({ phone: phone.value });
+      phone.value = portal.user.value?.phone || phone.value;
+    } else {
+      const cuenta = await cuentaAlumnoService.guardar({
+        telefono: phone.value,
+      });
+      phone.value = cuenta.telefono;
+    }
+    toast.success("Teléfono actualizado.");
+  } catch (causa) {
+    toast.error(causa instanceof Error ? causa.message : "No se pudo guardar el teléfono.");
+  } finally {
+    guardando.value = "";
+  }
+}
+
+async function guardarFechaNacimiento() {
+  guardando.value = "nacimiento";
+  try {
+    if (portal.updateUserProfile) {
+      await portal.updateUserProfile({ birthDate: birthDate.value });
+      birthDate.value = portal.user.value?.birthDate || birthDate.value;
+    } else {
+      const cuenta = await cuentaAlumnoService.guardar({
+        fechaNacimiento: birthDate.value,
+      });
+      birthDate.value = cuenta.fechaNacimiento;
+    }
+    toast.success("Fecha de nacimiento actualizada.");
+  } catch (causa) {
+    toast.error(
+      causa instanceof Error ? causa.message : "No se pudo guardar la fecha.",
+    );
+  } finally {
+    guardando.value = "";
+  }
+}
+
+async function guardarPassword() {
+  if (cuentaGoogle.value) {
+    toast.info("Esta cuenta entra con Google. La clave se gestiona allí.");
+    return;
+  }
+  if (newPassword.value !== confirmPassword.value) {
+    toast.error("La confirmación no coincide con la nueva contraseña.");
+    return;
+  }
+  guardando.value = "password";
+  try {
+    await authService.cambiarPassword(currentPassword.value, newPassword.value);
+    currentPassword.value = "";
+    newPassword.value = "";
+    confirmPassword.value = "";
+    toast.success("Contraseña actualizada.");
+  } catch (causa) {
+    toast.error(
+      causa instanceof Error ? causa.message : "No se pudo cambiar la contraseña.",
+    );
+  } finally {
+    guardando.value = "";
+  }
+}
+
+async function guardarNotificacion(
+  clave: keyof PreferenciasCuenta["notificaciones"],
+) {
+  const anterior = preferencias.value;
+  preferencias.value = {
+    ...preferencias.value,
+    notificaciones: {
+      ...preferencias.value.notificaciones,
+      [clave]: !preferencias.value.notificaciones[clave],
+    },
+  };
+  try {
+    await persistirPreferencias();
+    toast.success("Preferencias de aviso actualizadas.");
+  } catch (causa) {
+    preferencias.value = anterior;
+    toast.error(
+      causa instanceof Error ? causa.message : "No se pudieron guardar los avisos.",
+    );
+  }
+}
+
+onMounted(() => {
+  void cargarCuenta();
+});
+
+function alGuardarNombre(nombre: string) {
+  void portal.updateUserProfile?.({ name: nombre });
 }
 </script>
+
 
 <template>
   <PortalSection v-if="portal.user.value" wide :centered="false">
@@ -113,32 +267,18 @@ function simulateSave(section: string) {
         </div>
       </div>
 
-      <!-- Transition for saved message -->
-      <Transition name="fade">
-        <div
-          v-if="savedMessage"
-          class="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800"
-        >
-          <svg
-            class="h-4 w-4"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="2"
-              d="M5 13l4 4L19 7"
-            />
-          </svg>
-          {{ savedMessage }} actualizado correctamente
-        </div>
-      </Transition>
+      <p
+        v-if="cargando"
+        class="text-sm text-muted-foreground"
+      >
+        Cargando los datos de tu cuenta…
+      </p>
 
       <div class="grid gap-6 xl:grid-cols-[1fr_0.55fr]">
         <!-- Left column: Main settings -->
         <div class="grid gap-6">
+          <EditorNombreCuenta @guardado="alGuardarNombre" />
+
           <!-- Email -->
           <Card class="shadow-sm">
             <CardHeader>
@@ -160,14 +300,25 @@ function simulateSave(section: string) {
                   v-model="email"
                   type="email"
                   class="h-11"
+                  :disabled="cuentaGoogle || Boolean(guardando)"
                 />
                 <p class="mt-1.5 text-xs text-muted-foreground">
-                  Se usa para iniciar sesión y recibir notificaciones.
+                  {{
+                    cuentaGoogle
+                      ? "Esta cuenta entra con Google. El correo se cambia en tu cuenta de Google."
+                      : "Se usa para iniciar sesión. Te enviaremos un enlace para confirmar el cambio."
+                  }}
                 </p>
               </div>
-              <div class="flex justify-end">
-                <Button size="sm" @click="simulateSave('Correo')">
-                  Guardar correo
+              <div v-if="!cuentaGoogle" class="flex justify-end">
+                <Button
+                  size="sm"
+                  :disabled="guardando === 'correo'"
+                  @click="guardarCorreo"
+                >
+                  {{
+                    guardando === "correo" ? "Guardando…" : "Guardar correo"
+                  }}
                 </Button>
               </div>
             </CardContent>
@@ -196,12 +347,20 @@ function simulateSave(section: string) {
                   class="h-11"
                 />
                 <p class="mt-1.5 text-xs text-muted-foreground">
-                  Usado para verificación y alertas de seguridad.
+                  Contacto de tu cuenta. No se publica en el catálogo.
                 </p>
               </div>
               <div class="flex justify-end">
-                <Button size="sm" @click="simulateSave('Teléfono')">
-                  Guardar teléfono
+                <Button
+                  size="sm"
+                  :disabled="guardando === 'telefono'"
+                  @click="guardarTelefono"
+                >
+                  {{
+                    guardando === "telefono"
+                      ? "Guardando…"
+                      : "Guardar teléfono"
+                  }}
                 </Button>
               </div>
             </CardContent>
@@ -230,20 +389,42 @@ function simulateSave(section: string) {
                   class="h-11"
                 />
                 <p class="mt-1.5 text-xs text-muted-foreground">
-                  Se utiliza para validar tu edad laboral en los perfiles de
-                  postulación.
+                  Opcional. Sirve para completar tu perfil laboral cuando
+                  postules.
                 </p>
               </div>
               <div class="flex justify-end">
-                <Button size="sm" @click="saveBirthDate">
-                  Guardar fecha de nacimiento
+                <Button
+                  size="sm"
+                  :disabled="guardando === 'nacimiento'"
+                  @click="guardarFechaNacimiento"
+                >
+                  {{
+                    guardando === "nacimiento"
+                      ? "Guardando…"
+                      : "Guardar fecha de nacimiento"
+                  }}
                 </Button>
               </div>
             </CardContent>
           </Card>
 
           <!-- Password -->
-          <Card class="shadow-sm">
+          <Card v-if="cuentaGoogle" class="shadow-sm">
+            <CardHeader>
+              <CardTitle class="flex items-center gap-2 text-lg">
+                <KeyRound class="h-5 w-5 text-primary" />
+                Contraseña
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p class="text-sm text-muted-foreground">
+                Entras con Google. No hay contraseña de Tukuy que cambiar aquí.
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card v-else class="shadow-sm">
             <CardHeader>
               <CardTitle class="flex items-center gap-2 text-lg">
                 <KeyRound class="h-5 w-5 text-primary" />
@@ -321,8 +502,16 @@ function simulateSave(section: string) {
               </div>
 
               <div class="flex justify-end">
-                <Button size="sm" @click="simulateSave('Contraseña')">
-                  Actualizar contraseña
+                <Button
+                  size="sm"
+                  :disabled="guardando === 'password'"
+                  @click="guardarPassword"
+                >
+                  {{
+                    guardando === "password"
+                      ? "Actualizando…"
+                      : "Actualizar contraseña"
+                  }}
                 </Button>
               </div>
             </CardContent>
@@ -337,53 +526,40 @@ function simulateSave(section: string) {
               </CardTitle>
             </CardHeader>
             <CardContent class="grid gap-1">
-              <label
-                v-for="(value, key) in notifications"
-                :key="key"
-                class="flex cursor-pointer items-center justify-between rounded-lg px-3 py-3 transition hover:bg-muted"
+              <button
+                v-for="aviso in avisos"
+                :key="aviso.clave"
+                type="button"
+                class="flex w-full items-center justify-between rounded-lg px-3 py-3 text-left transition hover:bg-muted"
+                @click="guardarNotificacion(aviso.clave)"
               >
                 <div>
-                  <strong class="block text-sm text-foreground capitalize">
-                    {{
-                      key === "courses"
-                        ? "Nuevos cursos y contenidos"
-                        : key === "jobs"
-                          ? "Oportunidades laborales"
-                          : key === "certificates"
-                            ? "Certificados y logros"
-                            : "Novedades y promociones"
-                    }}
+                  <strong class="block text-sm text-foreground">
+                    {{ aviso.titulo }}
                   </strong>
                   <span class="text-xs text-muted-foreground">
-                    {{
-                      key === "courses"
-                        ? "Recibir avisos de nuevas publicaciones"
-                        : key === "jobs"
-                          ? "Alertas de vacantes afines a tu perfil"
-                          : key === "certificates"
-                            ? "Confirmaciones de constancias emitidas"
-                            : "Ofertas, descuentos y noticias de Tukuy"
-                    }}
+                    {{ aviso.detalle }}
                   </span>
                 </div>
-                <div class="relative ml-3">
-                  <input
-                    :checked="notifications[key]"
-                    type="checkbox"
-                    class="peer sr-only"
-                    @change="
-                      notifications[key] = !notifications[key];
-                      simulateSave('Notificaciones');
+                <div class="relative ml-3" aria-hidden="true">
+                  <div
+                    class="h-6 w-11 rounded-full transition-colors"
+                    :class="
+                      preferencias.notificaciones[aviso.clave]
+                        ? 'bg-[#0B3A78]'
+                        : 'bg-muted'
                     "
                   />
                   <div
-                    class="h-6 w-11 rounded-full bg-muted transition-colors peer-checked:bg-[#0B3A78]"
-                  />
-                  <div
-                    class="absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-background shadow transition-transform peer-checked:translate-x-5"
+                    class="absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-background shadow transition-transform"
+                    :class="
+                      preferencias.notificaciones[aviso.clave]
+                        ? 'translate-x-5'
+                        : ''
+                    "
                   />
                 </div>
-              </label>
+              </button>
             </CardContent>
           </Card>
         </div>
@@ -399,62 +575,21 @@ function simulateSave(section: string) {
               </CardTitle>
             </CardHeader>
             <CardContent class="grid gap-3">
-              <button
-                type="button"
-                class="flex items-center justify-between rounded-lg border border-border p-4 text-left transition hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-md"
-                @click="
-                  twoFactor = !twoFactor;
-                  simulateSave('Autenticación en dos pasos');
-                "
+              <div
+                class="rounded-lg border border-border p-4"
               >
-                <div>
-                  <strong class="block text-sm text-foreground"
-                    >Autenticación en dos pasos</strong
-                  >
-                  <span class="text-xs text-muted-foreground"
-                    >Agrega una capa extra de protección</span
-                  >
-                </div>
-                <Badge :variant="twoFactor ? 'success' : 'outline'">
-                  {{ twoFactor ? "Activo" : "Desactivado" }}
-                </Badge>
-              </button>
-
-              <button
-                type="button"
-                class="flex items-center justify-between rounded-lg border border-border p-4 text-left transition hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-md"
-              >
-                <div>
-                  <strong class="block text-sm text-foreground"
-                    >Sesiones activas</strong
-                  >
-                  <span class="text-xs text-muted-foreground"
-                    >Revisa los dispositivos conectados</span
-                  >
-                </div>
-                <div class="flex items-center gap-1 text-muted-foreground">
-                  <Laptop class="h-4 w-4" />
-                  <ChevronRight class="h-4 w-4" />
-                </div>
-              </button>
-
-              <button
-                type="button"
-                class="flex items-center justify-between rounded-lg border border-border p-4 text-left transition hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-md"
-              >
-                <div>
-                  <strong class="block text-sm text-foreground"
-                    >Historial de accesos</strong
-                  >
-                  <span class="text-xs text-muted-foreground"
-                    >Últimos inicios de sesión</span
-                  >
-                </div>
-                <div class="flex items-center gap-1 text-muted-foreground">
-                  <Lock class="h-4 w-4" />
-                  <ChevronRight class="h-4 w-4" />
-                </div>
-              </button>
+                <strong class="block text-sm text-foreground"
+                  >Inicio de sesión</strong
+                >
+                <p class="mt-1 text-xs text-muted-foreground">
+                  Método actual: {{ etiquetaProveedor }}.
+                  {{
+                    cuentaGoogle
+                      ? "La verificación extra se gestiona en tu cuenta de Google."
+                      : "Usa una contraseña de al menos 8 caracteres y no la compartas."
+                  }}
+                </p>
+              </div>
             </CardContent>
           </Card>
 
@@ -471,40 +606,6 @@ function simulateSave(section: string) {
                 <label
                   class="mb-2 block text-xs font-semibold uppercase text-muted-foreground"
                 >
-                  Idioma
-                </label>
-                <div class="flex gap-2">
-                  <Button
-                    :variant="language === 'es' ? 'default' : 'outline'"
-                    size="sm"
-                    class="gap-1.5"
-                    @click="
-                      language = 'es';
-                      simulateSave('Idioma');
-                    "
-                  >
-                    <Globe class="h-3.5 w-3.5" />
-                    Español
-                  </Button>
-                  <Button
-                    :variant="language === 'en' ? 'default' : 'outline'"
-                    size="sm"
-                    class="gap-1.5"
-                    @click="
-                      language = 'en';
-                      simulateSave('Idioma');
-                    "
-                  >
-                    <Globe class="h-3.5 w-3.5" />
-                    English
-                  </Button>
-                </div>
-              </div>
-
-              <div>
-                <label
-                  class="mb-2 block text-xs font-semibold uppercase text-muted-foreground"
-                >
                   Tema visual
                 </label>
                 <p class="mb-3 text-xs text-muted-foreground">
@@ -516,50 +617,9 @@ function simulateSave(section: string) {
               </div>
             </CardContent>
           </Card>
-
-          <!-- Danger zone -->
-          <Card class="border-red-200 shadow-sm">
-            <CardHeader>
-              <CardTitle class="flex items-center gap-2 text-lg text-red-700">
-                <Shield class="h-5 w-5" />
-                Zona sensible
-              </CardTitle>
-            </CardHeader>
-            <CardContent class="grid gap-3">
-              <p class="text-sm text-muted-foreground">
-                Estas acciones son irreversibles. Asegúrate antes de proceder.
-              </p>
-              <div class="flex flex-wrap gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  class="border-red-200 text-red-600 hover:bg-red-50"
-                >
-                  Desactivar cuenta
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  class="border-red-200 text-red-600 hover:bg-red-50"
-                >
-                  Eliminar cuenta
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
         </div>
       </div>
     </section>
   </PortalSection>
 </template>
 
-<style scoped>
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.3s ease;
-}
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
-}
-</style>

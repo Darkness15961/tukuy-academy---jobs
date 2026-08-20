@@ -23,6 +23,7 @@ import EsqueletoCursoTendencia from "@/components/shared/EsqueletoCursoTendencia
 import SiteFooter from "@/components/shared/SiteFooter.vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { CORREO_VENTAS } from "@/lib/constants";
 import {
   Card,
   CardContent,
@@ -83,6 +84,10 @@ const benefits = [
 
 function goToLogin() {
   router.push("/login");
+}
+
+function escribirVentas() {
+  window.location.href = `mailto:${CORREO_VENTAS}`;
 }
 
 function scrollToSection(id: string) {
@@ -535,13 +540,17 @@ function scrollToSection(id: string) {
             <Card class="border-white/10 bg-white/8 shadow-none">
               <CardContent class="flex items-center gap-3 p-3">
                 <Mail class="h-4 w-4 text-teal-300" />
-                <span class="text-white/68">academy@tukuyobra.com</span>
+                <a
+                  :href="`mailto:${CORREO_VENTAS}`"
+                  class="font-semibold text-[#F5B400] hover:underline"
+                  >{{ CORREO_VENTAS }}</a
+                >
               </CardContent>
             </Card>
             <Button
               class="mt-2 bg-white text-slate-950 hover:bg-white/90"
-              @click="goToLogin"
-              >Solicitar demo de capacitación</Button
+              @click="escribirVentas"
+              >Solicitar cotización</Button
             >
           </div>
         </CardContent>

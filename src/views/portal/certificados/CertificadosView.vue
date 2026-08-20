@@ -15,6 +15,7 @@ import {
 import { computed, onMounted, ref } from "vue";
 
 import PortalSection from "@/components/shared/PortalSection.vue";
+import ImagenPortadaCurso from "@/components/shared/ImagenPortadaCurso.vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -499,10 +500,12 @@ async function handleVerifyCode() {
           <div
             class="relative aspect-video w-full overflow-hidden border-b border-border bg-muted"
           >
-            <img
+            <ImagenPortadaCurso
               :src="course.image"
               :alt="course.title"
-              class="h-full w-full object-cover transition duration-500 group-hover:scale-105"
+              :object-position="course.imagenPosicion"
+              hover-escala
+              contenedor-class="aspect-video h-full w-full"
             />
             <Badge
               class="absolute left-3 top-3 rounded-none border-border bg-card/95 px-2.5 py-0.5 text-[11px] font-semibold text-foreground shadow-none"

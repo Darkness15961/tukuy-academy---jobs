@@ -10,6 +10,7 @@ import { computed, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 
 import PasarelaIzipaySimulada from "@/components/shared/PasarelaIzipaySimulada.vue";
+import ImagenPortadaCurso from "@/components/shared/ImagenPortadaCurso.vue";
 import PortalSection from "@/components/shared/PortalSection.vue";
 import { Button } from "@/components/ui/button";
 import { useCarrito } from "@/composables/useCarrito";
@@ -166,10 +167,11 @@ function irACursos() {
               :key="curso.id"
               class="grid gap-4 border-b border-border p-5 last:border-b-0 sm:grid-cols-[160px_1fr_auto]"
             >
-              <img
+              <ImagenPortadaCurso
                 :src="curso.image"
                 :alt="curso.title"
-                class="aspect-video w-full object-cover sm:aspect-[4/3]"
+                :object-position="curso.imagenPosicion"
+                contenedor-class="aspect-video w-full sm:aspect-[4/3]"
               />
               <div>
                 <p class="text-xs font-black uppercase tracking-wide text-primary">

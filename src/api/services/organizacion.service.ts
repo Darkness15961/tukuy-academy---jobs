@@ -44,6 +44,7 @@ import {
 } from "@/api/repositorio-local";
 import { resolveMock } from "@/api/mock";
 import { CONTEXTO_SESION_KEY } from "@/lib/constants";
+import { resolverDuracionCursoTexto } from "@/lib/duracion-curso";
 import {
   areasOrganizacion,
   asignacionesOrganizacion,
@@ -60,6 +61,10 @@ import type {
   SesionEnVivoOrganizacion,
 } from "@/portal-organizacion/types/sesiones-en-vivo.types";
 import type { ContextoSesion } from "@/types/membresia.types";
+import type {
+  AlumnoResumenSecundaria,
+  ResultadoListarAlumnosResumenSecundaria,
+} from "@/lib/contrato-secundaria";
 import type {
   CertificadoEmitidoDocente,
   CertificadoPendienteDocente,
@@ -274,7 +279,8 @@ export type EstadoPropuestaCursoOrganizacion =
   | "CONTENIDO_REVISADO"
   | "APROBADO"
   | "OBSERVADO"
-  | "PUBLICADO";
+  | "PUBLICADO"
+  | "OCULTO";
 
 export type AlcanceCursoOrganizacion =
   | "ORGANIZACION"
@@ -1688,7 +1694,7 @@ async function vincularPersonaANodo(
   entrada: Omit<VinculacionUnidad, "id" | "estado" | "fechaInicio">,
 ) {
   const [persona, unidad, relaciones, listaUnidades] = await Promise.all([
-    usuarios.obtener(Number(entrada.usuarioId)),
+    usuarios.obtener(entrada.usuarioId),
     unidades.obtener(entrada.unidadId),
     vinculaciones.listar(),
     unidades.listar(),
@@ -1728,8 +1734,10 @@ async function vincularPersonaANodo(
   }
   return vinculaciones.crear({
     ...entrada,
-    id: `vin-${Date.now()}`,
-    estado: "ACTIVA",
+    id: usaOrganigramaBd()
+      ? `vinc-${entrada.usuarioId}-${entrada.unidadId}-${Date.now()}`
+      : `vin-${Date.now()}`,
+    estado: entrada.origen === "SOLICITUD_USUARIO" ? "PENDIENTE" : "ACTIVA",
     fechaInicio: new Date().toISOString().slice(0, 10),
   });
 }
@@ -2114,6 +2122,27 @@ async function incorporarPersona(
 }
 
 async function activarIncorporacion(usuarioId: string, aprobadaPor: string) {
+  if (usarOrgPrincipal()) {
+    const instalacionId = contextoActual().organizacionId;
+    if (!instalacionId) {
+      throw new Error("No hay organización activa en el contexto de sesión");
+    }
+    await organizacionPrincipalService.activarIncorporacion(
+      instalacionId,
+      usuarioId,
+      aprobadaPor,
+    );
+    invalidarCachesOrganizacion("usuarios");
+    invalidarCachesOrganizacion("vinculaciones");
+    const persona = (await listarUsuariosConCache(true)).find(
+      (item) => String(item.id) === usuarioId,
+    );
+    if (!persona) {
+      throw new Error("No se encontró la persona tras aceptar el ingreso.");
+    }
+    return persona;
+  }
+
   const [personas, relaciones, asignaciones] = await Promise.all([
     usuarios.listar(),
     vinculaciones.listar(),
@@ -2152,6 +2181,35 @@ async function registrarSolicitudDesdeComunidad(entrada: {
   yaExistia: boolean;
 }> {
   if (!apiConfig.useMock) {
+    if (usarOrgPrincipal()) {
+      const instalacionId = entrada.organizacionId.trim();
+      if (!instalacionId) throw new Error("Organización no válida.");
+      const resultado =
+        await organizacionPrincipalService.solicitarIngresoComunidad(
+          instalacionId,
+          entrada.dni,
+        );
+      invalidarCachesOrganizacion("usuarios");
+      const miembros =
+        await organizacionPrincipalService.listarMiembros(instalacionId);
+      const usuario =
+        miembros.find(
+          (item) =>
+            item.correo.trim().toLowerCase() ===
+              entrada.correo.trim().toLowerCase() ||
+            String(item.id) === resultado.identidadId,
+        ) ?? miembros[0];
+      if (!usuario) {
+        throw new Error(
+          "Solicitud registrada, pero no se pudo recargar el directorio.",
+        );
+      }
+      return {
+        estado: resultado.estado === "MIEMBRO" ? "MIEMBRO" : "SOLICITADA",
+        usuario,
+        yaExistia: resultado.yaExistia,
+      };
+    }
     const { data } = await api.post<{
       estado: "SOLICITADA" | "MIEMBRO";
       usuario: UsuarioOrganizacion;
@@ -2715,19 +2773,97 @@ const matriculas = {
     return matriculasRepositorio.listar();
   },
 
-  /** Portal org: 1 fila por alumno, paginado vía secundaria. */
+  /** Portal org: directorio de alumnos (STUDENT), paginado. El nodo es opcional. */
   async listarResumen(entrada: {
     busqueda?: string;
     cursoId?: string | null;
     limite?: number;
     offset?: number;
   } = {}) {
+    const vacio: ResultadoListarAlumnosResumenSecundaria = {
+      ok: true,
+      total: 0,
+      limite: entrada.limite ?? 24,
+      offset: entrada.offset ?? 0,
+      alumnos: [],
+      cursos: [],
+    };
+
+    let secundaria = vacio;
     if (usarOrgPrincipal() && apiConfig.secundariaCursos) {
-      const { secundariaGatewayService } = await import(
-        "@/api/services/secundaria-gateway.service"
-      );
-      return secundariaGatewayService.listarAlumnosResumen(entrada);
+      try {
+        const { secundariaGatewayService } = await import(
+          "@/api/services/secundaria-gateway.service"
+        );
+        secundaria = await secundariaGatewayService.listarAlumnosResumen(
+          entrada.cursoId
+            ? entrada
+            : { ...entrada, limite: 1, offset: 0 },
+        );
+      } catch {
+        secundaria = vacio;
+      }
     }
+
+    if (entrada.cursoId) {
+      return secundaria;
+    }
+
+    const instalacionId = contextoActual().organizacionId;
+    if (usarOrgPrincipal() && instalacionId) {
+      try {
+        const directorio = await organizacionPrincipalService.listarAlumnos({
+          instalacionId,
+          busqueda: entrada.busqueda,
+          limite: entrada.limite,
+          offset: entrada.offset,
+        });
+        if (directorio.total > 0 || directorio.alumnos.length) {
+          const extraPorId = new Map(
+            (secundaria.alumnos ?? []).map((item) => [String(item.alumnoId), item]),
+          );
+          return {
+            ok: true,
+            total: directorio.total,
+            limite: directorio.limite,
+            offset: directorio.offset,
+            alumnos: directorio.alumnos.map((alumno) => {
+              const extra = extraPorId.get(alumno.alumnoId);
+              return extra
+                ? {
+                    ...alumno,
+                    ...extra,
+                    alumnoId: alumno.alumnoId,
+                    nombre: alumno.nombre,
+                    iniciales: alumno.iniciales,
+                    correo: alumno.correo || extra.correo,
+                  }
+                : alumno;
+            }),
+            cursos: secundaria.cursos ?? [],
+          };
+        }
+      } catch (causa) {
+        if (
+          causa instanceof Error &&
+          causa.message.includes("20260818150000_org_listar_alumnos.sql")
+        ) {
+          throw causa;
+        }
+      }
+    }
+
+    if (usarOrgPrincipal() && apiConfig.secundariaCursos) {
+      try {
+        const { secundariaGatewayService } = await import(
+          "@/api/services/secundaria-gateway.service"
+        );
+        return secundariaGatewayService.listarAlumnosResumen(entrada);
+      } catch {
+        return vacio;
+      }
+    }
+
     const todas = await matriculasRepositorio.listar();
     const termino = (entrada.busqueda ?? "").trim().toLowerCase();
     const porPersona = new Map<string, MatriculaAlumnoOrganizacion[]>();
@@ -3227,6 +3363,7 @@ const ESTADOS_PROPUESTA = new Set<EstadoPropuestaCursoOrganizacion>([
   "APROBADO",
   "OBSERVADO",
   "PUBLICADO",
+  "OCULTO",
 ]);
 
 function mapearEstadoPropuesta(
@@ -3242,12 +3379,19 @@ function mapearEstadoPropuesta(
     return estado as EstadoPropuestaCursoOrganizacion;
   }
   if (estado === "BORRADOR") return "EN_REVISION";
-  if (estado === "RETIRADO") return "OBSERVADO";
+  if (estado === "RETIRADO" || estado === "ARCHIVADO") return "OCULTO";
   return "EN_REVISION";
 }
 
 function mapearCatalogoAPropuesta(
   item: Record<string, unknown>,
+  tipado?: {
+    duracionMinutosTotal?: number;
+    totalLecciones?: number;
+    totalModulos?: number;
+    estado?: string;
+    versionActual?: { horas?: number } | null;
+  } | null,
 ): PropuestaCursoOrganizacion {
   const historicos =
     item.datosHistoricos && typeof item.datosHistoricos === "object"
@@ -3262,7 +3406,17 @@ function mapearCatalogoAPropuesta(
     typeof historicos.configuracionPublicacion === "object"
       ? (historicos.configuracionPublicacion as Record<string, unknown>)
       : {};
-  const duracionMin = Number(item.duracionMinutos ?? 0);
+  const duracionCatalogo = Number(item.duracionMinutos ?? 0);
+  const duracionTipada = Number(tipado?.duracionMinutosTotal ?? 0);
+  const duracionMin =
+    duracionTipada > 0
+      ? duracionTipada
+      : duracionCatalogo > 0
+        ? duracionCatalogo
+        : 0;
+  const leccionesTipadas = Number(
+    tipado?.totalLecciones ?? tipado?.totalModulos ?? 0,
+  );
   const actualizadoEn = String(item.actualizadoEn ?? item.creadoEn ?? "");
   const enviado = actualizadoEn
     ? new Intl.DateTimeFormat("es-PE", {
@@ -3274,6 +3428,10 @@ function mapearCatalogoAPropuesta(
   const cursoSecundarioRef = String(
     item.cursoSecundarioRef ?? item.curso_secundario_ref ?? "",
   );
+  let estado = mapearEstadoPropuesta(item.estadoPublicacion, historicos);
+  if (String(tipado?.estado ?? "").toUpperCase() === "ARCHIVADO") {
+    estado = "OCULTO";
+  }
   return {
     id: String(item.id),
     cursoDocenteId: cursoSecundarioRef,
@@ -3286,11 +3444,17 @@ function mapearCatalogoAPropuesta(
     ),
     categoria: String(borrador.categoria ?? item.modalidad ?? "General"),
     enviado,
-    lecciones: Number(borrador.lecciones ?? Math.max(1, Math.round(duracionMin / 30))),
-    duracion: duracionMin > 0
-      ? `${Math.max(1, Math.round(duracionMin / 60))} h`
-      : "—",
-    estado: mapearEstadoPropuesta(item.estadoPublicacion, historicos),
+    lecciones: Number(
+      leccionesTipadas > 0
+        ? leccionesTipadas
+        : borrador.lecciones ??
+          Math.max(1, Math.round(duracionMin / 30)),
+    ),
+    duracion: resolverDuracionCursoTexto({
+      duracionMinutosTotal: duracionMin,
+      horasVersion: tipado?.versionActual?.horas,
+    }),
+    estado,
     observacion:
       typeof historicos.observacion === "string"
         ? historicos.observacion
@@ -3319,19 +3483,36 @@ function mapearCatalogoAPropuesta(
 const catalogoCursos = {
   ...catalogoCursosRepositorio,
   async listar() {
-    if (usarOrgPrincipal() && apiConfig.secundariaCursos) {
+    if (usarOrgPrincipal()) {
+      if (!apiConfig.secundariaCursos) return [];
       const { secundariaGatewayService } = await import(
         "@/api/services/secundaria-gateway.service"
       );
-      const data = await secundariaGatewayService.listarCursosRevision();
-      return (data.cursos ?? []).map((item) =>
-        mapearCatalogoAPropuesta(item as Record<string, unknown>)
+      const [data, tipados] = await Promise.all([
+        secundariaGatewayService.listarCursosRevision(),
+        secundariaGatewayService.listarCursos(200).catch(() => null),
+      ]);
+      const porId = new Map(
+        (tipados?.cursos ?? []).map((curso) => [curso.id, curso]),
       );
+      return (data.cursos ?? []).map((item) => {
+        const ref = String(
+          (item as Record<string, unknown>).cursoSecundarioRef ??
+            (item as Record<string, unknown>).curso_secundario_ref ??
+            "",
+        );
+        return mapearCatalogoAPropuesta(
+          item as Record<string, unknown>,
+          porId.get(ref) ?? null,
+        );
+      });
     }
+    if (apiConfig.sinDatosDemo) return [];
     return catalogoCursosRepositorio.listar();
   },
   async obtener(id: Identificador) {
-    if (usarOrgPrincipal() && apiConfig.secundariaCursos) {
+    if (usarOrgPrincipal()) {
+      if (!apiConfig.secundariaCursos) return null;
       const lista = await this.listar();
       return (
         lista.find((item) => item.id === String(id)) ??
@@ -3918,6 +4099,47 @@ export const organizacionService = {
     normalizarJerarquia: normalizarJerarquiaOrganizacional,
     reglasAccesoCursos,
     evaluarAccesoCurso,
+    async listarInteresesSugeridos(unidadId?: string | null) {
+      if (!usarOrgPrincipal()) return [];
+      const instalacionId = contextoActual().organizacionId;
+      if (!instalacionId) return [];
+      try {
+        return await organizacionPrincipalService.listarInteresesSugeridosUnidad(
+          instalacionId,
+          unidadId,
+        );
+      } catch {
+        return [];
+      }
+    },
+    async guardarInteresesSugeridos(unidadId: string, categoriaIds: string[]) {
+      if (!usarOrgPrincipal()) return [];
+      const instalacionId = contextoActual().organizacionId;
+      if (!instalacionId) {
+        throw new Error("No hay organización activa en el contexto de sesión");
+      }
+      return organizacionPrincipalService.guardarInteresesSugeridosUnidad(
+        instalacionId,
+        unidadId,
+        categoriaIds,
+      );
+    },
+    async listarCategoriasInteres() {
+      if (!usarOrgPrincipal()) return [];
+      const instalacionId = contextoActual().organizacionId;
+      if (!instalacionId) return [];
+      try {
+        const cats =
+          await organizacionPrincipalService.listarCategoriasCursos(
+            instalacionId,
+          );
+        return cats.filter(
+          (c) => c.estado === "ACTIVA" && c.seleccionableComoInteres,
+        );
+      } catch {
+        return [];
+      }
+    },
   },
   sedes,
   asignaciones,

@@ -19,6 +19,8 @@ export type Course = {
   price?: number;
   imageTone: string;
   image: string;
+  /** CSS object-position de la portada subida, p.ej. `30% 20%`. */
+  imagenPosicion?: string;
   instructor?: string;
   rating?: number;
   reviewCount?: number;

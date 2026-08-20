@@ -4,6 +4,7 @@ import { computed, ref } from "vue";
 
 import TarjetaCursoTendencia from "@/components/shared/TarjetaCursoTendencia.vue";
 import EsqueletoCursoTendencia from "@/components/shared/EsqueletoCursoTendencia.vue";
+import EsqueletoPortalLista from "@/components/shared/EsqueletoPortalLista.vue";
 import PortalSection from "@/components/shared/PortalSection.vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -46,7 +47,11 @@ const learningCourses = computed(() => {
 </script>
 
 <template>
-  <PortalSection wide :centered="false">
+  <EsqueletoPortalLista
+    v-if="portal.coursesLoading.value && !portal.courses.value.length"
+  />
+
+  <PortalSection v-else wide :centered="false">
     <section class="grid gap-7">
       <div
         class="border border-border border-l-4 border-l-[#F5B400] bg-muted/60 p-6 shadow-[0_14px_34px_-30px_rgba(7,31,82,0.65)] dark:shadow-[0_14px_34px_-28px_rgba(0,0,0,0.7)] lg:p-8"
@@ -163,7 +168,11 @@ const learningCourses = computed(() => {
 
       <div class="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
         <template v-if="portal.coursesLoading.value">
-          <EsqueletoCursoTendencia v-for="i in 6" :key="i" />
+          <EsqueletoCursoTendencia
+            v-for="i in 6"
+            :key="i"
+            fluid
+          />
         </template>
         <TarjetaCursoTendencia
           v-for="course in learningCourses"
@@ -180,7 +189,10 @@ const learningCourses = computed(() => {
         />
       </div>
 
-      <Card v-if="!learningCourses.length" class="border-border shadow-none">
+      <Card
+        v-if="!portal.coursesLoading.value && !learningCourses.length"
+        class="border-border shadow-none"
+      >
         <CardContent class="py-10 text-center text-sm text-muted-foreground">
           {{
             searchTerm

@@ -6,6 +6,8 @@ export const USUARIO_SESION_KEY = "tukuy_usuario_sesion";
 export const USUARIOS_REGISTRADOS_KEY = "tukuy_usuarios_registrados";
 export const MEMBRESIAS_KEY = "tukuy_membresias";
 export const CONTEXTO_SESION_KEY = "tukuy_contexto_sesion";
+/** Preferencia local: última estructura org seleccionada en Usuarios / Equipos. */
+export const ORG_ESTRUCTURA_SELECCIONADA_KEY = "tukuy_org_estructura_seleccionada";
 export const ULTIMAS_FUNCIONES_ENTIDAD_KEY = "tukuy_ultimas_funciones_entidad";
 export const CARRITO_KEY = "tukuy_academy_carrito";
 export const TEMA_KEY = "tukuy_tema";
@@ -32,3 +34,6 @@ export const PREFIJOS_RUTA_CON_TEMA = [
 export type PreferenciaTema = "light" | "dark" | "system";
 
 export const FOR_YOU_JOB_MATCH = 80;
+
+/** Cotizaciones, planes empresariales y promociones. */
+export const CORREO_VENTAS = "ventas@tukuyacademy.edu.pe";

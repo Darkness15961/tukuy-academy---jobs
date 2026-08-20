@@ -10,6 +10,7 @@ import { useRouter } from "vue-router";
 
 import { Button } from "@/components/ui/button";
 import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
+import ImagenPortadaCurso from "@/components/shared/ImagenPortadaCurso.vue";
 import IconoAyuda from "@/components/shared/IconoAyuda.vue";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -423,10 +424,10 @@ function verEnCursos() {
           <Column header="Curso" field="titulo" sortable style="min-width: 22rem">
             <template #body="{ data }">
               <div class="flex items-center gap-3 py-1">
-                <img
+                <ImagenPortadaCurso
                   :src="data.imagen"
                   :alt="data.titulo"
-                  class="h-14 w-20 shrink-0 object-cover"
+                  contenedor-class="h-14 w-20 shrink-0"
                 />
                 <div class="min-w-0">
                   <strong class="block truncate text-sm">{{ data.titulo }}</strong>

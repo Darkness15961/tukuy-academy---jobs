@@ -7,6 +7,10 @@ import {
   MEMBRESIAS_KEY,
   USUARIO_SESION_KEY,
 } from "@/lib/constants";
+import {
+  detectarYMarcarRecuperacionClave,
+  marcarRecuperacionClave,
+} from "@/lib/recuperacion-clave";
 
 let clientePrincipal: ReturnType<typeof createClient> | null = null;
 
@@ -18,17 +22,35 @@ export function supabasePrincipal() {
     );
   }
 
-  clientePrincipal ??= createClient(
-    env.supabasePrimaryUrl,
-    env.supabasePrimaryAnonKey,
-    {
-      auth: {
-        persistSession: true,
-        autoRefreshToken: true,
-        detectSessionInUrl: true,
+  if (!clientePrincipal) {
+    // Hay que leer type=recovery del hash antes de que el cliente lo consuma.
+    detectarYMarcarRecuperacionClave();
+    clientePrincipal = createClient(
+      env.supabasePrimaryUrl,
+      env.supabasePrimaryAnonKey,
+      {
+        auth: {
+          persistSession: true,
+          autoRefreshToken: true,
+          detectSessionInUrl: true,
+        },
       },
-    },
-  );
+    );
+    clientePrincipal.auth.onAuthStateChange((evento, sesion) => {
+      if (evento === "PASSWORD_RECOVERY") {
+        marcarRecuperacionClave();
+      }
+      if (sesion) {
+        localStorage.setItem(AUTH_TOKEN_KEY, sesion.access_token);
+        return;
+      }
+
+      localStorage.removeItem(AUTH_TOKEN_KEY);
+      localStorage.removeItem(USUARIO_SESION_KEY);
+      localStorage.removeItem(MEMBRESIAS_KEY);
+      localStorage.removeItem(CONTEXTO_SESION_KEY);
+    });
+  }
 
   return clientePrincipal;
 }
@@ -40,23 +62,10 @@ export function supabasePrincipal() {
 export async function inicializarSesionSupabase() {
   if (env.authProvider !== "supabase") return;
 
-  const cliente = supabasePrincipal();
-  const { data } = await cliente.auth.getSession();
+  const { data } = await supabasePrincipal().auth.getSession();
   if (data.session) {
     localStorage.setItem(AUTH_TOKEN_KEY, data.session.access_token);
   } else {
     localStorage.removeItem(AUTH_TOKEN_KEY);
   }
-
-  cliente.auth.onAuthStateChange((_evento, sesion) => {
-    if (sesion) {
-      localStorage.setItem(AUTH_TOKEN_KEY, sesion.access_token);
-      return;
-    }
-
-    localStorage.removeItem(AUTH_TOKEN_KEY);
-    localStorage.removeItem(USUARIO_SESION_KEY);
-    localStorage.removeItem(MEMBRESIAS_KEY);
-    localStorage.removeItem(CONTEXTO_SESION_KEY);
-  });
 }

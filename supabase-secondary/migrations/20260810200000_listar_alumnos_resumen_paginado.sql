@@ -102,39 +102,42 @@ begin
       or nombre ilike '%' || v_busqueda || '%'
       or correo ilike '%' || v_busqueda || '%'
       or cursos_resumen ilike '%' || v_busqueda || '%'
+  ),
+  agregado as (
+    select
+      (select count(*)::integer from filtrado) as total,
+      coalesce(
+        (
+          select jsonb_agg(item order by item->>'nombre')
+          from (
+            select jsonb_build_object(
+              'alumnoId', f.alumno_id,
+              'nombre', f.nombre,
+              'iniciales', f.iniciales,
+              'correo', f.correo,
+              'cursos', f.cursos,
+              'cursosResumen', f.cursos_resumen,
+              'progreso', f.progreso,
+              'estado', f.estado,
+              'fechaInscripcion', f.fecha_inscripcion,
+              'ultimoAcceso', f.ultimo_acceso,
+              'ultimoAccesoFecha', f.ultimo_acceso_fecha,
+              'pendientes', f.pendientes,
+              'matriculasPendientes', f.matriculas_pendientes,
+              'organizacion', 'Tukuy Academy'
+            ) as item
+            from filtrado f
+            order by f.nombre
+            limit v_limite
+            offset v_offset
+          ) pagina
+        ),
+        '[]'::jsonb
+      ) as alumnos
   )
-  select count(*)::integer into v_total from filtrado;
-
-  select coalesce(
-    jsonb_agg(item order by item->>'nombre'),
-    '[]'::jsonb
-  )
-  into v_alumnos
-  from (
-    select jsonb_build_object(
-      'alumnoId', f.alumno_id,
-      'nombre', f.nombre,
-      'iniciales', f.iniciales,
-      'correo', f.correo,
-      'cursos', f.cursos,
-      'cursosResumen', f.cursos_resumen,
-      'progreso', f.progreso,
-      'estado', f.estado,
-      'fechaInscripcion', f.fecha_inscripcion,
-      'ultimoAcceso', f.ultimo_acceso,
-      'ultimoAccesoFecha', f.ultimo_acceso_fecha,
-      'pendientes', f.pendientes,
-      'matriculasPendientes', f.matriculas_pendientes,
-      'organizacion', coalesce(
-        (select ci.nombre_organizacion from public.contexto_instalacion ci where ci.id = true),
-        'Tukuy Academy'
-      )
-    ) as item
-    from filtrado f
-    order by f.nombre
-    limit v_limite
-    offset v_offset
-  ) pagina;
+  select agregado.total, agregado.alumnos
+  into v_total, v_alumnos
+  from agregado;
 
   select coalesce(
     jsonb_agg(jsonb_build_object('id', x.id, 'titulo', x.titulo) order by x.titulo),

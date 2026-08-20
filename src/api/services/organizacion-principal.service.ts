@@ -12,6 +12,7 @@ import type {
   SedeOrganizacion,
   UsuarioOrganizacion,
 } from "@/api/services/organizacion.service";
+import type { AlumnoResumenSecundaria } from "@/lib/contrato-secundaria";
 import type {
   CategoriaCursoEntidad,
   EntidadPublicaComunidad,
@@ -579,6 +580,60 @@ export const organizacionPrincipalService = {
     return ((data ?? []) as MiembroRpc[]).map(mapMiembroAUsuarioOrganizacion);
   },
 
+  async listarAlumnos(entrada: {
+    instalacionId: string;
+    busqueda?: string;
+    limite?: number;
+    offset?: number;
+  }): Promise<{
+    total: number;
+    limite: number;
+    offset: number;
+    alumnos: AlumnoResumenSecundaria[];
+  }> {
+    const { data, error } = await cliente().rpc("org_listar_alumnos", {
+      p_instalacion_id: entrada.instalacionId,
+      p_busqueda: entrada.busqueda?.trim() || null,
+      p_limite: entrada.limite ?? 24,
+      p_offset: entrada.offset ?? 0,
+    });
+    if (error) {
+      throw new Error(
+        error.message.includes("Could not find the function") ||
+          error.message.includes("PGRST202")
+          ? "Falta aplicar 20260818150000_org_listar_alumnos.sql en PRINCIPAL."
+          : error.message,
+      );
+    }
+    const raw = (data ?? {}) as Record<string, unknown>;
+    const alumnos = Array.isArray(raw.alumnos) ? raw.alumnos : [];
+    return {
+      total: Number(raw.total ?? 0),
+      limite: Number(raw.limite ?? entrada.limite ?? 24),
+      offset: Number(raw.offset ?? entrada.offset ?? 0),
+      alumnos: alumnos.map((item) => {
+        const fila = (item ?? {}) as Record<string, unknown>;
+        return {
+          alumnoId: String(fila.alumnoId ?? ""),
+          nombre: String(fila.nombre ?? "Estudiante"),
+          iniciales: String(fila.iniciales ?? "ES"),
+          correo: String(fila.correo ?? ""),
+          cursos: Number(fila.cursos ?? 0),
+          cursosResumen: String(fila.cursosResumen ?? ""),
+          progreso: Number(fila.progreso ?? 0),
+          estado: String(fila.estado ?? "ACTIVO"),
+          fechaInscripcion: String(fila.fechaInscripcion ?? ""),
+          ultimoAcceso: String(fila.ultimoAcceso ?? ""),
+          ultimoAccesoFecha: String(fila.ultimoAccesoFecha ?? ""),
+          pendientes: Number(fila.pendientes ?? 0),
+          matriculasPendientes: Array.isArray(fila.matriculasPendientes)
+            ? (fila.matriculasPendientes as AlumnoResumenSecundaria["matriculasPendientes"])
+            : [],
+        };
+      }),
+    };
+  },
+
   async asignarAcceso(
     instalacionId: string,
     correo: string,
@@ -634,6 +689,76 @@ export const organizacionPrincipalService = {
       p_estado: estado,
     });
     if (error) throw new Error(error.message);
+  },
+
+  async activarIncorporacion(
+    instalacionId: string,
+    identidadId: string,
+    aprobadaPor?: string | null,
+  ): Promise<void> {
+    const { error } = await cliente().rpc("org_activar_incorporacion", {
+      p_instalacion_id: instalacionId,
+      p_identidad_id: identidadId,
+      p_aprobada_por: aprobadaPor?.trim() || null,
+    });
+    if (error) {
+      throw new Error(
+        error.message.includes("Could not find the function") ||
+          error.message.includes("PGRST202")
+          ? "Falta aplicar 20260819160000_org_activar_incorporacion.sql en PRINCIPAL."
+          : error.message,
+      );
+    }
+    this.invalidarOrganigrama(instalacionId);
+  },
+
+  async listarCursosPerfilPublico(
+    instalacionId: string,
+  ): Promise<Array<Record<string, unknown>>> {
+    const { data, error } = await cliente().rpc("org_listar_cursos_perfil_publico", {
+      p_instalacion_id: instalacionId,
+    });
+    if (error) {
+      throw new Error(
+        error.message.includes("Could not find the function") ||
+          error.message.includes("PGRST202")
+          ? "Falta aplicar 20260819170000_org_comunidad_cursos_solicitud.sql en PRINCIPAL."
+          : error.message,
+      );
+    }
+    const raw = (data ?? {}) as Record<string, unknown>;
+    return Array.isArray(raw.cursos)
+      ? (raw.cursos as Array<Record<string, unknown>>)
+      : [];
+  },
+
+  async solicitarIngresoComunidad(
+    instalacionId: string,
+    dni?: string | null,
+  ): Promise<{
+    estado: "SOLICITADA" | "MIEMBRO";
+    identidadId: string;
+    yaExistia: boolean;
+  }> {
+    const { data, error } = await cliente().rpc("org_solicitar_ingreso_comunidad", {
+      p_instalacion_id: instalacionId,
+      p_dni: dni?.trim() || null,
+    });
+    if (error) {
+      throw new Error(
+        error.message.includes("Could not find the function") ||
+          error.message.includes("PGRST202")
+          ? "Falta aplicar 20260819170000_org_comunidad_cursos_solicitud.sql en PRINCIPAL."
+          : error.message,
+      );
+    }
+    const raw = (data ?? {}) as Record<string, unknown>;
+    const estadoRaw = String(raw.estado ?? "SOLICITADA");
+    return {
+      estado: estadoRaw === "MIEMBRO" ? "MIEMBRO" : "SOLICITADA",
+      identidadId: String(raw.identidadId ?? ""),
+      yaExistia: raw.yaExistia === true,
+    };
   },
 
   async obtenerLicencia(instalacionId: string): Promise<LicenciaOrganizacion> {
@@ -1719,6 +1844,80 @@ export const organizacionPrincipalService = {
       p_excepcion_id: excepcionId,
     });
     if (error) throw new Error(error.message);
+  },
+
+  async listarInteresesSugeridosUnidad(
+    instalacionId: string,
+    unidadId?: string | null,
+  ): Promise<
+    Array<{
+      unidadId: string;
+      categoriaId: string;
+      peso: number;
+      categoriaNombre: string;
+      categoriaColor: string;
+      seleccionableComoInteres: boolean;
+    }>
+  > {
+    const { data, error } = await cliente().rpc(
+      "org_listar_intereses_sugeridos_unidad",
+      {
+        p_instalacion_id: instalacionId,
+        p_unidad_id: unidadId?.trim() || null,
+      },
+    );
+    if (error) throw new Error(error.message);
+    const payload = (data ?? {}) as { sugeridos?: unknown };
+    const lista = Array.isArray(payload.sugeridos) ? payload.sugeridos : [];
+    return lista.map((item) => {
+      const raw = item as Record<string, unknown>;
+      return {
+        unidadId: String(raw.unidadId ?? ""),
+        categoriaId: String(raw.categoriaId ?? ""),
+        peso: Number(raw.peso ?? 1),
+        categoriaNombre: String(raw.categoriaNombre ?? ""),
+        categoriaColor: String(raw.categoriaColor ?? "#0B3A78"),
+        seleccionableComoInteres: raw.seleccionableComoInteres !== false,
+      };
+    });
+  },
+
+  async guardarInteresesSugeridosUnidad(
+    instalacionId: string,
+    unidadId: string,
+    categoriaIds: string[],
+  ): Promise<
+    Array<{
+      unidadId: string;
+      categoriaId: string;
+      peso: number;
+      categoriaNombre: string;
+      categoriaColor: string;
+      seleccionableComoInteres: boolean;
+    }>
+  > {
+    const { data, error } = await cliente().rpc(
+      "org_guardar_intereses_sugeridos_unidad",
+      {
+        p_instalacion_id: instalacionId,
+        p_unidad_id: unidadId,
+        p_categoria_ids: categoriaIds,
+      },
+    );
+    if (error) throw new Error(error.message);
+    const payload = (data ?? {}) as { sugeridos?: unknown };
+    const lista = Array.isArray(payload.sugeridos) ? payload.sugeridos : [];
+    return lista.map((item) => {
+      const raw = item as Record<string, unknown>;
+      return {
+        unidadId: String(raw.unidadId ?? ""),
+        categoriaId: String(raw.categoriaId ?? ""),
+        peso: Number(raw.peso ?? 1),
+        categoriaNombre: String(raw.categoriaNombre ?? ""),
+        categoriaColor: String(raw.categoriaColor ?? "#0B3A78"),
+        seleccionableComoInteres: raw.seleccionableComoInteres !== false,
+      };
+    });
   },
 };
 

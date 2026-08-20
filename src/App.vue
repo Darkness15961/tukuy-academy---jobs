@@ -8,6 +8,10 @@ import { useAuth } from "@/composables/useAuth";
 import { useTema } from "@/composables/useTema";
 import { AUTH_TOKEN_KEY } from "@/lib/constants";
 import { env } from "@/lib/env";
+import {
+  detectarYMarcarRecuperacionClave,
+  hayRecuperacionClave,
+} from "@/lib/recuperacion-clave";
 import { consumirToastDeRuta } from "@/lib/toast";
 
 const route = useRoute();
@@ -16,6 +20,8 @@ const { preferencia, esOscuroResuelto, rutaPermiteTemaOscuro } = useTema();
 const { sincronizarSesion, isAuthenticated } = useAuth();
 
 onMounted(() => {
+  detectarYMarcarRecuperacionClave();
+  if (hayRecuperacionClave()) return;
   if (
     env.authProvider === "supabase" &&
     (isAuthenticated.value || localStorage.getItem(AUTH_TOKEN_KEY))

@@ -75,6 +75,9 @@ const permisosEditando = ref<string[]>([]);
 /** Permisos al asignar/cambiar perfil (parte desde la plantilla). */
 const permisosFormulario = ref<string[]>([]);
 const guardandoPermisos = ref(false);
+const vistaDetalleIdentidad = ref<"perfiles" | "permisos">("perfiles");
+const mostrarPermisosAvanzadosFormulario = ref(false);
+const mostrarPermisosAvanzadosAcceso = ref(false);
 
 const tituloFormulario = computed(() =>
   modoFormulario.value === "editar" ? "Cambiar perfil" : "Añadir perfil",
@@ -183,6 +186,8 @@ function cargarPermisosPlantillaEnFormulario() {
 function seleccionarAcceso(acceso: AccesoPrincipal) {
   accesoSeleccionado.value = acceso;
   permisosEditando.value = [...acceso.permisos];
+  mostrarPermisosAvanzadosAcceso.value = false;
+  vistaDetalleIdentidad.value = "perfiles";
   errorDialogo.value = "";
 }
 
@@ -344,6 +349,7 @@ function abrirAsignacionNueva() {
     instalacionRef: null,
   });
   permisosFormulario.value = [];
+  mostrarPermisosAvanzadosFormulario.value = false;
   errorDialogo.value = "";
   dialogoAsignar.value = true;
 }
@@ -370,6 +376,7 @@ function anadirPerfilAIdentidad() {
     instalacionRef: null,
   });
   permisosFormulario.value = [];
+  mostrarPermisosAvanzadosFormulario.value = false;
   errorDialogo.value = "";
   dialogoAsignar.value = true;
   sincronizarOrganizacionPredeterminada();
@@ -385,6 +392,7 @@ function editarAcceso(acceso: AccesoPrincipal) {
     instalacionRef: acceso.instalacionRef,
   });
   permisosFormulario.value = [...acceso.permisos];
+  mostrarPermisosAvanzadosFormulario.value = false;
   errorDialogo.value = "";
   dialogoAsignar.value = true;
   sincronizarOrganizacionPredeterminada();
@@ -512,9 +520,9 @@ onBeforeUnmount(() => {
     <div class="flex flex-wrap items-end justify-between gap-4">
       <TituloConAyuda
         clase-eyebrow="text-primary"
-        eyebrow="Gobierno de identidades"
+        eyebrow="Usuarios y accesos"
         titulo="Accesos y permisos"
-        ayuda="Cada persona aparece una sola vez. Entra al detalle para añadir o quitar perfiles y revisar sus permisos."
+        ayuda="Lista simple de personas. Entra al detalle para asignar perfiles; los permisos finos son opcionales."
       />
       <Button class="bg-primary hover:bg-primary/90" @click="abrirAsignacionNueva">
         <Plus class="h-4 w-4" /> Asignar acceso
@@ -534,14 +542,13 @@ onBeforeUnmount(() => {
       {{ error }}
     </div>
 
-    <div class="grid gap-4 md:grid-cols-3">
-      <Skeleton v-if="cargando" v-for="item in 3" :key="item" class="h-28" />
+    <div class="grid gap-4 sm:grid-cols-2">
+      <Skeleton v-if="cargando" v-for="item in 2" :key="item" class="h-28" />
       <Card
         v-else
         v-for="item in [
-          { etiqueta: 'Identidades registradas', valor: resumen.identidades, icono: UserRoundCog },
-          { etiqueta: 'Accesos activos', valor: resumen.accesosActivos, icono: ShieldCheck },
-          { etiqueta: 'Sin acceso asignado', valor: resumen.sinAcceso, icono: KeyRound },
+          { etiqueta: 'Personas registradas', valor: resumen.identidades, icono: UserRoundCog },
+          { etiqueta: 'Con acceso activo', valor: resumen.accesosActivos, icono: ShieldCheck },
         ]"
         :key="item.etiqueta"
         class="border-border bg-card"
@@ -568,7 +575,7 @@ onBeforeUnmount(() => {
             <InputText
               v-model="busqueda"
               class="filtro-control w-full pl-10"
-              placeholder="Persona, correo, perfil u organización"
+              placeholder="Buscar por nombre, correo o perfil"
             />
           </label>
           <Select
@@ -603,7 +610,7 @@ onBeforeUnmount(() => {
           current-page-report-template="{first}–{last} de {totalRecords} identidades"
           size="small"
           scrollable
-          table-style="min-width: 68rem"
+          table-style="min-width: 42rem"
           class="tabla-administracion"
           row-hover
           @page="cambiarPagina"
@@ -615,7 +622,7 @@ onBeforeUnmount(() => {
             </div>
           </template>
 
-          <Column header="Identidad" style="min-width: 18rem">
+          <Column header="Persona" style="min-width: 16rem">
             <template #body="{ data }">
               <div class="flex items-center gap-3">
                 <img
@@ -634,12 +641,18 @@ onBeforeUnmount(() => {
                 <div>
                   <strong>{{ data.nombre }}</strong>
                   <p class="text-xs text-muted-foreground">{{ data.correo }}</p>
+                  <Tag
+                    v-if="estadoResumen(data) === 'SIN_ACCESO'"
+                    class="mt-1"
+                    severity="warn"
+                    value="Sin acceso"
+                  />
                 </div>
               </div>
             </template>
           </Column>
 
-          <Column header="Perfiles" style="min-width: 22rem">
+          <Column header="Perfiles asignados" style="min-width: 18rem">
             <template #body="{ data }">
               <div v-if="data.accesos.length" class="flex flex-wrap gap-1.5">
                 <Tag
@@ -653,24 +666,7 @@ onBeforeUnmount(() => {
             </template>
           </Column>
 
-          <Column header="Espacios" style="min-width: 14rem">
-            <template #body="{ data }">
-              <p class="text-sm">
-                {{ espaciosDe(data).join(" · ") || "—" }}
-              </p>
-            </template>
-          </Column>
-
-          <Column header="Estado" style="min-width: 9rem">
-            <template #body="{ data }">
-              <Tag
-                :severity="severidadEstado(estadoResumen(data))"
-                :value="etiquetaEstado(estadoResumen(data))"
-              />
-            </template>
-          </Column>
-
-          <Column header="" style="min-width: 9rem">
+          <Column header="" style="min-width: 8rem">
             <template #body="{ data }">
               <Button
                 size="sm"
@@ -721,111 +717,130 @@ onBeforeUnmount(() => {
           </Button>
         </div>
 
-        <div class="grid gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.25fr)]">
-          <div class="grid gap-2">
-            <p class="text-xs font-black uppercase tracking-wide text-muted-foreground">
-              Perfiles designados
-            </p>
-            <div
-              v-if="!identidadSeleccionada.accesos.length"
-              class="border border-dashed border-border p-6 text-center text-sm text-muted-foreground"
-            >
-              Esta persona aún no tiene perfiles. Añade el primero.
+        <div class="flex flex-wrap gap-2 border-b border-border pb-4">
+          <Button
+            size="sm"
+            :variant="vistaDetalleIdentidad === 'perfiles' ? 'default' : 'outline'"
+            @click="vistaDetalleIdentidad = 'perfiles'"
+          >
+            Perfiles
+          </Button>
+          <Button
+            size="sm"
+            :variant="vistaDetalleIdentidad === 'permisos' ? 'default' : 'outline'"
+            :disabled="!accesoSeleccionado"
+            @click="vistaDetalleIdentidad = 'permisos'"
+          >
+            Permisos del perfil
+          </Button>
+        </div>
+
+        <div v-if="vistaDetalleIdentidad === 'perfiles'" class="grid gap-2">
+          <p class="text-xs font-black uppercase tracking-wide text-muted-foreground">
+            Perfiles de esta persona
+          </p>
+          <div
+            v-if="!identidadSeleccionada.accesos.length"
+            class="border border-dashed border-border p-6 text-center text-sm text-muted-foreground"
+          >
+            Esta persona aún no tiene perfiles. Añade el primero.
+          </div>
+          <div
+            v-for="(acceso, indiceAcceso) in identidadSeleccionada.accesos"
+            :key="acceso.funcionId ?? acceso.perfilCodigo ?? `acceso-${indiceAcceso}`"
+            role="button"
+            tabindex="0"
+            class="grid cursor-pointer gap-2 border border-border p-4 text-left transition hover:border-primary/40"
+            :class="
+              accesoSeleccionado?.funcionId === acceso.funcionId
+                ? 'border-primary bg-primary/5'
+                : 'bg-card'
+            "
+            @click="seleccionarAcceso(acceso)"
+            @keydown.enter="seleccionarAcceso(acceso)"
+          >
+            <div class="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <strong>{{ acceso.perfilNombre }}</strong>
+                <p class="text-xs text-muted-foreground">
+                  {{ acceso.organizacionNombre || acceso.portal }}
+                </p>
+              </div>
+              <Tag
+                :severity="severidadEstado(acceso.estadoFuncion)"
+                :value="etiquetaEstado(acceso.estadoFuncion)"
+              />
             </div>
-            <div
-              v-for="(acceso, indiceAcceso) in identidadSeleccionada.accesos"
-              :key="acceso.funcionId ?? acceso.perfilCodigo ?? `acceso-${indiceAcceso}`"
-              role="button"
-              tabindex="0"
-              class="grid cursor-pointer gap-2 border border-border p-4 text-left transition hover:border-primary/40"
-              :class="
-                accesoSeleccionado?.funcionId === acceso.funcionId
-                  ? 'border-primary bg-primary/5'
-                  : 'bg-card'
-              "
-              @click="seleccionarAcceso(acceso)"
-              @keydown.enter="seleccionarAcceso(acceso)"
-            >
-              <div class="flex flex-wrap items-start justify-between gap-2">
-                <div>
-                  <strong>{{ acceso.perfilNombre }}</strong>
-                  <p class="text-xs text-muted-foreground">
-                    {{ acceso.portal }} · {{ acceso.organizacionNombre }}
-                  </p>
-                </div>
-                <Tag
-                  :severity="severidadEstado(acceso.estadoFuncion)"
-                  :value="etiquetaEstado(acceso.estadoFuncion)"
-                />
-              </div>
-              <div class="flex flex-wrap gap-2" @click.stop>
-                <template v-if="acceso.perfilCodigo !== 'SUPER_ADMIN'">
-                  <Button size="sm" variant="outline" @click="editarAcceso(acceso)">
-                    <Pencil class="h-3.5 w-3.5" /> Cambiar
-                  </Button>
-                  <Button size="sm" variant="outline" @click="alternarEstado(acceso)">
-                    {{ acceso.estadoFuncion === "ACTIVA" ? "Suspender" : "Reactivar" }}
-                  </Button>
-                  <Button size="sm" variant="outline" @click="quitarAcceso(acceso)">
-                    <Trash2 class="h-3.5 w-3.5" /> Quitar
-                  </Button>
-                </template>
-                <span v-else class="text-xs font-bold text-muted-foreground">
-                  Acceso raíz protegido
-                </span>
-              </div>
+            <div class="flex flex-wrap gap-2" @click.stop>
+              <template v-if="acceso.perfilCodigo !== 'SUPER_ADMIN'">
+                <Button size="sm" variant="outline" @click="editarAcceso(acceso)">
+                  <Pencil class="h-3.5 w-3.5" /> Cambiar
+                </Button>
+                <Button size="sm" variant="outline" @click="alternarEstado(acceso)">
+                  {{ acceso.estadoFuncion === "ACTIVA" ? "Suspender" : "Reactivar" }}
+                </Button>
+                <Button size="sm" variant="outline" @click="quitarAcceso(acceso)">
+                  <Trash2 class="h-3.5 w-3.5" /> Quitar
+                </Button>
+              </template>
+              <span v-else class="text-xs font-bold text-muted-foreground">
+                Acceso raíz protegido
+              </span>
             </div>
           </div>
+        </div>
 
-          <div class="border border-border bg-muted/20 p-4">
-            <div class="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <p class="text-xs font-black uppercase tracking-wide text-muted-foreground">
-                  Permisos del acceso
-                </p>
-                <template v-if="accesoSeleccionado">
-                  <p class="mt-2 font-black">{{ accesoSeleccionado.perfilNombre }}</p>
-                  <p class="mt-1 text-sm text-muted-foreground">
-                    Plantilla por defecto + ajustes. {{ permisosEditando.length }} activos.
-                  </p>
-                </template>
-              </div>
-              <div v-if="puedeEditarPermisosAcceso" class="flex flex-wrap gap-2">
-                <Button size="sm" variant="outline" @click="restaurarPermisosPlantilla">
-                  Restaurar plantilla
-                </Button>
-                <Button
-                  size="sm"
-                  class="bg-primary hover:bg-primary/90"
-                  :disabled="!permisosSucios || guardandoPermisos"
-                  @click="guardarPermisosAcceso"
-                >
-                  {{ guardandoPermisos ? "Guardando…" : "Guardar permisos" }}
-                </Button>
-              </div>
-            </div>
-
-            <template v-if="accesoSeleccionado">
-              <p
-                v-if="accesoSeleccionado.perfilCodigo === 'SUPER_ADMIN'"
-                class="mt-4 text-sm text-muted-foreground"
-              >
-                El acceso raíz no admite edición de permisos desde el panel.
+        <div v-else class="grid gap-4">
+          <template v-if="accesoSeleccionado">
+            <div>
+              <p class="font-black">{{ accesoSeleccionado.perfilNombre }}</p>
+              <p class="mt-1 text-sm text-muted-foreground">
+                {{ permisosEditando.length }} capacidades activas
               </p>
-              <div v-else class="mt-4">
+            </div>
+            <div
+              v-if="accesoSeleccionado.perfilCodigo === 'SUPER_ADMIN'"
+              class="text-sm text-muted-foreground"
+            >
+              El acceso raíz no admite edición desde el panel.
+            </div>
+            <template v-else>
+              <Button
+                v-if="!mostrarPermisosAvanzadosAcceso"
+                size="sm"
+                variant="outline"
+                @click="mostrarPermisosAvanzadosAcceso = true"
+              >
+                Personalizar permisos
+              </Button>
+              <div v-else class="grid gap-3">
+                <div class="flex flex-wrap gap-2">
+                  <Button size="sm" variant="outline" @click="restaurarPermisosPlantilla">
+                    Restaurar plantilla
+                  </Button>
+                  <Button
+                    size="sm"
+                    class="bg-primary hover:bg-primary/90"
+                    :disabled="!permisosSucios || guardandoPermisos"
+                    @click="guardarPermisosAcceso"
+                  >
+                    {{ guardandoPermisos ? "Guardando…" : "Guardar permisos" }}
+                  </Button>
+                </div>
                 <EditorPermisosAgrupados
+                  v-if="puedeEditarPermisosAcceso"
                   :key="`acceso-${accesoSeleccionado.funcionId}`"
                   v-model="permisosEditando"
                   :grupos="gruposPermisosAcceso"
-                  :disabled="!puedeEditarPermisosAcceso"
-                  ayuda="Elige un grupo y luego marca solo sus permisos. Lo que no está en la plantilla se guarda como extra; lo que quitas de la plantilla se deniega."
+                  modo-modulo
+                  ayuda="Activa áreas del portal. Usa «Afinar» solo si necesitas ajustes puntuales."
                 />
               </div>
             </template>
-            <p v-else class="mt-3 text-sm text-muted-foreground">
-              Selecciona un perfil a la izquierda para administrar sus permisos.
-            </p>
-          </div>
+          </template>
+          <p v-else class="text-sm text-muted-foreground">
+            Selecciona un perfil en la pestaña anterior.
+          </p>
         </div>
 
         <div
@@ -897,17 +912,33 @@ onBeforeUnmount(() => {
               <p class="mt-1 text-sm text-muted-foreground">
                 {{ perfilSeleccionado.descripcion }}
               </p>
+              <p class="mt-2 text-xs text-muted-foreground">
+                Se usarán los permisos estándar del perfil.
+              </p>
             </div>
+          </div>
+          <Button
+            class="mt-4"
+            size="sm"
+            variant="outline"
+            @click="mostrarPermisosAvanzadosFormulario = !mostrarPermisosAvanzadosFormulario"
+          >
+            {{
+              mostrarPermisosAvanzadosFormulario
+                ? "Ocultar personalización"
+                : "Personalizar permisos (opcional)"
+            }}
+          </Button>
+          <div v-if="mostrarPermisosAvanzadosFormulario" class="mt-4 grid gap-3">
             <Button size="sm" variant="outline" @click="cargarPermisosPlantillaEnFormulario">
               Restaurar plantilla
             </Button>
-          </div>
-          <div class="mt-4">
             <EditorPermisosAgrupados
               :key="`form-${formulario.perfilCodigo}`"
               v-model="permisosFormulario"
               :grupos="gruposPermisosCatalogo"
-              ayuda="Elige un grupo y luego ajusta solo los permisos de ese grupo."
+              modo-modulo
+              ayuda="Opcional: ajusta áreas antes de asignar el perfil."
             />
           </div>
         </div>

@@ -39,6 +39,7 @@ import EditorPermisosAgrupados, {
   type GrupoPermisosEditor,
 } from "@/components/shared/EditorPermisosAgrupados.vue";
 import { Card, CardContent } from "@/components/ui/card";
+import { ORG_ESTRUCTURA_SELECCIONADA_KEY } from "@/lib/constants";
 import { useContextoSesion } from "@/composables/useContextoSesion";
 import type { NodoOrganigramaEntidad } from "@/portal-organizacion/components/NodoOrganigrama.vue";
 import type {
@@ -56,7 +57,7 @@ import { toast } from "@/lib/toast";
 import {
   MODULOS_ACCESO,
   PERMISOS_POR_PLANTILLA,
-  modulosDePermisos,
+  resumenModulosActivos,
 } from "@/lib/control-acceso";
 
 const OrganigramaOrganizacion = defineAsyncComponent(
@@ -108,6 +109,7 @@ const modalNivel = ref(false);
 const creandoTipoDesdeUnidad = ref(false);
 const modalPerfil = ref(false);
 const modalAccesosPerfil = ref(false);
+const mostrarEditorPermisosPerfil = ref(false);
 const perfilEditando = ref<PerfilEntidad | null>(null);
 const permisosEditando = ref<string[]>([]);
 const modalReglaCurso = ref(false);
@@ -131,6 +133,46 @@ function padreIdParaFormulario(padreId: string | null | undefined) {
   return padreId ? String(padreId) : OPCION_NODO_RAIZ;
 }
 
+async function cargarOpcionesInteresesNodo(unidadId?: string | null) {
+  cargandoInteresesNodo.value = true;
+  interesesSugeridosIds.value = [];
+  try {
+    const [cats, sugeridos] = await Promise.all([
+      organizacionService.estructura.listarCategoriasInteres(),
+      unidadId
+        ? organizacionService.estructura.listarInteresesSugeridos(unidadId)
+        : Promise.resolve([]),
+    ]);
+    categoriasInteres.value = cats.map((c) => ({
+      id: c.id,
+      nombre: c.nombre,
+      color: c.color,
+      descripcion: c.descripcion,
+    }));
+    interesesSugeridosIds.value = sugeridos.map((s) => s.categoriaId);
+  } catch {
+    categoriasInteres.value = [];
+    interesesSugeridosIds.value = [];
+  } finally {
+    cargandoInteresesNodo.value = false;
+  }
+}
+
+async function persistirInteresesNodo(unidadId: string) {
+  try {
+    await organizacionService.estructura.guardarInteresesSugeridos(
+      unidadId,
+      interesesSugeridosIds.value,
+    );
+  } catch (causa) {
+    toast.error(
+      causa instanceof Error
+        ? causa.message
+        : "El nodo se guardó, pero no se pudieron guardar los intereses sugeridos. ¿Aplicaste 20260820170000_org_unidad_interes_sugerido.sql?",
+    );
+  }
+}
+
 function padreIdDesdeFormulario(valor: string | null | undefined) {
   if (!valor || valor === OPCION_NODO_RAIZ) return null;
   return valor;
@@ -148,6 +190,11 @@ const formularioUnidad = reactive({
   politicaIncorporacionId: "",
   permiteSubunidades: true,
 });
+const categoriasInteres = ref<
+  Array<{ id: string; nombre: string; color: string; descripcion?: string }>
+>([]);
+const interesesSugeridosIds = ref<string[]>([]);
+const cargandoInteresesNodo = ref(false);
 // Estado del buscador de responsable por DNI
 const busquedaDni = ref("");
 const busquedaResultados = computed(() => {
@@ -323,9 +370,18 @@ async function cargar() {
       perfilesListos.value = false;
     }
 
-    const guardadaId = localStorage.getItem(
-      "tukuy_demo_organizacion_estructura_seleccionada",
-    );
+    const guardadaId =
+      localStorage.getItem(ORG_ESTRUCTURA_SELECCIONADA_KEY) ??
+      (() => {
+        const legacy = localStorage.getItem(
+          "tukuy_demo_organizacion_estructura_seleccionada",
+        );
+        if (legacy) {
+          localStorage.setItem(ORG_ESTRUCTURA_SELECCIONADA_KEY, legacy);
+          localStorage.removeItem("tukuy_demo_organizacion_estructura_seleccionada");
+        }
+        return legacy;
+      })();
     if (
       guardadaId &&
       estructuras.value.some((e) => e.id === guardadaId && !e.esSistema)
@@ -344,7 +400,7 @@ async function cargar() {
 
 watch(estructuraSeleccionadaId, (nuevoId) => {
   if (nuevoId) {
-    localStorage.setItem("tukuy_demo_organizacion_estructura_seleccionada", nuevoId);
+    localStorage.setItem(ORG_ESTRUCTURA_SELECCIONADA_KEY, nuevoId);
   }
 });
 
@@ -802,6 +858,7 @@ async function abrirUnidad() {
     permiteSubunidades: true,
   });
   modalUnidad.value = true;
+  void cargarOpcionesInteresesNodo(null);
 }
 
 function abrirEditarUnidad(nodo: NodoOrganigramaEntidad) {
@@ -825,6 +882,7 @@ function abrirEditarUnidad(nodo: NodoOrganigramaEntidad) {
     permiteSubunidades: unidadPermiteSubunidades(unidad),
   });
   modalUnidad.value = true;
+  void cargarOpcionesInteresesNodo(unidad.id);
 }
 
 function abrirEditarUnidadPorId(id: string) {
@@ -896,6 +954,7 @@ async function abrirCrearSubunidad(nodo: NodoOrganigramaEntidad) {
     permiteSubunidades: true,
   });
   modalUnidad.value = true;
+  void cargarOpcionesInteresesNodo(null);
 }
 
 async function abrirCrearMismoNivel(
@@ -926,6 +985,7 @@ async function abrirCrearMismoNivel(
     permiteSubunidades: true,
   });
   modalUnidad.value = true;
+  void cargarOpcionesInteresesNodo(null);
 }
 
 async function guardarUnidad() {
@@ -978,6 +1038,7 @@ async function guardarUnidad() {
       );
       const indice = unidades.value.findIndex((item) => item.id === actualizada.id);
       if (indice >= 0) unidades.value[indice] = actualizada;
+      await persistirInteresesNodo(actualizada.id);
       modalUnidad.value = false;
       toast.success("Los cambios del nodo se guardaron en la estructura.");
       return;
@@ -1046,6 +1107,7 @@ async function guardarUnidad() {
       estado: "ACTIVA",
     });
     unidades.value.push(creada);
+    await persistirInteresesNodo(creada.id);
     modalUnidad.value = false;
     toast.success("El nodo se agregó a la estructura institucional.");
   } finally {
@@ -1217,6 +1279,7 @@ async function crearPerfil() {
 function abrirAccesosPerfil(perfil: PerfilEntidad) {
   perfilEditando.value = perfil;
   permisosEditando.value = [...perfil.permisos];
+  mostrarEditorPermisosPerfil.value = false;
   modalAccesosPerfil.value = true;
 }
 
@@ -1507,8 +1570,50 @@ function etiquetaEstado(estado: VinculacionUnidad["estado"]) {
         </p>
       </div>
       <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        <Card v-for="perfil in perfiles" :key="perfil.id" class="border-border bg-card" :class="perfil.esSistema ? 'border-t-4 border-t-accent' : ''">
-          <CardContent class="p-5"><div class="flex items-start justify-between gap-3"><span class="grid h-11 w-11 place-items-center bg-primary/10 text-primary"><ShieldCheck class="h-5 w-5" /></span><Tag :value="perfil.esSistema ? 'Protegido' : perfil.plantilla" :severity="perfil.esSistema ? 'warn' : 'info'" /></div><h3 class="mt-5 text-lg font-black">{{ perfil.nombre }}</h3><p class="mt-2 min-h-10 text-xs leading-5 text-muted-foreground">{{ perfil.descripcion }}</p><div class="mt-4 border-t border-border pt-4"><p class="text-[10px] font-black uppercase tracking-wide text-muted-foreground">{{ perfil.permisos.length }} permisos · {{ modulosDePermisos(perfil.permisos).length }} módulos</p><p class="mt-2 text-xs text-muted-foreground">Nivel de autoridad {{ perfil.nivelAutoridad }} · alcance {{ perfil.alcanceDefecto }}</p><Button class="mt-4 w-full" size="sm" variant="outline" @click="abrirAccesosPerfil(perfil)">{{ puedeGestionarPermisosPerfil ? 'Administrar accesos' : 'Ver accesos' }}</Button></div></CardContent>
+        <Card
+          v-for="perfil in perfiles"
+          :key="perfil.id"
+          class="border-border bg-card"
+          :class="perfil.esSistema ? 'border-t-4 border-t-accent' : ''"
+        >
+          <CardContent class="p-5">
+            <div class="flex items-start justify-between gap-3">
+              <span class="grid h-11 w-11 place-items-center bg-primary/10 text-primary">
+                <ShieldCheck class="h-5 w-5" />
+              </span>
+              <Tag
+                :value="perfil.esSistema ? 'Protegido' : perfil.plantilla"
+                :severity="perfil.esSistema ? 'warn' : 'info'"
+              />
+            </div>
+            <h3 class="mt-5 text-lg font-black">{{ perfil.nombre }}</h3>
+            <p class="mt-2 min-h-10 text-xs leading-5 text-muted-foreground">
+              {{ perfil.descripcion }}
+            </p>
+            <div class="mt-4 border-t border-border pt-4">
+              <div class="flex flex-wrap gap-1.5">
+                <Tag
+                  v-for="modulo in resumenModulosActivos(perfil.permisos).slice(0, 4)"
+                  :key="`${perfil.id}-${modulo}`"
+                  :value="modulo"
+                  severity="secondary"
+                />
+                <Tag
+                  v-if="resumenModulosActivos(perfil.permisos).length > 4"
+                  :value="`+${resumenModulosActivos(perfil.permisos).length - 4}`"
+                  severity="secondary"
+                />
+              </div>
+              <Button
+                class="mt-4 w-full"
+                size="sm"
+                variant="outline"
+                @click="abrirAccesosPerfil(perfil)"
+              >
+                {{ puedeGestionarPermisosPerfil ? "Ver áreas" : "Consultar áreas" }}
+              </Button>
+            </div>
+          </CardContent>
         </Card>
       </div>
     </section>
@@ -1556,7 +1661,7 @@ function etiquetaEstado(estado: VinculacionUnidad["estado"]) {
       </DataTable>
     </section>
 
-    <Dialog v-model:visible="modalUnidad" modal :header="tituloModalUnidad" :style="{ width: 'min(42rem, calc(100vw - 2rem))' }">
+    <Dialog v-model:visible="modalUnidad" modal :header="tituloModalUnidad" :style="{ width: 'min(48rem, calc(100vw - 2rem))' }">
       <div class="grid gap-4 sm:grid-cols-2">
         <div
           v-if="!unidadEditandoId && tipoCreacionUnidad !== 'LIBRE'"
@@ -1714,6 +1819,66 @@ function etiquetaEstado(estado: VinculacionUnidad["estado"]) {
             v-model="formularioUnidad.permiteSubunidades"
             :disabled="unidadEditandoTieneHijos && formularioUnidad.permiteSubunidades"
           />
+        </div>
+
+        <div class="sm:col-span-2 grid gap-2 border border-border p-3">
+          <div class="flex flex-wrap items-end justify-between gap-2">
+            <div>
+              <p class="text-sm font-black">Intereses sugeridos</p>
+              <p class="mt-0.5 text-xs text-muted-foreground">
+                Categorías de formación que se propondrán a las personas de este
+                nodo. No son obligatorias: el alumno podrá confirmar o cambiarlas.
+              </p>
+            </div>
+            <RouterLink
+              to="/organizacion/cursos/categorias"
+              class="text-xs font-bold text-primary underline-offset-2 hover:underline"
+            >
+              Gestionar categorías
+            </RouterLink>
+          </div>
+          <p
+            v-if="cargandoInteresesNodo"
+            class="text-xs text-muted-foreground"
+          >
+            Cargando categorías…
+          </p>
+          <p
+            v-else-if="!categoriasInteres.length"
+            class="text-xs text-muted-foreground"
+          >
+            Aún no hay categorías marcadas como interés. Créalas en Categorías de
+            cursos (toggle «seleccionable como interés»).
+          </p>
+          <div v-else class="grid max-h-48 gap-1.5 overflow-auto sm:grid-cols-2">
+            <label
+              v-for="cat in categoriasInteres"
+              :key="cat.id"
+              class="flex cursor-pointer items-start gap-2 border border-border px-2.5 py-2 text-sm hover:bg-muted/40"
+            >
+              <input
+                v-model="interesesSugeridosIds"
+                type="checkbox"
+                class="mt-0.5"
+                :value="cat.id"
+              />
+              <span class="min-w-0">
+                <span class="flex items-center gap-1.5 font-semibold">
+                  <span
+                    class="h-2.5 w-2.5 shrink-0 rounded-full"
+                    :style="{ backgroundColor: cat.color }"
+                  />
+                  {{ cat.nombre }}
+                </span>
+                <span
+                  v-if="cat.descripcion"
+                  class="mt-0.5 block text-[11px] text-muted-foreground"
+                >
+                  {{ cat.descripcion }}
+                </span>
+              </span>
+            </label>
+          </div>
         </div>
       </div>
       <template #footer>
@@ -1917,22 +2082,59 @@ function etiquetaEstado(estado: VinculacionUnidad["estado"]) {
 
     <Dialog v-model:visible="modalPerfil" modal header="Crear perfil debajo de Administración" :style="{ width: 'min(38rem, calc(100vw - 2rem))' }"><div class="grid gap-4"><div class="border-l-4 border-l-accent bg-accent/10 p-4 text-sm"><b>Dirección y Administración permanecen protegidos.</b><p class="mt-1 text-xs text-muted-foreground">Este perfil tendrá un nivel inferior y solo recibirá los permisos de la plantilla seleccionada.</p></div><label><span class="filtro-label">Nombre definido por la entidad</span><InputText v-model="formularioPerfil.nombre" class="filtro-control w-full" placeholder="Ej. Presidente de capítulo" /></label><label><span class="filtro-label">Descripción</span><InputText v-model="formularioPerfil.descripcion" class="filtro-control w-full" /></label><label><span class="filtro-label">Plantilla funcional</span><Select v-model="formularioPerfil.plantilla" :options="opcionesPlantilla" option-label="label" option-value="value" class="filtro-control w-full" /></label></div><template #footer><Button variant="outline" @click="modalPerfil = false">Cancelar</Button><Button @click="crearPerfil">Crear perfil</Button></template></Dialog>
 
-    <Dialog v-model:visible="modalAccesosPerfil" modal :header="`Módulos y permisos · ${perfilEditando?.nombre ?? ''}`" :style="{ width: 'min(42rem, calc(100vw - 2rem))' }">
+    <Dialog
+      v-model:visible="modalAccesosPerfil"
+      modal
+      :header="`Áreas del portal · ${perfilEditando?.nombre ?? ''}`"
+      :style="{ width: 'min(42rem, calc(100vw - 2rem))' }"
+    >
       <div class="grid gap-4">
-        <div v-if="!puedeGestionarPermisosPerfil" class="border-l-4 border-l-amber-500 bg-amber-50 p-4 text-sm text-amber-950 dark:bg-amber-950/20 dark:text-amber-100">
-          Vista de consulta. Ve a Accesos para que Dirección o Administración cambien permisos generales o excepciones.
+        <div
+          v-if="!puedeGestionarPermisosPerfil"
+          class="border-l-4 border-l-amber-500 bg-amber-50 p-4 text-sm text-amber-950 dark:bg-amber-950/20 dark:text-amber-100"
+        >
+          Vista de consulta. Para cambios generales ve a
+          <RouterLink class="font-bold underline" to="/organizacion/accesos">Accesos</RouterLink>.
         </div>
+        <div v-if="perfilEditando" class="flex flex-wrap gap-1.5">
+          <Tag
+            v-for="modulo in resumenModulosActivos(perfilEditando.permisos)"
+            :key="`modal-${modulo}`"
+            :value="modulo"
+            severity="secondary"
+          />
+        </div>
+        <Button
+          v-if="puedeGestionarPermisosPerfil"
+          size="sm"
+          variant="outline"
+          @click="mostrarEditorPermisosPerfil = !mostrarEditorPermisosPerfil"
+        >
+          {{
+            mostrarEditorPermisosPerfil
+              ? "Ocultar detalle"
+              : "Personalizar permisos"
+          }}
+        </Button>
         <EditorPermisosAgrupados
+          v-if="mostrarEditorPermisosPerfil"
           :key="`perfil-${perfilEditando?.id ?? 'nuevo'}`"
           v-model="permisosEditando"
           :grupos="gruposPermisosOrganizacion"
           :disabled="!puedeGestionarPermisosPerfil"
-          ayuda="Primero elige un módulo; al entrar verás solo los permisos de ese grupo. Preferible usar /organizacion/accesos para excepciones."
+          modo-modulo
+          ayuda="Activa áreas del portal. Usa «Afinar» solo si necesitas ajustes puntuales."
         />
       </div>
       <template #footer>
         <Button variant="outline" @click="modalAccesosPerfil = false">Cerrar</Button>
-        <Button v-if="puedeGestionarPermisosPerfil" :disabled="guardando" @click="guardarAccesosPerfil">Guardar accesos</Button>
+        <Button
+          v-if="puedeGestionarPermisosPerfil && mostrarEditorPermisosPerfil"
+          :disabled="guardando"
+          @click="guardarAccesosPerfil"
+        >
+          Guardar
+        </Button>
       </template>
     </Dialog>
 

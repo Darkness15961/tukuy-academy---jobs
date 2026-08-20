@@ -3,6 +3,7 @@ import {
   BookOpen,
   Building2,
   CircleUserRound,
+  Clock3,
   MoreHorizontal,
   Plus,
   Search,
@@ -21,6 +22,7 @@ import { apiConfig } from "@/api/config";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
+import ImagenPortadaCurso from "@/components/shared/ImagenPortadaCurso.vue";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useContextoSesion } from "@/composables/useContextoSesion";
@@ -219,8 +221,8 @@ async function confirmarEliminarCurso() {
     const indice = cursos.value.findIndex((item) => item.id === eliminado.id);
     if (indice >= 0) cursos.value[indice] = eliminado;
     aviso.value =
-      "El curso quedó oculto del catálogo. Quienes ya estaban inscritos conservan su acceso.";
-    toast.success("Curso oculto del catálogo.");
+      "El curso quedó oculto del catálogo. Administración podrá revisarlo.";
+    toast.success("Curso eliminado del catálogo (oculto).");
     cursoPendienteEliminar.value = undefined;
   } catch (causa) {
     toast.error(
@@ -297,11 +299,13 @@ async function confirmarEliminarCurso() {
         :key="curso.id"
         class="group overflow-visible border-border bg-card"
       >
-        <div class="relative h-44 overflow-hidden">
-          <img
+        <div class="relative aspect-video w-full overflow-hidden">
+          <ImagenPortadaCurso
             :src="curso.imagen"
             :alt="curso.titulo"
-            class="h-full w-full object-cover transition duration-500 group-hover:scale-105"
+            :object-position="curso.imagenPosicion"
+            hover-escala
+            contenedor-class="aspect-video h-full w-full"
           />
           <div
             class="absolute inset-0 bg-linear-to-t from-slate-950/50 to-transparent"
@@ -348,7 +352,7 @@ async function confirmarEliminarCurso() {
               class="px-3 py-2 text-left text-red-600 hover:bg-red-500/10"
               @click="archivar(curso)"
             >
-              Ocultar del catálogo
+              Eliminar
             </button>
           </div>
         </div>
@@ -388,11 +392,18 @@ async function confirmarEliminarCurso() {
             <span class="font-bold">Observación: </span>{{ curso.observacion }}
           </p>
           <div
-            class="mt-4 flex items-center justify-between text-xs text-muted-foreground"
+            class="mt-4 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground"
           >
             <span class="flex items-center gap-1">
               <UsersRound class="h-4 w-4" />
               {{ curso.estudiantes }} estudiantes
+            </span>
+            <span
+              v-if="curso.duracion && curso.duracion !== '—'"
+              class="flex items-center gap-1 font-semibold text-foreground"
+            >
+              <Clock3 class="h-4 w-4 text-primary" />
+              {{ curso.duracion }}
             </span>
             <span
               v-if="curso.valoracion"
@@ -423,10 +434,12 @@ async function confirmarEliminarCurso() {
     >
       <article class="w-full max-w-3xl border border-border bg-card shadow-2xl">
         <div class="relative aspect-video bg-slate-950">
-          <img
+          <ImagenPortadaCurso
             :src="cursoVistaPrevia.imagen"
             :alt="cursoVistaPrevia.titulo"
-            class="h-full w-full object-cover opacity-65"
+            :object-position="cursoVistaPrevia.imagenPosicion"
+            :opacidad="0.65"
+            contenedor-class="aspect-video h-full w-full bg-slate-950"
           />
           <div
             class="absolute inset-0 bg-linear-to-t from-slate-950 via-transparent to-transparent"
@@ -449,8 +462,13 @@ async function confirmarEliminarCurso() {
               >{{ cursoVistaPrevia.observacion }}
             </p>
             <p class="mt-2 text-sm text-slate-200">
-              {{ cursoVistaPrevia.estudiantes }} estudiantes ·
-              {{ cursoVistaPrevia.valoracion || "Sin valoraciones" }}
+              {{ cursoVistaPrevia.estudiantes }} estudiantes
+              <template
+                v-if="cursoVistaPrevia.duracion && cursoVistaPrevia.duracion !== '—'"
+              >
+                · {{ cursoVistaPrevia.duracion }}
+              </template>
+              · {{ cursoVistaPrevia.valoracion || "Sin valoraciones" }}
             </p>
           </div>
         </div>
@@ -471,11 +489,12 @@ async function confirmarEliminarCurso() {
       @click.self="cursoPendienteEliminar = undefined"
     >
       <article class="w-full max-w-lg border border-border bg-card p-6 shadow-2xl">
-        <h2 class="text-lg font-black">¿Ocultar este curso del catálogo?</h2>
+        <h2 class="text-lg font-black">¿Eliminar este curso?</h2>
         <p class="mt-2 text-sm text-muted-foreground">
           <strong class="text-foreground">{{ cursoPendienteEliminar.titulo }}</strong>
-          dejará de mostrarse a nuevos alumnos. Quienes ya están inscritos siguen
-          viendo el contenido, progreso y certificados.
+          dejará de mostrarse a nuevos alumnos (se oculta del catálogo). Quienes ya
+          están inscritos conservan acceso. Administración podrá revisarlo y
+          eliminar el material si corresponde.
         </p>
         <div class="mt-6 flex justify-end gap-2">
           <Button
@@ -490,7 +509,7 @@ async function confirmarEliminarCurso() {
             :disabled="eliminandoCurso"
             @click="confirmarEliminarCurso"
           >
-            {{ eliminandoCurso ? "Ocultando…" : "Sí, ocultar" }}
+            {{ eliminandoCurso ? "Eliminando…" : "Sí, eliminar" }}
           </Button>
         </div>
       </article>

@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { Check, Heart, ShoppingCart, Star } from "lucide-vue-next";
+import { Check, Heart, Loader2, ShoppingCart, Star } from "lucide-vue-next";
 import { computed, ref } from "vue";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import ImagenPortadaCurso from "@/components/shared/ImagenPortadaCurso.vue";
 import { cursoEstaMatriculado, cursoEsDePago } from "@/lib/acceso-curso";
 import { cn } from "@/lib/utils";
 import {
@@ -25,6 +26,7 @@ const props = withDefaults(
     fluid?: boolean;
     /** En Mi aprendizaje: avance y metadatos en lugar de precio. */
     modoAprendizaje?: boolean;
+    inscribiendo?: boolean;
   }>(),
   {
     variant: "light",
@@ -34,6 +36,7 @@ const props = withDefaults(
     showDetail: true,
     fluid: false,
     modoAprendizaje: false,
+    inscribiendo: false,
   },
 );
 
@@ -48,7 +51,8 @@ const displayCourse = computed(() => enrichCourse(props.course));
 
 const cursoPropio = computed(
   () =>
-    props.modoAprendizaje || cursoEstaMatriculado(displayCourse.value),
+    !props.inscribiendo &&
+    (props.modoAprendizaje || cursoEstaMatriculado(displayCourse.value)),
 );
 
 const progreso = computed(() =>
@@ -92,6 +96,7 @@ const etiquetaContinuar = computed(() =>
 );
 
 const etiquetaAccionDetalle = computed(() => {
+  if (props.inscribiendo) return "Inscribiendo…";
   if (cursoPropio.value) {
     return displayCourse.value.status === "Completado" || progreso.value >= 100
       ? "Revisar curso"
@@ -105,6 +110,7 @@ const etiquetaAccionDetalle = computed(() => {
 });
 
 function emitirAccionPrincipal() {
+  if (props.inscribiendo) return;
   if (cursoPropio.value) {
     emit("continueCourse");
     return;
@@ -231,24 +237,30 @@ function calculatePanelPosition() {
     @keydown.enter.self.prevent="emit('select')"
     @keydown.space.self.prevent="emit('select')"
   >
-    <div
-      class="relative aspect-video w-full overflow-hidden rounded-none border-x-0 border-t-0 text-left transition"
-      :class="
-        isDark ? 'border-white/10 bg-card/5' : 'border-border bg-muted'
-      "
-    >
-      <img
+    <div class="relative aspect-video w-full shrink-0">
+      <ImagenPortadaCurso
         :src="displayCourse.image"
         :alt="displayCourse.title"
-        class="h-full w-full object-cover transition duration-500 group-hover:scale-105"
+        :object-position="displayCourse.imagenPosicion"
+        hover-escala
+        :contenedor-class="
+          cn(
+            'aspect-video h-full w-full rounded-none border-x-0 border-t-0 text-left transition',
+            isDark ? 'border-white/10 bg-card/5' : 'border-border bg-muted',
+          )
+        "
       />
       <div
         v-if="isDark"
-        :class="[
-          'absolute inset-0 bg-linear-to-br opacity-35',
-          displayCourse.imageTone,
-        ]"
-      />
+        class="pointer-events-none absolute inset-0"
+      >
+        <div
+          :class="[
+            'absolute inset-0 bg-linear-to-br opacity-35',
+            displayCourse.imageTone,
+          ]"
+        />
+      </div>
 
       <Button
         v-if="showActions"
@@ -473,9 +485,11 @@ function calculatePanelPosition() {
           v-else-if="showActions"
           size="sm"
           variant="outline"
+          :disabled="inscribiendo"
           @click.stop="emit('continueCourse')"
         >
-          Inscribirme
+          <Loader2 v-if="inscribiendo" class="h-4 w-4 animate-spin" />
+          {{ inscribiendo ? "Inscribiendo…" : "Inscribirme" }}
         </Button>
       </div>
     </div>
@@ -553,8 +567,10 @@ function calculatePanelPosition() {
         <Button
           class="mt-5 w-full"
           type="button"
+          :disabled="inscribiendo"
           @click.stop="emitirAccionPrincipal"
         >
+          <Loader2 v-if="inscribiendo" class="mr-2 h-4 w-4 animate-spin" />
           {{ etiquetaAccionDetalle }}
         </Button>
       </div>

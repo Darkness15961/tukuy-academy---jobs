@@ -89,6 +89,7 @@ const pricingFilter = ref<PricingFilter>("all");
 const fuenteFilter = ref<FuenteCursoFilter>("all");
 const accesoFilter = ref<AccesoCursoFilter>("all");
 const openingCertificateId = ref<string | null>(null);
+const inscribiendoCursoId = ref<string | null>(null);
 const mensajeAccesoCurso = ref("");
 
 const activeView = computed(() => resolvePortalView(route.meta.view));
@@ -348,8 +349,19 @@ watch(
 );
 
 async function refrescarCursosTrasMatricula() {
+  invalidarCacheSecundaria();
   await refetchCursos({ silencioso: true, forzar: true });
   await sincronizarProgresosCursos();
+}
+
+async function irAlCursoTrasInscripcion(course: Course) {
+  await matricularCurso(course.id, courses.value, { actualizarLista: false });
+  await router.push(`/tukuy-academy/aprendizaje/${course.id}`);
+  void refrescarCursosTrasMatricula();
+}
+
+function estaInscribiendoCurso(courseId: string) {
+  return inscribiendoCursoId.value === courseId;
 }
 
 async function matricularTrasCompra(cursoIds: string[]) {
@@ -379,6 +391,9 @@ async function openSimuladorCurso(course: Course) {
     return;
   }
 
+  if (inscribiendoCursoId.value) return;
+
+  inscribiendoCursoId.value = course.id;
   try {
     if (course.origen === "entidad" && course.alcance === "INTERNO") {
       const cursoEntidad = cursosPerfilesEntidadesMock.find(
@@ -404,10 +419,7 @@ async function openSimuladorCurso(course: Course) {
           return;
         }
         await entidadesComunidadService.matricularEnCurso(cursoEntidad);
-        await matricularCurso(course.id, courses.value);
-        await refrescarCursosTrasMatricula();
-        toast.success("Inscripción lista. Ya puedes entrar al curso.");
-        await router.push(`/tukuy-academy/aprendizaje/${course.id}`);
+        await irAlCursoTrasInscripcion(course);
         return;
       }
     }
@@ -445,23 +457,21 @@ async function openSimuladorCurso(course: Course) {
         unidadOrigenId: evaluacion.unidadOrigenId,
         modalidad: "LIBRE",
       });
-      await matricularCurso(course.id, courses.value);
-      await refrescarCursosTrasMatricula();
-      toast.success("Inscripción lista. Ya puedes entrar al curso.");
-      await router.push(`/tukuy-academy/aprendizaje/${course.id}`);
+      await irAlCursoTrasInscripcion(course);
       return;
     }
 
     if (cursoPuedeInscribirseGratis(course)) {
-      await matricularCurso(course.id, courses.value);
-      await refrescarCursosTrasMatricula();
-      toast.success("Inscripción lista. Ya puedes entrar al curso.");
-      await router.push(`/tukuy-academy/aprendizaje/${course.id}`);
+      await irAlCursoTrasInscripcion(course);
       return;
     }
   } catch (causa) {
     avisarAcceso(mensajeErrorMatricula(causa), "error");
     return;
+  } finally {
+    if (inscribiendoCursoId.value === course.id) {
+      inscribiendoCursoId.value = null;
+    }
   }
 
   avisarAcceso(
@@ -529,6 +539,7 @@ const portalContext = {
   jobsLoading,
   contentLoading,
   openingCertificateId,
+  inscribiendoCursoId,
   mensajeAccesoCurso,
   cartCount,
   favoritesCount,
@@ -549,6 +560,7 @@ const portalContext = {
   matricularTrasCompra,
   sincronizarProgresosCursos,
   updateUserProfile,
+  estaInscribiendoCurso,
 };
 
 providePortalContext(portalContext);

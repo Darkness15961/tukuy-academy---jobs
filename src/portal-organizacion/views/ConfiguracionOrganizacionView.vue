@@ -10,6 +10,7 @@ import {
 } from "@/api/services/organizacion.service";
 import { Button } from "@/components/ui/button";
 import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
+import EditorNombreCuenta from "@/components/shared/EditorNombreCuenta.vue";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useContextoSesion } from "@/composables/useContextoSesion";
@@ -144,6 +145,7 @@ async function guardarIntegraciones() {
       <Skeleton v-for="item in 3" :key="item" class="h-44 w-full" />
     </div>
     <template v-else>
+    <EditorNombreCuenta />
     <Card class="overflow-hidden border-border bg-card">
       <CardContent class="p-0">
         <div class="border-b border-border bg-primary px-6 py-5 text-white">
@@ -208,7 +210,7 @@ async function guardarIntegraciones() {
         </div>
         <div class="mt-6 grid gap-4 sm:grid-cols-2">
           <label class="grid gap-2 text-sm font-bold"
-            >Nombre<Input v-model="configuracion.nombre" /></label
+            >Nombre de la organización<Input v-model="configuracion.nombre" /></label
           ><label class="grid gap-2 text-sm font-bold"
             >RUC<Input v-model="configuracion.ruc" /></label
           ><label class="grid gap-2 text-sm font-bold"

@@ -194,9 +194,19 @@ function imagenContexto(membresia: MembresiaOrganizacion) {
     return "/img/portal-docente-independiente.png";
   }
   if (esPortalOrganizacion(membresia) || esAccesoInstitucional(membresia)) {
-    return "/img/portal-organizacion.png";
+    // Misma portada institucional para todos los perfiles de la organización.
+    return (
+      membresia.organizacion?.portada?.trim() ||
+      "/img/portal-organizacion.png"
+    );
   }
   return presentacionPortal[membresia.portal].imagen;
+}
+
+function logoContexto(membresia: MembresiaOrganizacion) {
+  return (
+    membresia.organizacion?.logo?.trim() || "/img/iconoTukuyAcademy.png"
+  );
 }
 
 function textoAlternativoImagen(membresia: MembresiaOrganizacion) {
@@ -352,7 +362,7 @@ function funcionesContexto(membresia: MembresiaOrganizacion) {
             class="absolute left-6 top-6 z-10 grid h-20 w-20 place-items-center bg-white p-2 shadow-xl"
           >
             <img
-              :src="membresia.organizacion?.logo ?? '/img/iconoTukuyAcademy.png'"
+              :src="logoContexto(membresia)"
               :alt="`Logo de ${membresia.organizacion?.nombre}`"
               class="h-full w-full object-contain"
             />

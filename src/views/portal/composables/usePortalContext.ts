@@ -52,7 +52,9 @@ export type PortalContext = {
   jobsLoading: Ref<boolean>;
   contentLoading: Ref<boolean>;
   openingCertificateId: Ref<string | null>;
+  inscribiendoCursoId: Ref<string | null>;
   mensajeAccesoCurso: Ref<string>;
+  estaInscribiendoCurso: (courseId: string) => boolean;
   cartCount: Ref<number>;
   favoritesCount: Ref<number>;
   navigate: (view: ViewId) => void;

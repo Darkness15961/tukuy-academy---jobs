@@ -112,7 +112,7 @@ async function handleGoogle() {
                   id="apellidos"
                   v-model="apellidos"
                   class="border-white/15 bg-black/30 text-white placeholder:text-slate-500 focus-visible:ring-blue-500"
-                  placeholder="Quispe Rojas"
+                  placeholder="Rojas"
                   autocomplete="family-name"
                   required
                 />

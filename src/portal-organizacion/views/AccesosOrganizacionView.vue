@@ -16,7 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useContextoSesion } from "@/composables/useContextoSesion";
-import { MODULOS_ACCESO, modulosDePermisos } from "@/lib/control-acceso";
+import { MODULOS_ACCESO, etiquetaLegiblePermiso, resumenModulosActivos } from "@/lib/control-acceso";
 import type { PerfilEntidad } from "@/portal-organizacion/types/estructura-organizacional.types";
 import type { UsuarioOrganizacion } from "@/api/services/organizacion.service";
 import { toast } from "@/lib/toast";
@@ -70,7 +70,7 @@ const gruposPermisos = computed((): GrupoPermisosEditor[] =>
       descripcion: modulo.descripcion,
       permisos: modulo.permisos.map((codigo) => ({
         codigo,
-        etiqueta: codigo,
+        etiqueta: etiquetaLegiblePermiso(codigo),
       })),
     }),
   ),
@@ -79,7 +79,7 @@ const gruposPermisos = computed((): GrupoPermisosEditor[] =>
 const opcionesPermiso = computed(() =>
   MODULOS_ACCESO.filter((m) => m.portal === "organizacion").flatMap((modulo) =>
     modulo.permisos.map((codigo) => ({
-      label: `${codigo} · ${modulo.nombre}`,
+      label: `${etiquetaLegiblePermiso(codigo)} · ${modulo.nombre}`,
       value: codigo,
     })),
   ),
@@ -258,7 +258,7 @@ onMounted(cargar);
   <div class="mx-auto grid max-w-6xl gap-6 p-4 sm:p-6">
     <TituloConAyuda
       titulo="Accesos de la organización"
-      ayuda="Dirección y Administración definen permisos generales por perfil. Las excepciones buscan personas concretas para conceder o denegar un permiso sin cambiar el perfil entero."
+      ayuda="Define qué puede hacer cada perfil (Dirección, Administración, etc.). Las excepciones son opcionales y solo para casos puntuales."
     />
 
     <div
@@ -288,7 +288,7 @@ onMounted(cargar);
         @click="pestana = 'general'"
       >
         <ShieldCheck class="h-4 w-4" />
-        Permisos generales
+        Permisos por perfil
       </Button>
       <Button
         size="sm"
@@ -296,7 +296,7 @@ onMounted(cargar);
         @click="pestana = 'excepciones'"
       >
         <UserRoundCog class="h-4 w-4" />
-        Excepciones
+        Excepciones (avanzado)
       </Button>
     </div>
 
@@ -323,12 +323,19 @@ onMounted(cargar);
             {{ perfil.descripcion }}
           </p>
           <div class="mt-4 border-t border-border pt-4">
-            <p
-              class="text-[10px] font-black uppercase tracking-wide text-muted-foreground"
-            >
-              {{ perfil.permisos.length }} permisos ·
-              {{ modulosDePermisos(perfil.permisos).length }} módulos
-            </p>
+            <div class="flex flex-wrap gap-1.5">
+              <Tag
+                v-for="modulo in resumenModulosActivos(perfil.permisos).slice(0, 4)"
+                :key="`${perfil.id}-${modulo}`"
+                :value="modulo"
+                severity="secondary"
+              />
+              <Tag
+                v-if="resumenModulosActivos(perfil.permisos).length > 4"
+                :value="`+${resumenModulosActivos(perfil.permisos).length - 4}`"
+                severity="secondary"
+              />
+            </div>
             <Button
               class="mt-4 w-full"
               size="sm"
@@ -338,8 +345,8 @@ onMounted(cargar);
             >
               {{
                 puedeEditarPerfil(perfil)
-                  ? "Configurar permisos"
-                  : "Ver permisos"
+                  ? "Configurar accesos"
+                  : "Ver accesos"
               }}
             </Button>
           </div>
@@ -386,7 +393,7 @@ onMounted(cargar);
               :value="item.efecto"
               :severity="item.efecto === 'DENEGAR' ? 'danger' : 'success'"
             />
-            <span class="ml-2 font-semibold">{{ item.permisoCodigo }}</span>
+            <span class="ml-2 font-semibold">{{ etiquetaLegiblePermiso(item.permisoCodigo) }}</span>
           </p>
           <p v-if="item.motivo" class="mt-2 text-xs text-muted-foreground">
             {{ item.motivo }}
@@ -424,8 +431,9 @@ onMounted(cargar);
         :key="perfilEditando.id"
         v-model="permisosEditando"
         :grupos="gruposPermisos"
+        modo-modulo
         :disabled="!puedeEditarPerfil(perfilEditando)"
-        ayuda="Estos permisos aplican a todas las personas con este perfil. Usa Excepciones para casos especiales."
+        ayuda="Activa las áreas del portal que puede usar este perfil. Usa «Afinar» solo si necesitas un permiso específico."
       />
       <template #footer>
         <Button variant="outline" @click="modalPerfil = false">Cerrar</Button>

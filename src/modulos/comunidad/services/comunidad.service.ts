@@ -47,7 +47,7 @@ function obtenerAutorActualMock() {
   }
 
   return {
-    id: contexto?.usuarioId ?? "usuario-demo",
+    id: contexto?.usuarioId ?? "",
     nombre: contexto?.portal === "admin" ? "Tukuy Academy" : user.name,
     cargo:
       contexto?.portal === "docente"
@@ -79,6 +79,11 @@ export const comunidadService = {
     contenido: string,
     tipo: TipoPublicacion,
   ): Promise<PublicacionComunidad> {
+    if (apiConfig.sinDatosDemo) {
+      throw new Error(
+        "El muro de comunidad aún no está conectado a la base de datos.",
+      );
+    }
     if (apiConfig.useMock) {
       const publicacion: PublicacionComunidad = {
         id: `pub-${Date.now()}`,

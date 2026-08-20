@@ -31,6 +31,7 @@ import {
 } from "@/api/services/academico.service";
 import { docenteService } from "@/api/services/docente.service";
 import { Button } from "@/components/ui/button";
+import ImagenPortadaCurso from "@/components/shared/ImagenPortadaCurso.vue";
 import { Card, CardContent } from "@/components/ui/card";
 import Skeleton from "primevue/skeleton";
 
@@ -264,11 +265,12 @@ function fecha(fechaIso: string | null) {
       <div
         class="relative min-h-28 overflow-hidden border border-border bg-slate-950 text-white sm:min-h-32"
       >
-        <img
+        <ImagenPortadaCurso
           v-if="curso?.imagen"
           :src="curso.imagen"
           :alt="curso.titulo"
-          class="absolute inset-0 h-full w-full object-cover opacity-25"
+          :opacidad="0.25"
+          contenedor-class="absolute inset-0 h-full w-full bg-slate-950"
         />
         <div
           class="absolute inset-0 bg-linear-to-r from-[#071F52] via-[#071F52]/95 to-[#071F52]/55"

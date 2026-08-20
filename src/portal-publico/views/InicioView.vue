@@ -19,6 +19,7 @@ import SiteFooter from "@/components/shared/SiteFooter.vue";
 import TarjetaCursoTendencia from "@/components/shared/TarjetaCursoTendencia.vue";
 import { Button } from "@/components/ui/button";
 import { useCursos } from "@/composables/useCursos";
+import { CORREO_VENTAS } from "@/lib/constants";
 import HeaderPublico from "../components/HeaderPublico.vue";
 import HeroInstitucional from "../components/HeroInstitucional.vue";
 import { bloquesAdn } from "../data/portada.mock";
@@ -149,6 +150,9 @@ const audiencias = [
     ruta: "/planes",
   },
 ];
+function escribirVentas() {
+  window.location.href = `mailto:${CORREO_VENTAS}`;
+}
 </script>
 <template>
   <div class="bg-white text-[#07152B]">
@@ -537,6 +541,14 @@ const audiencias = [
           <Button class="mt-8 rounded-none" @click="router.push('/planes')"
             >Ver planes empresariales<ArrowRight
           /></Button>
+          <p class="mt-4 text-sm text-[#52657A]">
+            Cotizaciones y promos:
+            <a
+              :href="`mailto:${CORREO_VENTAS}`"
+              class="font-bold text-[#0B3A78] hover:underline"
+              >{{ CORREO_VENTAS }}</a
+            >
+          </p>
         </div>
       </div>
       <div class="relative min-h-[620px]">
@@ -545,6 +557,42 @@ const audiencias = [
           alt="Equipo empresarial coordinando su plan de capacitación"
           class="absolute inset-0 h-full w-full object-cover"
         />
+      </div>
+    </section>
+
+    <section id="contacto" class="scroll-mt-24 bg-[#07152B] py-16 text-white">
+      <div
+        class="mx-auto grid max-w-360 gap-8 px-5 lg:grid-cols-2 lg:items-center lg:px-8"
+      >
+        <div>
+          <p class="text-sm font-black uppercase tracking-[.25em] text-[#F5B400]">
+            Contacto
+          </p>
+          <h2 class="mt-4 text-4xl font-black sm:text-5xl">
+            COTIZA O CONSULTA PROMOS
+          </h2>
+          <p class="mt-4 max-w-lg leading-7 text-blue-100">
+            Planes empresariales, licencias institucionales y promociones para tu
+            equipo.
+          </p>
+        </div>
+        <div class="border-l-4 border-[#F5B400] bg-white/8 p-6 sm:p-8">
+          <p class="text-xs font-black uppercase tracking-[.18em] text-blue-200">
+            Ventas
+          </p>
+          <a
+            :href="`mailto:${CORREO_VENTAS}`"
+            class="mt-3 inline-block text-xl font-bold text-[#F5B400] hover:underline sm:text-2xl"
+            >{{ CORREO_VENTAS }}</a
+          >
+          <p class="mt-3 text-sm text-blue-100">Lun - Vie · 9am - 7pm</p>
+          <Button
+            class="mt-6 rounded-none bg-[#F5B400] text-[#07152B] hover:bg-amber-400"
+            @click="escribirVentas"
+          >
+            Escríbenos
+          </Button>
+        </div>
       </div>
     </section>
 

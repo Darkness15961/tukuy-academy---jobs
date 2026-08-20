@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Building2, Database, Search, Settings2, ShieldCheck } from "lucide-vue-next";
+import { Building2, Database, ImageIcon, Search, Settings2, ShieldCheck } from "lucide-vue-next";
 import Column from "primevue/column";
 import DataTable from "primevue/datatable";
 import Dialog from "primevue/dialog";
@@ -23,6 +23,7 @@ import type {
   ListadoCursosSecundaria,
   TablaSecundaria,
 } from "@/lib/contrato-secundaria";
+import { storageAcademia, urlPublicaMedia } from "@/lib/storage-academia";
 import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -55,6 +56,13 @@ const inventarioTablas = ref<TablaSecundaria[]>([]);
 const exploracionCursos = ref<ListadoCursosSecundaria | null>(null);
 const conexionOrganizacion = ref<OrganizacionPrincipal | null>(null);
 const conexion = reactive({ servidorRef: "", nombreBaseLogico: "", secretoRef: "", region: "south-america-west1", versionEsquema: 1, estado: "SIN CONFIGURAR", verificadaEn: "", ultimoError: "" });
+const dialogoBranding = ref(false);
+const organizacionBranding = ref<OrganizacionPrincipal | null>(null);
+const cargandoBranding = ref(false);
+const guardandoBranding = ref(false);
+const subiendoLogoBranding = ref(false);
+const subiendoPortadaBranding = ref(false);
+const branding = reactive({ logo: "", portada: "" });
 const resumen = ref<ResumenOrganizacionesPrincipal>({
   total: 0,
   habilitadas: 0,
@@ -245,6 +253,101 @@ async function cambiarModulo(modulo: ModuloPrincipal) {
   }
 }
 
+async function abrirBranding(organizacion: OrganizacionPrincipal) {
+  organizacionBranding.value = organizacion;
+  dialogoBranding.value = true;
+  cargandoBranding.value = true;
+  branding.logo = "";
+  branding.portada = "";
+  error.value = "";
+  try {
+    const actual = await organizacionesPrincipalService.obtenerBranding(organizacion.id);
+    branding.logo = actual.logo;
+    branding.portada = actual.portada;
+  } catch (causa) {
+    error.value =
+      causa instanceof Error
+        ? causa.message
+        : "No se pudo cargar la identidad visual.";
+  } finally {
+    cargandoBranding.value = false;
+  }
+}
+
+function vistaMedia(valor: string, fallback: string) {
+  return urlPublicaMedia(valor, fallback);
+}
+
+async function subirBranding(
+  archivo: File,
+  destino: "logo" | "portada",
+) {
+  if (!organizacionBranding.value) return;
+  if (!archivo.type.startsWith("image/")) {
+    error.value = "Elige una imagen.";
+    return;
+  }
+  const ocupado = destino === "logo" ? subiendoLogoBranding : subiendoPortadaBranding;
+  const anterior = destino === "logo" ? branding.logo : branding.portada;
+  ocupado.value = true;
+  error.value = "";
+  try {
+    const subida = await storageAcademia.subirPortada(
+      archivo,
+      organizacionBranding.value.id,
+    );
+    const url = subida.publicUrl ?? subida.url;
+    if (destino === "logo") branding.logo = url;
+    else branding.portada = url;
+    toast.success(
+      destino === "logo"
+        ? "Logo subido. Guarda para aplicarlo."
+        : "Fondo subido. Guarda para aplicarlo.",
+    );
+  } catch (causa) {
+    if (destino === "logo") branding.logo = anterior;
+    else branding.portada = anterior;
+    error.value =
+      causa instanceof Error
+        ? causa.message
+        : `No se pudo subir ${destino === "logo" ? "el logo" : "el fondo"}.`;
+  } finally {
+    ocupado.value = false;
+  }
+}
+
+function alElegirBranding(evento: Event, destino: "logo" | "portada") {
+  const input = evento.target as HTMLInputElement;
+  const archivo = input.files?.[0];
+  input.value = "";
+  if (!archivo) return;
+  void subirBranding(archivo, destino);
+}
+
+async function guardarBranding() {
+  if (!organizacionBranding.value) return;
+  guardandoBranding.value = true;
+  error.value = "";
+  try {
+    await organizacionesPrincipalService.guardarBranding({
+      instalacionId: organizacionBranding.value.id,
+      logo: branding.logo.trim(),
+      portada: branding.portada.trim(),
+    });
+    toast.success(
+      "Identidad visual guardada. Todos los perfiles de la organización usarán este logo y fondo en «Seleccionar tu espacio».",
+    );
+    dialogoBranding.value = false;
+  } catch (causa) {
+    error.value =
+      causa instanceof Error
+        ? causa.message
+        : "No se pudo guardar la identidad visual.";
+  } finally {
+    guardandoBranding.value = false;
+  }
+}
+
 watch([busqueda, estado, plan], () => {
   if (temporizador) clearTimeout(temporizador);
   temporizador = setTimeout(() => {
@@ -334,7 +437,24 @@ onBeforeUnmount(() => {
           <Column header="Vigencia" style="min-width:11rem"><template #body="{ data }">{{ vigencia(data) }}</template></Column>
           <Column field="estado" header="Instalación" style="min-width:10rem"><template #body="{ data }"><Tag :severity="severidad(data.estado)" :value="data.estado" /></template></Column>
           <Column header="Detalle" style="min-width:13rem"><template #body="{ data }"><div class="text-xs"><p>{{ data.clasificacion }} · {{ data.facturable ? 'Facturable' : 'No facturable' }}</p><p class="mt-1">Zona: {{ data.zonaHoraria }}</p><p class="mt-1 text-muted-foreground">Tenant {{ data.tenantRef.slice(0, 8) }}…</p></div></template></Column>
-          <Column header="Acciones" style="min-width:18rem"><template #body="{ data }"><div class="flex gap-2"><Button size="sm" variant="outline" @click="abrirModulos(data)"><Settings2 class="h-4 w-4" />Módulos</Button><Button size="sm" variant="outline" @click="abrirConexion(data)"><Database class="h-4 w-4" />Conexión</Button></div></template></Column>
+          <Column header="Acciones" style="min-width:24rem">
+            <template #body="{ data }">
+              <div class="flex flex-wrap gap-2">
+                <Button size="sm" variant="outline" @click="abrirBranding(data)">
+                  <ImageIcon class="h-4 w-4" />
+                  Espacio
+                </Button>
+                <Button size="sm" variant="outline" @click="abrirModulos(data)">
+                  <Settings2 class="h-4 w-4" />
+                  Módulos
+                </Button>
+                <Button size="sm" variant="outline" @click="abrirConexion(data)">
+                  <Database class="h-4 w-4" />
+                  Conexión
+                </Button>
+              </div>
+            </template>
+          </Column>
         </DataTable>
       </CardContent>
     </Card>
@@ -390,6 +510,103 @@ onBeforeUnmount(() => {
         </article>
         <p v-if="!modulos.length" class="py-8 text-center text-sm text-muted-foreground">No existe un catálogo de módulos activo.</p>
       </div>
+    </Dialog>
+    <Dialog
+      v-model:visible="dialogoBranding"
+      modal
+      :header="`Identidad del espacio · ${organizacionBranding?.nombre ?? ''}`"
+      :style="{ width: 'min(40rem, calc(100vw - 2rem))' }"
+    >
+      <p class="mb-4 text-sm text-muted-foreground">
+        Logo y fondo fijos para todos los perfiles de esta organización en
+        «Seleccionar tu espacio» (Dirección, Administración, Docencia, Aprendizaje).
+      </p>
+      <div v-if="cargandoBranding" class="space-y-3">
+        <Skeleton class="h-28" />
+        <Skeleton class="h-40" />
+      </div>
+      <div v-else class="grid gap-5">
+        <div class="grid gap-3 sm:grid-cols-[7rem_1fr] sm:items-center">
+          <div class="grid h-28 w-28 place-items-center border border-border bg-muted/40 p-2">
+            <img
+              :src="vistaMedia(branding.logo, '/img/iconoTukuyAcademy.png')"
+              alt="Vista previa del logo"
+              class="max-h-full max-w-full object-contain"
+            />
+          </div>
+          <div class="grid gap-2">
+            <span class="filtro-label">Logo de la empresa</span>
+            <InputText
+              v-model="branding.logo"
+              class="filtro-control w-full"
+              placeholder="URL del logo o sube un archivo"
+            />
+            <label class="inline-flex cursor-pointer">
+              <input
+                type="file"
+                accept="image/*"
+                class="sr-only"
+                :disabled="subiendoLogoBranding"
+                @change="alElegirBranding($event, 'logo')"
+              />
+              <span
+                class="inline-flex h-8 items-center gap-2 border border-input bg-card px-3 text-xs font-bold hover:bg-muted"
+                :class="subiendoLogoBranding ? 'pointer-events-none opacity-50' : ''"
+              >
+                {{ subiendoLogoBranding ? "Subiendo…" : "Subir logo" }}
+              </span>
+            </label>
+          </div>
+        </div>
+        <div class="grid gap-3">
+          <span class="filtro-label">Fondo del espacio</span>
+          <div class="relative h-44 overflow-hidden border border-border bg-muted/40">
+            <img
+              :src="vistaMedia(branding.portada, '/img/portal-organizacion.png')"
+              alt="Vista previa del fondo"
+              class="h-full w-full object-cover"
+            />
+            <div
+              class="absolute left-3 top-3 grid h-12 w-12 place-items-center bg-white p-1 shadow"
+            >
+              <img
+                :src="vistaMedia(branding.logo, '/img/iconoTukuyAcademy.png')"
+                alt=""
+                class="h-full w-full object-contain"
+              />
+            </div>
+          </div>
+          <InputText
+            v-model="branding.portada"
+            class="filtro-control w-full"
+            placeholder="URL del fondo o sube un archivo"
+          />
+          <label class="inline-flex cursor-pointer">
+            <input
+              type="file"
+              accept="image/*"
+              class="sr-only"
+              :disabled="subiendoPortadaBranding"
+              @change="alElegirBranding($event, 'portada')"
+            />
+            <span
+              class="inline-flex h-8 items-center gap-2 border border-input bg-card px-3 text-xs font-bold hover:bg-muted"
+              :class="subiendoPortadaBranding ? 'pointer-events-none opacity-50' : ''"
+            >
+              {{ subiendoPortadaBranding ? "Subiendo…" : "Subir fondo" }}
+            </span>
+          </label>
+        </div>
+      </div>
+      <template #footer>
+        <Button variant="outline" @click="dialogoBranding = false">Cancelar</Button>
+        <Button
+          :disabled="guardandoBranding || cargandoBranding"
+          @click="guardarBranding"
+        >
+          {{ guardandoBranding ? "Guardando…" : "Guardar identidad" }}
+        </Button>
+      </template>
     </Dialog>
   </section>
 </template>

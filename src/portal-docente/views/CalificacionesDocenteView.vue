@@ -19,6 +19,7 @@ import {
 } from "@/api/services/academico.service";
 import { Button } from "@/components/ui/button";
 import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
+import ImagenPortadaCurso from "@/components/shared/ImagenPortadaCurso.vue";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import Skeleton from "primevue/skeleton";
@@ -226,11 +227,12 @@ function exportarResumen() {
         class="group overflow-hidden border border-border bg-card text-left shadow-sm transition hover:-translate-y-1 hover:border-primary/40 hover:shadow-xl"
         @click="abrirCurso(curso.cursoId)"
       >
-        <div class="relative h-48 overflow-hidden bg-slate-900">
-          <img
+        <div class="relative aspect-video w-full overflow-hidden bg-slate-900">
+          <ImagenPortadaCurso
             :src="curso.imagen"
             :alt="curso.titulo"
-            class="h-full w-full object-cover transition duration-500 group-hover:scale-105"
+            hover-escala
+            contenedor-class="aspect-video h-full w-full bg-slate-900"
           />
           <div
             class="absolute inset-0 bg-linear-to-t from-slate-950 via-slate-950/20 to-transparent"

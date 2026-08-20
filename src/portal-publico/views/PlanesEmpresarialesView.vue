@@ -19,6 +19,7 @@ import SiteFooter from "@/components/shared/SiteFooter.vue";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { delay } from "@/lib/delay";
+import { CORREO_VENTAS } from "@/lib/constants";
 import HeaderPublico from "../components/HeaderPublico.vue";
 import { planesEmpresariales, type PlanEmpresarial } from "../data/planes.mock";
 
@@ -356,6 +357,19 @@ function irA(destino: string) {
                 Esta solicitud es pública y no crea cargos automáticamente.
               </p>
             </div>
+            <div class="mt-8 border border-white/15 bg-white/5 p-5">
+              <p class="text-xs font-black uppercase tracking-[.16em] text-blue-200">
+                Ventas
+              </p>
+              <a
+                :href="`mailto:${CORREO_VENTAS}`"
+                class="mt-2 inline-block text-sm font-bold text-[#F5B400] hover:underline"
+                >{{ CORREO_VENTAS }}</a
+              >
+              <p class="mt-2 text-xs leading-5 text-blue-100">
+                Cotizaciones, promos y planes a medida.
+              </p>
+            </div>
           </div>
 
           <div class="border border-[#D7E0EC] p-7 sm:p-10">
@@ -368,8 +382,15 @@ function irA(destino: string) {
                 <h3 class="mt-5 text-3xl font-black">Solicitud registrada</h3>
                 <p class="mx-auto mt-4 max-w-lg leading-7 text-[#64748B]">
                   Recibimos la solicitud de {{ solicitud.organizacion }} para el
-                  plan {{ planSeleccionado?.nombre }}. El equipo Tukuy se pondrá
-                  en contacto con {{ solicitud.contacto }}.
+                  plan {{ planSeleccionado?.nombre }}. Te contactaremos pronto.
+                </p>
+                <p class="mx-auto mt-3 max-w-lg text-sm text-[#64748B]">
+                  También puedes escribir a
+                  <a
+                    :href="`mailto:${CORREO_VENTAS}`"
+                    class="font-bold text-[#0B3A78] hover:underline"
+                    >{{ CORREO_VENTAS }}</a
+                  >.
                 </p>
                 <Button
                   class="mt-7 rounded-none"

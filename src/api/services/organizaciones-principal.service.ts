@@ -73,6 +73,13 @@ type PaginaRpc = {
   resumen?: Partial<ResumenOrganizacionesPrincipal>;
 };
 
+export type BrandingOrganizacionPrincipal = {
+  instalacionId: string;
+  nombre: string;
+  logo: string;
+  portada: string;
+};
+
 export const organizacionesPrincipalService = {
   async listar(entrada: {
     pagina: number;
@@ -126,6 +133,55 @@ export const organizacionesPrincipalService = {
         suspendidas: respuesta.resumen?.suspendidas ?? 0,
         conSuscripcion: respuesta.resumen?.conSuscripcion ?? 0,
       },
+    };
+  },
+
+  async obtenerBranding(
+    instalacionId: string,
+  ): Promise<BrandingOrganizacionPrincipal> {
+    const { data, error } = await clientePrincipal().rpc(
+      "admin_obtener_branding_organizacion",
+      { p_instalacion_id: instalacionId },
+    );
+    if (error) throw new Error(error.message);
+    const respuesta = (data ?? {}) as {
+      instalacionId?: string;
+      nombre?: string;
+      logo?: string;
+      portada?: string;
+    };
+    return {
+      instalacionId: respuesta.instalacionId ?? instalacionId,
+      nombre: respuesta.nombre ?? "",
+      logo: String(respuesta.logo ?? "").trim(),
+      portada: String(respuesta.portada ?? "").trim(),
+    };
+  },
+
+  async guardarBranding(entrada: {
+    instalacionId: string;
+    logo: string;
+    portada: string;
+  }): Promise<BrandingOrganizacionPrincipal> {
+    const { data, error } = await clientePrincipal().rpc(
+      "admin_guardar_branding_organizacion",
+      {
+        p_instalacion_id: entrada.instalacionId,
+        p_logo: entrada.logo,
+        p_portada: entrada.portada,
+      },
+    );
+    if (error) throw new Error(error.message);
+    const respuesta = (data ?? {}) as {
+      instalacionId?: string;
+      logo?: string;
+      portada?: string;
+    };
+    return {
+      instalacionId: respuesta.instalacionId ?? entrada.instalacionId,
+      nombre: "",
+      logo: String(respuesta.logo ?? entrada.logo).trim(),
+      portada: String(respuesta.portada ?? entrada.portada).trim(),
     };
   },
 };

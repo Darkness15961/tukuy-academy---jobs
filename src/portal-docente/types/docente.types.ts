@@ -51,6 +51,10 @@ export interface CursoDocente {
   origenCarga?: "DOCENTE" | "ADMINISTRACION";
   /** Feedback de revisión académica cuando estado === OBSERVADO. */
   observacion?: string;
+  /** Duración total del temario (minutos), suma de videos y actividades. */
+  duracionMinutos?: number;
+  /** Texto legible, p. ej. "2 h 15 min". */
+  duracion?: string;
 }
 
 export interface EstudianteDocente {
@@ -290,6 +294,13 @@ export interface BorradorCursoDocente {
   permiteEmpresas: boolean;
   certificado: boolean;
   nombreCertificado: string;
+  /** Plantilla elegida para emitir (institucional o propia del docente). */
+  plantillaCertificadoId?: string;
+  /**
+   * Cantidad de firmas del certificado del curso (1–5).
+   * Docente: el backend fuerza 1. Administración: elige en el curso.
+   */
+  cantidadFirmas?: number;
   notaMinima: number;
   vigenciaMeses: number;
   firmasCertificado?: FirmaCertificadoCurso[];
@@ -314,6 +325,8 @@ export interface BorradorCursoDocente {
       urlYoutube?: string;
       /** Origen del enlace. Si falta, se detecta por la URL. */
       fuenteVideo?: "youtube" | "tiktok" | "drive";
+      /** Duración real del video (minutos), detectada desde YouTube u otra fuente. */
+      duracionMinutos?: number;
       preguntas?: Array<{
         question: string;
         options: string[];

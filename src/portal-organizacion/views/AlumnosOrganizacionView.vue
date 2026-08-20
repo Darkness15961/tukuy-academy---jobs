@@ -120,9 +120,9 @@ function enriquecerConEstructura(item: AlumnoResumenSecundaria): FilaAlumno {
     iniciales: item.iniciales,
     tipo,
     nodos,
-    nodosResumen: nodos.join(" · ") || "Sin nodo — acceso por curso",
+    nodosResumen: nodos.join(" · ") || "Sin nodo",
     cursos: item.cursos,
-    cursosResumen: item.cursosResumen,
+    cursosResumen: item.cursosResumen || "Sin cursos todavía",
     progreso: Number(item.progreso ?? 0),
     estado: item.estado,
     ultimoAcceso: item.ultimoAcceso,
@@ -188,9 +188,12 @@ async function cargarPagina(mostrarSkeleton = false) {
     totalServidor.value = resultado.total;
     cursosCatalogo.value = resultado.cursos ?? [];
     alumnos.value = (resultado.alumnos ?? []).map(enriquecerConEstructura);
-  } catch {
+  } catch (causa) {
     alumnos.value = [];
     totalServidor.value = 0;
+    toast.error(
+      causa instanceof Error ? causa.message : "No se pudo cargar el listado de alumnos.",
+    );
   } finally {
     cargando.value = false;
     cargandoTabla.value = false;
@@ -230,7 +233,7 @@ onMounted(async () => {
       return {
         ...fila,
         nodos,
-        nodosResumen: nodos.join(" · ") || "Sin nodo — acceso por curso",
+        nodosResumen: nodos.join(" · ") || "Sin nodo",
         tipo: nodos.length ? "INTERNO" : "EXTERNO",
       };
     });
@@ -343,7 +346,7 @@ function exportarResultados() {
         <TituloConAyuda
           eyebrow="Seguimiento institucional"
           titulo="Alumnos"
-          ayuda="Personas matriculadas en uno o más cursos. Son internas con vínculo activo a un nodo; si estudian sin pertenecer a un nodo, son externas."
+          ayuda="Directorio de estudiantes de Tukuy Academy y de esta entidad. El nodo es opcional: con vínculo activo son internos; sin nodo siguen apareciendo como externos."
         />
       </div>
       <Button
@@ -536,9 +539,19 @@ function exportarResultados() {
         <template #empty>
           <div class="px-4 py-12 text-center">
             <GraduationCap class="mx-auto h-10 w-10 text-primary" />
-            <h3 class="mt-4 text-lg font-black">No hay alumnos con estos filtros</h3>
+            <h3 class="mt-4 text-lg font-black">
+              {{
+                hayFiltros
+                  ? "No hay alumnos con estos filtros"
+                  : "Aún no hay alumnos para mostrar"
+              }}
+            </h3>
             <p class="mt-2 text-sm text-muted-foreground">
-              Prueba con Interno, Externo o limpia la búsqueda.
+              {{
+                hayFiltros
+                  ? "Prueba con Interno, Externo o limpia la búsqueda."
+                  : "Deberían aparecer aquí todas las cuentas con perfil de estudiante, aunque no tengan nodo."
+              }}
             </p>
             <Button class="mt-5" variant="outline" @click="limpiarFiltros">
               Limpiar filtros

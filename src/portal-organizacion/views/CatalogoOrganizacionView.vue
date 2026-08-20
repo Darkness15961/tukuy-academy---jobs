@@ -38,6 +38,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
+import ImagenPortadaCurso from "@/components/shared/ImagenPortadaCurso.vue";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -69,7 +70,9 @@ const asignaciones = ref<AsignacionOrganizacion[]>([]);
 const menuCursoId = ref<string>();
 const cursoVistaPrevia = ref<CursoDocente>();
 const cursoPendienteOcultar = ref<CursoDocente>();
+const cursoPendienteEliminar = ref<PropuestaCursoOrganizacion | CursoDocente>();
 const ocultandoCurso = ref(false);
+const eliminandoCurso = ref(false);
 const avisoContenido = ref("");
 const nodosInternos = ref<
   Array<{ label: string; value: string; usuarios: number }>
@@ -153,7 +156,11 @@ const filtradas = computed(() => {
       );
     }
     if (pestana.value === "CATALOGO") {
-      return curso.estado === "APROBADO" || curso.estado === "PUBLICADO";
+      return (
+        curso.estado === "APROBADO" ||
+        curso.estado === "PUBLICADO" ||
+        curso.estado === "OCULTO"
+      );
     }
     return false;
   });
@@ -224,6 +231,21 @@ function solicitarOcultarContenido(curso: CursoDocente) {
   menuCursoId.value = undefined;
 }
 
+function solicitarEliminarMaterial(
+  curso: PropuestaCursoOrganizacion | CursoDocente,
+) {
+  cursoPendienteEliminar.value = curso;
+  menuCursoId.value = undefined;
+}
+
+function idCursoSecundario(
+  curso: PropuestaCursoOrganizacion | CursoDocente,
+) {
+  return "cursoDocenteId" in curso && curso.cursoDocenteId
+    ? curso.cursoDocenteId
+    : curso.id;
+}
+
 async function confirmarOcultarContenido() {
   const curso = cursoPendienteOcultar.value;
   if (!curso || ocultandoCurso.value) return;
@@ -232,6 +254,7 @@ async function confirmarOcultarContenido() {
     const archivado = await docenteService.archivarCurso(curso.id);
     const indice = contenidos.value.findIndex((item) => item.id === archivado.id);
     if (indice >= 0) contenidos.value[indice] = archivado;
+    await recargarPropuestas();
     avisoContenido.value =
       "El curso quedó oculto del catálogo. Quienes ya estaban inscritos conservan su acceso.";
     toast.success("Curso oculto del catálogo.");
@@ -244,6 +267,30 @@ async function confirmarOcultarContenido() {
     );
   } finally {
     ocultandoCurso.value = false;
+  }
+}
+
+async function confirmarEliminarMaterial() {
+  const curso = cursoPendienteEliminar.value;
+  if (!curso || eliminandoCurso.value) return;
+  eliminandoCurso.value = true;
+  try {
+    const id = idCursoSecundario(curso);
+    await docenteService.eliminarCursoPermanente(id);
+    contenidos.value = contenidos.value.filter((item) => item.id !== id);
+    propuestas.value = propuestas.value.filter(
+      (item) => item.cursoDocenteId !== id && item.id !== id,
+    );
+    toast.success("Material eliminado. Ya no aparece en el catálogo.");
+    cursoPendienteEliminar.value = undefined;
+  } catch (causa) {
+    toast.error(
+      causa instanceof Error
+        ? causa.message
+        : "No se pudo eliminar el material del curso.",
+    );
+  } finally {
+    eliminandoCurso.value = false;
   }
 }
 
@@ -334,6 +381,7 @@ function claseEstado(estado: PropuestaCursoOrganizacion["estado"]) {
     return "border-transparent bg-emerald-700 text-white";
   }
   if (estado === "OBSERVADO") return "border-transparent bg-orange-500 text-white";
+  if (estado === "OCULTO") return "border-transparent bg-slate-500 text-white";
   return "border-transparent bg-amber-500 text-slate-950";
 }
 
@@ -344,6 +392,7 @@ function etiquetaEstado(estado: PropuestaCursoOrganizacion["estado"]) {
     APROBADO: "Aprobado",
     OBSERVADO: "Observado",
     PUBLICADO: "Publicado",
+    OCULTO: "Oculto",
   }[estado];
 }
 
@@ -696,11 +745,13 @@ async function quitarAsignacion(titulo: string) {
           :key="curso.id"
           class="group overflow-visible border-border bg-card"
         >
-          <div class="relative h-44 overflow-hidden">
-            <img
+          <div class="relative aspect-video w-full overflow-hidden">
+            <ImagenPortadaCurso
               :src="curso.imagen"
               :alt="curso.titulo"
-              class="h-full w-full object-cover transition duration-500 group-hover:scale-105"
+              :object-position="curso.imagenPosicion"
+              hover-escala
+              contenedor-class="aspect-video h-full w-full"
             />
             <Badge
               class="absolute left-4 top-4 font-bold shadow-md"
@@ -741,10 +792,16 @@ async function quitarAsignacion(titulo: string) {
               </button>
               <button
                 v-if="curso.estado !== 'ARCHIVADO'"
-                class="px-3 py-2 text-left text-red-600 hover:bg-red-500/10"
+                class="px-3 py-2 text-left text-amber-700 hover:bg-amber-500/10 dark:text-amber-300"
                 @click="solicitarOcultarContenido(curso)"
               >
                 Ocultar del catálogo
+              </button>
+              <button
+                class="px-3 py-2 text-left text-red-600 hover:bg-red-500/10"
+                @click="solicitarEliminarMaterial(curso)"
+              >
+                Eliminar material
               </button>
             </div>
           </div>
@@ -754,10 +811,17 @@ async function quitarAsignacion(titulo: string) {
               {{ curso.organizacionNombre || "Curso institucional" }}
             </div>
             <h2 class="min-h-12 text-lg font-black">{{ curso.titulo }}</h2>
-            <div class="mt-4 flex items-center justify-between text-xs text-muted-foreground">
+            <div class="mt-4 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
               <span class="flex items-center gap-1">
                 <UsersRound class="h-4 w-4" />
                 {{ curso.estudiantes }} estudiantes
+              </span>
+              <span
+                v-if="curso.duracion && curso.duracion !== '—'"
+                class="flex items-center gap-1 font-semibold text-foreground"
+              >
+                <Clock3 class="h-4 w-4 text-primary" />
+                {{ curso.duracion }}
               </span>
               <span
                 v-if="curso.valoracion"
@@ -784,10 +848,12 @@ async function quitarAsignacion(titulo: string) {
       >
         <article class="w-full max-w-3xl border border-border bg-card shadow-2xl">
           <div class="relative aspect-video bg-slate-950">
-            <img
+            <ImagenPortadaCurso
               :src="cursoVistaPrevia.imagen"
               :alt="cursoVistaPrevia.titulo"
-              class="h-full w-full object-cover opacity-65"
+              :object-position="cursoVistaPrevia.imagenPosicion"
+              :opacidad="0.65"
+              contenedor-class="aspect-video h-full w-full bg-slate-950"
             />
             <div class="absolute inset-x-0 bottom-0 p-7 text-white">
               <Badge :class="claseEstadoContenido(cursoVistaPrevia.estado)">
@@ -823,11 +889,11 @@ async function quitarAsignacion(titulo: string) {
         :key="curso.id"
         class="overflow-hidden border-border bg-card transition hover:-translate-y-0.5 hover:shadow-lg"
       >
-        <div class="relative h-40">
-          <img
+        <div class="relative aspect-video w-full overflow-hidden">
+          <ImagenPortadaCurso
             :src="curso.imagen"
             :alt="curso.titulo"
-            class="h-full w-full object-cover"
+            contenedor-class="aspect-video h-full w-full"
           />
           <Badge
             class="absolute left-3 top-3 font-bold shadow-md"
@@ -950,6 +1016,7 @@ async function quitarAsignacion(titulo: string) {
             </template>
             <template v-else>
               <Button
+                v-if="curso.estado !== 'OCULTO'"
                 class="w-full"
                 :variant="estaAsignado(curso.titulo) ? 'outline' : 'default'"
                 :disabled="procesando"
@@ -963,7 +1030,7 @@ async function quitarAsignacion(titulo: string) {
                 }}
               </Button>
               <Button
-                v-if="estaAsignado(curso.titulo)"
+                v-if="estaAsignado(curso.titulo) && curso.estado !== 'OCULTO'"
                 variant="outline"
                 class="w-full text-red-600"
                 :disabled="procesando"
@@ -971,6 +1038,19 @@ async function quitarAsignacion(titulo: string) {
               >
                 <Trash2 class="h-4 w-4" />
                 Quitar asignación
+              </Button>
+              <Button
+                variant="destructive"
+                class="w-full"
+                :disabled="procesando"
+                @click="solicitarEliminarMaterial(curso)"
+              >
+                <Trash2 class="h-4 w-4" />
+                {{
+                  curso.estado === "OCULTO"
+                    ? "Eliminar material"
+                    : "Eliminar curso"
+                }}
               </Button>
             </template>
           </div>
@@ -1171,7 +1251,8 @@ async function quitarAsignacion(titulo: string) {
         <p class="mt-2 text-sm text-muted-foreground">
           <strong class="text-foreground">{{ cursoPendienteOcultar.titulo }}</strong>
           dejará de mostrarse a nuevos alumnos. Quienes ya están inscritos siguen
-          viendo el contenido, progreso y certificados.
+          viendo el contenido. Seguirá visible aquí como «Oculto» para que puedas
+          revisarlo o eliminarlo.
         </p>
         <div class="mt-6 flex justify-end gap-2">
           <Button
@@ -1187,6 +1268,37 @@ async function quitarAsignacion(titulo: string) {
             @click="confirmarOcultarContenido"
           >
             {{ ocultandoCurso ? "Ocultando…" : "Sí, ocultar" }}
+          </Button>
+        </div>
+      </article>
+    </div>
+
+    <div
+      v-if="cursoPendienteEliminar"
+      class="fixed inset-0 z-50 grid place-items-center bg-slate-950/70 p-4"
+      @click.self="cursoPendienteEliminar = undefined"
+    >
+      <article class="w-full max-w-lg border border-border bg-card p-6 shadow-2xl">
+        <h2 class="text-lg font-black">¿Eliminar el material del curso?</h2>
+        <p class="mt-2 text-sm text-muted-foreground">
+          <strong class="text-foreground">{{ cursoPendienteEliminar.titulo }}</strong>
+          se retirará del catálogo y el material quedará desactivado. Esta acción
+          es solo para Administración.
+        </p>
+        <div class="mt-6 flex justify-end gap-2">
+          <Button
+            variant="outline"
+            :disabled="eliminandoCurso"
+            @click="cursoPendienteEliminar = undefined"
+          >
+            Cancelar
+          </Button>
+          <Button
+            variant="destructive"
+            :disabled="eliminandoCurso"
+            @click="confirmarEliminarMaterial"
+          >
+            {{ eliminandoCurso ? "Eliminando…" : "Sí, eliminar" }}
           </Button>
         </div>
       </article>

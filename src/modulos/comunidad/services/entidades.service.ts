@@ -164,8 +164,88 @@ function leerMatriculas(): MatriculaCursoEntidadPerfil[] {
   }
 }
 
-function referenciaUsuario() {
-  return perfilSesion()?.name?.trim().toLowerCase() || "usuario-demo";
+function esInstalacionUuid(id: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    id,
+  );
+}
+
+function mapearCursoPerfilPublico(
+  item: Record<string, unknown>,
+  entidadId: string,
+): CursoPerfilEntidad {
+  const historicos =
+    item.datosHistoricos && typeof item.datosHistoricos === "object"
+      ? (item.datosHistoricos as Record<string, unknown>)
+      : {};
+  const borrador =
+    historicos.borradorResumen && typeof historicos.borradorResumen === "object"
+      ? (historicos.borradorResumen as Record<string, unknown>)
+      : {};
+  const config =
+    historicos.configuracionPublicacion &&
+    typeof historicos.configuracionPublicacion === "object"
+      ? (historicos.configuracionPublicacion as Record<string, unknown>)
+      : {};
+  const precioCfg =
+    config.precio && typeof config.precio === "object"
+      ? (config.precio as Record<string, unknown>)
+      : {};
+  const duracionMin = Number(item.duracionMinutos ?? 0);
+  const modalidadRaw = String(config.modalidadAcceso ?? "LIBRE");
+  return {
+    id: String(item.cursoSecundarioRef ?? item.id ?? ""),
+    organizacionId: entidadId,
+    titulo: String(item.titulo ?? "Curso"),
+    resumen: String(item.resumen ?? ""),
+    imagen: String(item.imagenPublicaRef ?? ""),
+    docente: String(
+      borrador.docenteResponsableNombre ??
+        historicos.docenteNombre ??
+        "Docente",
+    ),
+    duracion:
+      duracionMin > 0
+        ? `${Math.max(1, Math.round(duracionMin / 60))} h`
+        : "—",
+    categoriaIds: Array.isArray(config.categoriaIds)
+      ? config.categoriaIds.map(String)
+      : [],
+    alcance: config.alcance === "INTERNO" ? "INTERNO" : "PUBLICO",
+    nodoIdsPermitidos: Array.isArray(config.nodoIds)
+      ? config.nodoIds.map(String)
+      : [],
+    incluirDescendientes: config.incluirDescendientes !== false,
+    modalidadAcceso:
+      modalidadRaw === "CON_APROBACION" || modalidadRaw === "SOLO_ASIGNACION"
+        ? modalidadRaw
+        : "LIBRE",
+    gratuito:
+      precioCfg.modalidad === "GRATUITO" ||
+      Number(precioCfg.precioCompleto ?? 0) === 0,
+    precio: Number(precioCfg.precioCompleto ?? 0),
+    moneda: precioCfg.moneda === "USD" ? "USD" : "PEN",
+    estado: "PUBLICADO",
+  };
+}
+
+async function listarCursosPerfilReales(
+  entidadId: string,
+  incluirOcultos = false,
+): Promise<Array<CursoPerfilEntidad & { visibleEnPerfil: boolean }>> {
+  const items =
+    await organizacionPrincipalService.listarCursosPerfilPublico(entidadId);
+  return items
+    .map((item) => {
+      const curso = mapearCursoPerfilPublico(item, entidadId);
+      const historicos =
+        item.datosHistoricos && typeof item.datosHistoricos === "object"
+          ? (item.datosHistoricos as Record<string, unknown>)
+          : {};
+      const visibleEnPerfil = historicos.visibleEnPerfil !== false;
+      return { ...curso, visibleEnPerfil };
+    })
+    .filter((item) => incluirOcultos || item.visibleEnPerfil);
 }
 
 async function evaluarAccesoMock(
@@ -183,26 +263,34 @@ async function evaluarAccesoMock(
     };
   }
 
-  if (curso.organizacionId !== "org-empresa-abc") {
+  const contexto = contextoSesionLocal();
+  const usuarioId = contexto?.usuarioId;
+  if (!usuarioId) {
     return {
       disponible: false,
       condicion: "EXTERNO",
       origenAcceso: "NODO_INTERNO",
-      motivo: "Debes pertenecer a un nodo interno habilitado por esta entidad.",
+      motivo: "Inicia sesión para acceder a cursos internos de la entidad.",
     };
   }
 
-  const perfil = perfilSesion();
   const [personas, vinculaciones, unidades] = await Promise.all([
     organizacionService.usuarios.listar(),
     organizacionService.estructura.vinculaciones.listar(),
     organizacionService.estructura.unidades.listar(),
   ]);
-  const persona = personas.find(
-    (item) => item.nombre.trim().toLowerCase() === perfil?.name?.trim().toLowerCase(),
-  );
+  const persona = personas.find((item) => String(item.id) === usuarioId);
+  if (!persona || persona.estado !== "ACTIVO") {
+    return {
+      disponible: false,
+      condicion: "EXTERNO",
+      origenAcceso: "NODO_INTERNO",
+      motivo: "Debes ser miembro activo de la entidad para acceder a este curso.",
+    };
+  }
+
   const activas = vinculaciones.filter(
-    (item) => item.usuarioId === String(persona?.id) && item.estado === "ACTIVA",
+    (item) => item.usuarioId === String(persona.id) && item.estado === "ACTIVA",
   );
   const permitidos = new Set<string>();
   for (const nodoId of curso.nodoIdsPermitidos) {
@@ -257,8 +345,13 @@ function correoSolicitante(perfil: UserProfile | null) {
   return `${base || "solicitante"}@comunidad.tukuy`;
 }
 
+function referenciaUsuario() {
+  const contexto = contextoSesionLocal();
+  return contexto?.usuarioId?.trim() || perfilSesion()?.name?.trim().toLowerCase() || "";
+}
+
 function usaPresenciaBd() {
-  return apiConfig.sinDatosDemo && presenciaBdDisponible();
+  return organizacionPrincipalService.activo() && presenciaBdDisponible();
 }
 
 export const entidadesComunidadService = {
@@ -405,6 +498,9 @@ export const entidadesComunidadService = {
   async obtenerPublicaciones(
     entidadId: string,
   ): Promise<PublicacionEntidadResumen[]> {
+    if (apiConfig.sinDatosDemo || !apiConfig.useMock) {
+      return resolveMock([]);
+    }
     if (apiConfig.useMock) {
       return resolveMock(
         structuredClone(publicacionesPorEntidadMock[entidadId] ?? []),
@@ -469,6 +565,17 @@ export const entidadesComunidadService = {
   },
 
   async obtenerCursos(entidadId: string): Promise<CursoPerfilEntidad[]> {
+    if (
+      organizacionPrincipalService.activo() &&
+      esInstalacionUuid(entidadId)
+    ) {
+      try {
+        const lista = await listarCursosPerfilReales(entidadId);
+        return lista.map(({ visibleEnPerfil: _v, ...curso }) => curso);
+      } catch (error) {
+        if (!apiConfig.useMock) throw error;
+      }
+    }
     if (apiConfig.sinDatosDemo) return resolveMock([]);
     if (apiConfig.useMock) {
       const visibilidad = leerVisibilidadCursos()[entidadId] ?? {};
@@ -496,6 +603,12 @@ export const entidadesComunidadService = {
   async obtenerCursosEditor(
     entidadId: string,
   ): Promise<Array<CursoPerfilEntidad & { visibleEnPerfil: boolean }>> {
+    if (
+      organizacionPrincipalService.activo() &&
+      esInstalacionUuid(entidadId)
+    ) {
+      return listarCursosPerfilReales(entidadId, true);
+    }
     if (apiConfig.sinDatosDemo) return resolveMock([]);
     if (apiConfig.useMock) {
       const visibilidad = leerVisibilidadCursos()[entidadId] ?? {};
@@ -522,6 +635,32 @@ export const entidadesComunidadService = {
   async evaluarAccesoCurso(
     curso: CursoPerfilEntidad,
   ): Promise<EvaluacionAccesoCursoPerfil> {
+    if (organizacionPrincipalService.activo() && apiConfig.secundariaCursos) {
+      const usuarioId = contextoSesionLocal()?.usuarioId;
+      if (!usuarioId) {
+        return {
+          disponible: curso.alcance === "PUBLICO",
+          condicion: "EXTERNO",
+          origenAcceso: "CURSO_PUBLICO",
+          motivo: "Inicia sesión para matricularte.",
+        };
+      }
+      const evaluacion = await organizacionService.estructura.evaluarAccesoCurso(
+        usuarioId,
+        curso.id,
+      );
+      return {
+        disponible: evaluacion.disponible,
+        condicion: evaluacion.unidadOrigenId ? "INTERNO" : "EXTERNO",
+        origenAcceso: evaluacion.requiereAprobacion
+          ? "APROBACION"
+          : evaluacion.unidadOrigenId
+            ? "NODO_INTERNO"
+            : "CURSO_PUBLICO",
+        nodoOrigenId: evaluacion.unidadOrigenId,
+        motivo: evaluacion.motivo,
+      };
+    }
     if (apiConfig.useMock) return resolveMock(await evaluarAccesoMock(curso));
     const { data } = await api.get<EvaluacionAccesoCursoPerfil>(
       `${API.comunidad.entidadPorId(curso.organizacionId)}/cursos/${curso.id}/acceso`,
@@ -596,6 +735,29 @@ export const entidadesComunidadService = {
     estado: EstadoMembresiaEntidad;
     mensaje: string;
   }> {
+    if (
+      organizacionPrincipalService.activo() &&
+      esInstalacionUuid(entidadId)
+    ) {
+      const entidad = await this.obtenerPorId(entidadId);
+      if (entidad?.requiereDniEnrolamiento && !datos?.dni?.trim()) {
+        throw new Error("Esta entidad exige DNI para solicitar el ingreso.");
+      }
+      const resultado =
+        await organizacionPrincipalService.solicitarIngresoComunidad(
+          entidadId,
+          datos?.dni,
+        );
+      const estado: EstadoMembresiaEntidad =
+        resultado.estado === "MIEMBRO" ? "MIEMBRO" : "SOLICITADA";
+      return {
+        estado,
+        mensaje:
+          estado === "MIEMBRO"
+            ? "Ya eres miembro de esta entidad."
+            : "Solicitud enviada. La entidad la revisará en Organización → Usuarios.",
+      };
+    }
     if (apiConfig.useMock) {
       const mapa = leerEstados();
       if (mapa[entidadId] === "MIEMBRO") {

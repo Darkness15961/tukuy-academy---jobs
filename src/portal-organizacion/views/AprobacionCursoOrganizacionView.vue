@@ -12,15 +12,10 @@ import { Button } from "@/components/ui/button";
 import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import { Skeleton } from "@/components/ui/skeleton";
 import { mapearPublicacionAAprobacion } from "@/lib/mapear-publicacion-curso";
+import { cargarRevisionAcademicaDesdeSecundaria } from "@/lib/mapear-revision-curso";
 import AprobacionCursoWizard from "@/portal-organizacion/components/AprobacionCursoWizard.vue";
-import { obtenerRevisionCursoMock } from "@/portal-organizacion/data/revision-cursos.mock";
 import type { RevisionAcademicaCurso } from "@/portal-organizacion/types/revision-curso.types";
 import type { ConfiguracionPublicacionCurso } from "@/types/comercializacion-curso.types";
-import {
-  etiquetasRequisitos,
-  normalizarRequisitos,
-} from "@/lib/requisitos-curso";
-import { mapearSeccionesAModulosRevision } from "@/lib/mapear-revision-curso";
 import { toast } from "@/lib/toast";
 
 const route = useRoute();
@@ -65,62 +60,15 @@ onMounted(async () => {
     }
 
     if (!apiConfig.secundariaCursos) {
-      revision.value = obtenerRevisionCursoMock(
-        propuesta.value.id,
-        propuesta.value.cursoDocenteId,
-        propuesta.value.titulo,
-      );
-    } else {
-      try {
-        const { secundariaGatewayService } = await import(
-          "@/api/services/secundaria-gateway.service"
-        );
-        const detalle = await secundariaGatewayService.obtenerBorrador(
-          propuesta.value.cursoDocenteId,
-        );
-        const borrador = (detalle.borrador ?? {}) as Record<string, unknown>;
-        const curso = (detalle.curso ?? {}) as Record<string, unknown>;
-        const secciones = Array.isArray(borrador.secciones)
-          ? (borrador.secciones as Array<Record<string, unknown>>)
-          : [];
-        const objetivos = Array.isArray(borrador.objetivos)
-          ? borrador.objetivos.map(String)
-          : [];
-        const requisitos = etiquetasRequisitos(
-          normalizarRequisitos(borrador.requisitos),
-        );
-        revision.value = {
-          cursoId: propuesta.value.cursoDocenteId,
-          version: Number(curso.totalVersiones ?? 1),
-          descripcion: String(
-            borrador.descripcion ?? curso.resumen ?? propuesta.value.titulo,
-          ),
-          objetivos: objetivos.length
-            ? objetivos
-            : [`Revisar el contenido de ${propuesta.value.titulo}.`],
-          requisitos: requisitos.length
-            ? requisitos
-            : ["Sin requisitos enlazados"],
-          modulos: mapearSeccionesAModulosRevision(
-            secciones,
-            propuesta.value.cursoDocenteId,
-          ),
-          horasCertificables: Number(
-            (curso.versionActual as { horas?: number } | undefined)?.horas ??
-              (Number.parseInt(String(propuesta.value.duracion), 10) || 0),
-          ),
-          notaMinimaPropuesta: Number(borrador.notaMinima ?? 11),
-          certificadoPropuesto: Boolean(borrador.certificado ?? true),
-          enviadaEn: propuesta.value.enviado || new Date().toISOString(),
-        };
-      } catch {
-        revision.value = obtenerRevisionCursoMock(
-          propuesta.value.id,
-          propuesta.value.cursoDocenteId,
-          propuesta.value.titulo,
-        );
-      }
+      error.value =
+        "Activa VITE_SECUNDARIA_CURSOS=true para aprobar cursos con datos reales.";
+      return;
     }
+    revision.value = await cargarRevisionAcademicaDesdeSecundaria(
+      propuesta.value.cursoDocenteId,
+      propuesta.value.titulo,
+      propuesta.value.enviado,
+    );
     nodos.value = unidades
       .filter((nodo) => nodo.estado === "ACTIVA")
       .map((nodo) => ({

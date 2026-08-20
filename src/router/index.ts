@@ -4,7 +4,15 @@ import { AUTH_TOKEN_KEY, CONTEXTO_SESION_KEY } from "@/lib/constants";
 import { rutaInicioPortal } from "@/composables/useContextoSesion";
 import { portalPathByView } from "@/lib/portal-routes";
 import { env } from "@/lib/env";
+import {
+  detectarYMarcarRecuperacionClave,
+  hayRecuperacionClave,
+} from "@/lib/recuperacion-clave";
 import { supabasePrincipal } from "@/lib/supabase";
+import {
+  onboardingAprendizajeService,
+  onboardingYaCompletadoEnSesion,
+} from "@/api/services/onboarding-aprendizaje.service";
 
 const portalLayout = () => import("@/views/portal/PortalLayout.vue");
 const docenteLayout = () => import("@/portal-docente/DocenteLayout.vue");
@@ -148,9 +156,24 @@ const router = createRouter({
       component: () => import("@/views/AuthCallbackView.vue"),
     },
     {
+      path: "/restablecer-clave",
+      name: "restablecer-clave",
+      component: () => import("@/views/RestablecerClaveView.vue"),
+    },
+    {
       path: "/registro",
       name: "registro",
       component: () => import("@/views/RegistroView.vue"),
+    },
+    {
+      path: "/onboarding-aprendizaje",
+      name: "onboarding-aprendizaje",
+      component: () => import("@/views/OnboardingAprendizajeView.vue"),
+      meta: {
+        requiresAuth: true,
+        allowWithoutContext: true,
+        hideHeaderFooter: true,
+      },
     },
     {
       path: "/seleccionar-contexto",
@@ -822,7 +845,11 @@ const router = createRouter({
     },
   ],
   scrollBehavior(to) {
-    if (to.hash) {
+    if (
+      to.hash &&
+      !to.hash.includes("access_token") &&
+      !to.hash.includes("type=recovery")
+    ) {
       return { el: to.hash, behavior: "smooth", top: 88 };
     }
     return { top: 0 };
@@ -830,6 +857,18 @@ const router = createRouter({
 });
 
 router.beforeEach(async (to) => {
+  if (to.name !== "login" && to.name !== "landing") {
+    detectarYMarcarRecuperacionClave();
+  }
+  if (
+    hayRecuperacionClave() &&
+    to.name !== "restablecer-clave" &&
+    to.name !== "auth-callback" &&
+    to.name !== "login"
+  ) {
+    return { name: "restablecer-clave" };
+  }
+
   let token = localStorage.getItem(AUTH_TOKEN_KEY);
   if (env.authProvider === "supabase") {
     const { data } = await supabasePrincipal().auth.getSession();
@@ -841,7 +880,29 @@ router.beforeEach(async (to) => {
   if (to.meta.requiresAuth && !token) {
     return { name: "login", query: { continuar: to.fullPath } };
   }
-  if (to.name === "login" && token) {
+
+  // Primer acceso: carrera + intereses (solo una vez).
+  if (
+    token &&
+    !hayRecuperacionClave() &&
+    to.name !== "onboarding-aprendizaje" &&
+    to.name !== "auth-callback" &&
+    to.name !== "restablecer-clave" &&
+    !onboardingYaCompletadoEnSesion()
+  ) {
+    try {
+      const requiere = await onboardingAprendizajeService.requiereOnboarding();
+      if (requiere) {
+        // Solo conservar deep-link explícito de login (continuar=…),
+        // no la ruta que disparó el gate (p. ej. /aprendizaje vacío).
+        return { name: "onboarding-aprendizaje" };
+      }
+    } catch {
+      // Si falla la verificación, no bloqueamos el acceso.
+    }
+  }
+
+  if (to.name === "login" && token && !hayRecuperacionClave()) {
     const continuar = to.query.continuar;
     if (
       typeof continuar === "string" &&
@@ -865,6 +926,7 @@ router.beforeEach(async (to) => {
     to.meta.requiresAuth &&
     to.name !== "seleccionar-contexto" &&
     to.name !== "acceso-no-autorizado" &&
+    to.name !== "onboarding-aprendizaje" &&
     !to.meta.allowWithoutContext &&
     !contextoGuardado
   ) {

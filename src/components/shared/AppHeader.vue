@@ -35,6 +35,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import SelectorTema from "@/components/shared/SelectorTema.vue";
+import ImagenPortadaCurso from "@/components/shared/ImagenPortadaCurso.vue";
 import { urlFotoPerfilReal } from "@/lib/foto-perfil";
 import { pasarelaCursosHabilitada } from "@/lib/pasarela-cursos";
 import { portalPathByView } from "@/lib/portal-routes";
@@ -344,10 +345,11 @@ async function activarFuncion(membresiaId: string) {
                     class="flex min-w-0 flex-1 cursor-pointer items-center gap-3"
                     @click="navigateToCourse(course.id)"
                   >
-                    <img
+                    <ImagenPortadaCurso
                       :src="course.image"
                       :alt="course.title"
-                      class="h-12 w-12 shrink-0 object-cover"
+                      :object-position="course.imagenPosicion"
+                      contenedor-class="h-12 w-12 shrink-0"
                     />
                     <div class="grid min-w-0 flex-1 gap-1">
                       <span class="line-clamp-1 text-sm font-semibold leading-snug">
@@ -432,10 +434,11 @@ async function activarFuncion(membresiaId: string) {
                   class="grid grid-cols-[56px_1fr] gap-3 p-2 text-left transition hover:bg-muted"
                   @click="emit('navigate', 'favorites')"
                 >
-                  <img
+                  <ImagenPortadaCurso
                     :src="course.image"
                     :alt="course.title"
-                    class="h-14 w-14 object-cover"
+                    :object-position="course.imagenPosicion"
+                    contenedor-class="h-14 w-14"
                   />
                   <div class="grid min-w-0 gap-1">
                     <span class="line-clamp-2 text-sm font-semibold leading-snug">

@@ -9,7 +9,7 @@ import {
   Eye,
   FileText,
   GripVertical,
-  Image,
+  LayoutTemplate,
   Lock,
   Paperclip,
   Plus,
@@ -24,6 +24,9 @@ import {
   Video,
   HelpCircle,
   ClipboardCheck,
+  Clock3,
+  Link2,
+  Loader2,
   X,
   BookOpen,
   Tag,
@@ -32,7 +35,7 @@ import {
   Target,
   ListChecks,
 } from "lucide-vue-next";
-import { computed, nextTick, onMounted, reactive, ref, toRaw } from "vue";
+import { computed, nextTick, onMounted, reactive, ref, toRaw, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -54,8 +57,14 @@ import type {
 import { useContextoSesion } from "@/composables/useContextoSesion";
 import { useAuth } from "@/composables/useAuth";
 import { apiConfig } from "@/api/config";
-import { storageAcademia, urlPublicaMedia } from "@/lib/storage-academia";
+import {
+  storageAcademia,
+  urlVisualizableMedia,
+} from "@/lib/storage-academia";
 import PersonalizarPortadaModal from "@/components/shared/PersonalizarPortadaModal.vue";
+import ZonaSubidaImagen from "@/components/shared/ZonaSubidaImagen.vue";
+import { PORTADA_CURSO_AYUDA_BREVE } from "@/lib/portada-curso";
+import ImagenPortadaCurso from "@/components/shared/ImagenPortadaCurso.vue";
 import {
   organizacionService,
   type UsuarioOrganizacion,
@@ -73,6 +82,22 @@ import {
 } from "@/lib/validar-firma-imagen";
 import ToggleSwitch from "primevue/toggleswitch";
 import { toast } from "@/lib/toast";
+import { INSTALACION_TUKUY_ACADEMY_ID } from "@/lib/constants";
+import { plantillasCertificadoService } from "@/api/services/plantillas-certificado.service";
+import { secundariaGatewayService } from "@/api/services/secundaria-gateway.service";
+import VistaPreviaPlantillaCertificado from "@/components/shared/VistaPreviaPlantillaCertificado.vue";
+import type { PlantillaCertificado } from "@/lib/plantilla-certificado";
+import {
+  OPCIONES_CANTIDAD_FIRMAS_CERTIFICADO,
+  clampCantidadFirmasCertificado,
+  normalizarCertificadoCursoDocumento,
+} from "@/lib/certificado-curso";
+import { formatearDuracionVideo } from "@/lib/youtube-duracion";
+import { idVideoYoutube } from "@/lib/youtube";
+import {
+  formatearDuracionCurso,
+  sumarMinutosPrograma,
+} from "@/lib/duracion-curso";
 import {
   OPCIONES_FUENTE_VIDEO,
   ayudaUrlVideo,
@@ -92,8 +117,8 @@ const guardando = ref(false);
 const enviado = ref(false);
 const mostrandoVistaPrevia = ref(false);
 const errorImagen = ref("");
-const selectorImagen = ref<HTMLInputElement | null>(null);
 const modalPortadaAbierto = ref(false);
+const urlPortadaVistaPrevia = ref("");
 const fuentePortadaTemp = ref("");
 const archivoPortadaTemp = ref<File | null>(null);
 const subiendoPortada = ref(false);
@@ -126,9 +151,13 @@ const modalFirmas = ref(false);
 const busquedaFirma = ref("");
 const errorFirmaPropia = ref("");
 const subiendoFirmaPropia = ref(false);
-const selectorFirmaPropia = ref<HTMLInputElement | null>(null);
 const validandoFirma = ref(false);
 const chequeosFirma = ref<ChequeoFirma[]>([]);
+const plantillaCertificadoOrg = ref<PlantillaCertificado | null>(null);
+const catalogoPlantillasCert = ref<PlantillaCertificado[]>([]);
+const docentesPuedenConfigurarCert = ref(false);
+const cargandoPlantillaCert = ref(false);
+const miniaturasPlantilla = ref<Record<string, string>>({});
 const progresoFirma = computed(() => {
   if (!chequeosFirma.value.length) return 0;
   const hechos = chequeosFirma.value.filter(
@@ -213,6 +242,8 @@ const valoresIniciales = {
   permiteEmpresas: esIndependiente.value,
   certificado: true,
   nombreCertificado: "",
+  plantillaCertificadoId: "",
+  cantidadFirmas: 1,
   notaMinima: 14,
   vigenciaMeses: 0,
   firmasCertificado: [] as FirmaCertificadoCurso[],
@@ -225,6 +256,18 @@ const valoresIniciales = {
     : ("DOCENTE" as const),
 };
 const curso = reactive({ ...valoresIniciales });
+
+const plantillaSeleccionada = computed(() => {
+  const id = String(curso.plantillaCertificadoId ?? "").trim();
+  if (id) {
+    return (
+      catalogoPlantillasCert.value.find((p) => p.id === id) ??
+      plantillaCertificadoOrg.value
+    );
+  }
+  return plantillaCertificadoOrg.value;
+});
+
 type ItemSeccion = NonNullable<
   BorradorCursoDocente["secciones"][number]["items"]
 >[number];
@@ -375,10 +418,174 @@ function alCambiarUrlVideo(item: ItemSeccion) {
   ) {
     item.titulo = "Clase en video";
   }
+  const url = String(item.urlYoutube ?? "").trim();
+  const meta = metaVideo(item);
+  if (!url || (meta.urlCorroborada && meta.urlCorroborada !== url)) {
+    limpiarCorroboracionVideo(item);
+  }
+}
+
+type MetaCorroboracionVideo = {
+  estado: "idle" | "cargando" | "ok" | "error";
+  error?: string;
+  videoId?: string;
+  segundos?: number;
+  minutos?: number;
+  urlCorroborada?: string;
+};
+
+const metaCorroboracionVideo = reactive<Record<string, MetaCorroboracionVideo>>(
+  {},
+);
+
+function claveItemVideo(item: ItemSeccion) {
+  return String(item.id ?? item.urlYoutube ?? "").trim() || "sin-id";
+}
+
+function metaVideo(item: ItemSeccion): MetaCorroboracionVideo {
+  const clave = claveItemVideo(item);
+  if (!metaCorroboracionVideo[clave]) {
+    metaCorroboracionVideo[clave] = { estado: "idle" };
+  }
+  return metaCorroboracionVideo[clave];
+}
+
+function limpiarCorroboracionVideo(item: ItemSeccion) {
+  const clave = claveItemVideo(item);
+  delete item.duracionMinutos;
+  metaCorroboracionVideo[clave] = { estado: "idle" };
+}
+
+async function consultarYAsignarDuracion(
+  item: ItemSeccion,
+  url: string,
+  opciones: { silencioso?: boolean } = {},
+) {
+  const meta = metaVideo(item);
+  meta.estado = "cargando";
+  meta.error = undefined;
+  try {
+    const respuesta =
+      await secundariaGatewayService.obtenerDuracionYoutube(url);
+    if (!respuesta.ok || !("segundos" in respuesta) || !respuesta.segundos) {
+      const detalle =
+        "error" in respuesta && typeof respuesta.error === "string"
+          ? respuesta.error
+          : "No se pudo leer la duración del video.";
+      meta.estado = "error";
+      meta.error = detalle;
+      delete item.duracionMinutos;
+      return;
+    }
+    item.duracionMinutos = respuesta.minutos;
+    meta.estado = "ok";
+    meta.videoId = respuesta.videoId;
+    meta.segundos = respuesta.segundos;
+    meta.minutos = respuesta.minutos;
+    meta.urlCorroborada = url;
+    meta.error = undefined;
+    if (!opciones.silencioso) {
+      toast.success(
+        `URL corroborada · ${formatearDuracionVideo(respuesta.segundos)}`,
+      );
+    }
+  } catch (causa) {
+    meta.estado = "error";
+    meta.error =
+      causa instanceof Error
+        ? causa.message
+        : "No se pudo corroborar el enlace.";
+    delete item.duracionMinutos;
+  }
+}
+
+async function corroborarUrlVideo(item: ItemSeccion) {
+  const url = String(item.urlYoutube ?? "").trim();
+  if (!url) {
+    toast.error("Pega primero el enlace del video.");
+    return;
+  }
+  const fuente = item.fuenteVideo ?? detectarFuenteVideo(url) ?? "youtube";
+  item.fuenteVideo = fuente;
+  if (fuente !== "youtube") {
+    const meta = metaVideo(item);
+    meta.estado = "error";
+    meta.error =
+      "La corroboración de duración con YouTube Data API solo aplica a enlaces de YouTube.";
+    return;
+  }
+  if (!idVideoYoutube(url)) {
+    const meta = metaVideo(item);
+    meta.estado = "error";
+    meta.error = "El enlace de YouTube no es válido.";
+    return;
+  }
+  await consultarYAsignarDuracion(item, url);
+}
+
+/** Completa duraciones faltantes al guardar (si el docente no corroboró a mano). */
+async function esperarDuracionesVideoPendientes() {
+  const pendientes: Promise<void>[] = [];
+  for (const seccion of secciones.value) {
+    for (const item of seccion.items ?? []) {
+      const url = String(item.urlYoutube ?? "").trim();
+      if (
+        item.tipo === "video" &&
+        (item.fuenteVideo ?? detectarFuenteVideo(url)) === "youtube" &&
+        url &&
+        !item.duracionMinutos
+      ) {
+        pendientes.push(
+          consultarYAsignarDuracion(item, url, { silencioso: true }),
+        );
+      }
+    }
+  }
+  if (pendientes.length) await Promise.allSettled(pendientes);
 }
 
 function fuenteVideoItem(item: ItemSeccion): FuenteVideoCurso {
   return item.fuenteVideo ?? "youtube";
+}
+
+const duracionTotalMinutos = computed(() =>
+  sumarMinutosPrograma(secciones.value),
+);
+
+const duracionTotalTexto = computed(() =>
+  formatearDuracionCurso(duracionTotalMinutos.value),
+);
+
+function etiquetaDuracionItem(item: ItemSeccion): string {
+  const meta = metaVideo(item);
+  if (meta.segundos && meta.segundos > 0) {
+    return formatearDuracionVideo(meta.segundos);
+  }
+  if (!item.duracionMinutos) return "";
+  return formatearDuracionVideo(item.duracionMinutos * 60);
+}
+
+function sincronizarDuracionesVideoPendientes() {
+  for (const seccion of secciones.value) {
+    for (const item of seccion.items ?? []) {
+      if (
+        item.tipo === "video" &&
+        fuenteVideoItem(item) === "youtube" &&
+        String(item.urlYoutube ?? "").trim() &&
+        item.duracionMinutos
+      ) {
+        const meta = metaVideo(item);
+        if (meta.estado === "idle") {
+          meta.estado = "ok";
+          meta.minutos = item.duracionMinutos;
+          meta.segundos = item.duracionMinutos * 60;
+          meta.urlCorroborada = String(item.urlYoutube ?? "").trim();
+          meta.videoId =
+            idVideoYoutube(item.urlYoutube) ?? undefined;
+        }
+      }
+    }
+  }
 }
 
 function agregarPregunta(item: ItemSeccion) {
@@ -401,17 +608,13 @@ function claveImagenPregunta(si: number, ci: number, pi: number) {
   return `${si}-${ci}-${pi}`;
 }
 
-async function anclarImagenPregunta(
+async function procesarArchivoImagenPregunta(
   pregunta: NonNullable<ItemSeccion["preguntas"]>[number],
   si: number,
   ci: number,
   pi: number,
-  evento: Event,
+  archivo: File,
 ) {
-  const entrada = evento.target as HTMLInputElement;
-  const archivo = entrada.files?.[0];
-  entrada.value = "";
-  if (!archivo) return;
   errorImagenPregunta.value = "";
   if (!archivo.type.startsWith("image/")) {
     errorImagenPregunta.value = "Usa JPG, PNG o WebP.";
@@ -539,6 +742,18 @@ onMounted(async () => {
         return null;
       })
       .filter((firma): firma is FirmaCertificadoCurso => firma != null);
+    curso.cantidadFirmas = clampCantidadFirmasCertificado(curso.cantidadFirmas, {
+      forzarUna: !esGestionOrganizacion.value,
+    });
+    if (!esGestionOrganizacion.value) {
+      const propia = curso.firmasCertificado.find((f) => f.origen === "PROPIA");
+      curso.firmasCertificado = propia ? [propia] : [];
+    } else if (curso.firmasCertificado.length > curso.cantidadFirmas) {
+      curso.firmasCertificado = curso.firmasCertificado.slice(
+        0,
+        curso.cantidadFirmas,
+      );
+    }
     curso.alcanceDirigido ??= "ORGANIZACION";
     curso.unidadesDestinoIds ??= [];
     curso.unidadesDestinoNombres ??= [];
@@ -598,10 +813,13 @@ onMounted(async () => {
       asegurarItems(normalizada);
       return normalizada;
     });
+    sincronizarDuracionesVideoPendientes();
     curso.cargadoPorNombre ||= currentUser.value?.name ?? "";
     if (!esGestionOrganizacion.value) {
       curso.docenteResponsableNombre ||= curso.cargadoPorNombre;
     }
+    await cargarPlantillaCertificado();
+    resolverPasoInicial();
   } finally {
     cargando.value = false;
   }
@@ -660,6 +878,38 @@ const firmaPropiaDocente = computed(() =>
 );
 const firmasInstitucionales = computed(() =>
   curso.firmasCertificado.filter((firma) => firma.origen !== "PROPIA"),
+);
+
+/** Docente: solo su firma. Admin/dirección: firmas del curso hasta cantidadFirmas. */
+const firmasParaVistaPrevia = computed(() => {
+  if (!esGestionOrganizacion.value) {
+    const propia = firmaPropiaDocente.value;
+    const nombre =
+      propia?.nombre?.trim() ||
+      curso.docenteResponsableNombre?.trim() ||
+      curso.cargadoPorNombre?.trim() ||
+      currentUser.value?.name?.trim() ||
+      "Docente del curso";
+    return [
+      {
+        nombre,
+        cargo: propia?.cargo?.trim() || "Docente",
+        imagen: propia?.imagen,
+      },
+    ];
+  }
+  const tope = clampCantidadFirmasCertificado(curso.cantidadFirmas);
+  return (curso.firmasCertificado ?? []).slice(0, tope).map((f) => ({
+    nombre: f.nombre,
+    cargo: f.cargo,
+    imagen: f.imagen,
+  }));
+});
+
+const cantidadFirmasVistaPrevia = computed(() =>
+  esGestionOrganizacion.value
+    ? clampCantidadFirmasCertificado(curso.cantidadFirmas)
+    : 1,
 );
 
 const unidadVigencia = ref<"meses" | "anios">("meses");
@@ -844,9 +1094,147 @@ const requisitosRevision = computed(() => [
     listo:
       !curso.certificado ||
       (!!curso.titulo.trim() &&
+        (!esGestionOrganizacion.value || Boolean(plantillaSeleccionada.value)) &&
         (!esGestionOrganizacion.value || curso.firmasCertificado.length > 0)),
   },
 ]);
+
+const instalacionCertificadosId = computed(
+  () =>
+    contextoActivo.value?.organizacionId?.trim() ||
+    INSTALACION_TUKUY_ACADEMY_ID,
+);
+
+async function precargarMiniaturasPlantillas(lista: PlantillaCertificado[]) {
+  const pendientes = lista
+    .map((p) => p.fondoUrl?.trim())
+    .filter((url): url is string => Boolean(url) && !miniaturasPlantilla.value[url]);
+  await Promise.all(
+    pendientes.map(async (url) => {
+      try {
+        const listaUrl = await urlVisualizableMedia(url, url);
+        if (listaUrl) {
+          miniaturasPlantilla.value = {
+            ...miniaturasPlantilla.value,
+            [url]: listaUrl,
+          };
+        }
+      } catch {
+        /* fondo no disponible aún */
+      }
+    }),
+  );
+}
+
+function plantillasVisiblesParaDocente(
+  plantillas: PlantillaCertificado[],
+  puedeUsarPropias: boolean,
+): PlantillaCertificado[] {
+  const usuarioId = contextoActivo.value?.usuarioId?.trim() ?? "";
+  return plantillas.filter((p) => {
+    if (p.alcance !== "DOCENTE") return true;
+    if (!puedeUsarPropias) return false;
+    if (!usuarioId) return true;
+    return !p.autorIdentidadRef || p.autorIdentidadRef === usuarioId;
+  });
+}
+
+async function cargarPlantillaCertificado() {
+  cargandoPlantillaCert.value = true;
+  try {
+    const config = await plantillasCertificadoService.obtenerConfig(
+      instalacionCertificadosId.value,
+    );
+    docentesPuedenConfigurarCert.value = config.docentesPuedenConfigurar === true;
+    const visibles = plantillasVisiblesParaDocente(
+      config.plantillas ?? [],
+      docentesPuedenConfigurarCert.value,
+    );
+    catalogoPlantillasCert.value = visibles;
+    const defaultPlantilla =
+      visibles.find((p) => p.esDefault) ??
+      visibles.find((p) => p.alcance !== "DOCENTE") ??
+      visibles[0] ??
+      null;
+    plantillaCertificadoOrg.value = defaultPlantilla;
+
+    const idActual = String(curso.plantillaCertificadoId ?? "").trim();
+    if (idActual && !visibles.some((p) => p.id === idActual)) {
+      curso.plantillaCertificadoId = defaultPlantilla?.id ?? "";
+    } else if (!idActual && defaultPlantilla) {
+      curso.plantillaCertificadoId = defaultPlantilla.id;
+    }
+
+    void precargarMiniaturasPlantillas(visibles);
+  } catch {
+    try {
+      plantillaCertificadoOrg.value =
+        await plantillasCertificadoService.obtenerDefault(
+          instalacionCertificadosId.value,
+        );
+      catalogoPlantillasCert.value = plantillaCertificadoOrg.value
+        ? [plantillaCertificadoOrg.value]
+        : [];
+      if (
+        plantillaCertificadoOrg.value &&
+        !curso.plantillaCertificadoId
+      ) {
+        curso.plantillaCertificadoId = plantillaCertificadoOrg.value.id;
+      }
+    } catch {
+      plantillaCertificadoOrg.value = null;
+      catalogoPlantillasCert.value = [];
+    }
+  } finally {
+    cargandoPlantillaCert.value = false;
+  }
+}
+
+function seleccionarPlantillaCertificado(plantilla: PlantillaCertificado) {
+  curso.plantillaCertificadoId = plantilla.id;
+}
+
+function miniaturaPlantilla(plantilla: PlantillaCertificado) {
+  const raw = plantilla.fondoUrl?.trim() ?? "";
+  if (!raw) return "";
+  if (raw.startsWith("data:") || raw.startsWith("blob:") || /^https?:\/\//i.test(raw)) {
+    return raw;
+  }
+  return miniaturasPlantilla.value[raw] || "";
+}
+
+function irADisenoCertificados() {
+  void router.push({
+    path: "/organizacion/certificados/diseno",
+    query: docentesPuedenConfigurarCert.value
+      ? { origen: "docente" }
+      : undefined,
+  });
+}
+
+function enfocarVistaPreviaCertificado() {
+  document
+    .getElementById("vista-previa-certificado-curso")
+    ?.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+function resolverPasoInicial() {
+  const crudo = route.query.paso;
+  const valor = typeof crudo === "string" ? Number(crudo) : NaN;
+  if (!Number.isFinite(valor) || valor < 1 || valor > pasos.value.length) {
+    return;
+  }
+  paso.value = Math.floor(valor);
+  if (typeof crudo === "string") {
+    const query = { ...route.query };
+    delete query.paso;
+    void router.replace({ query });
+  }
+}
+
+watch(paso, (activo) => {
+  if (activo === 5) void cargarPlantillaCertificado();
+});
 const listoParaEnviar = computed(() =>
   requisitosRevision.value.every((r) => r.listo),
 );
@@ -921,14 +1309,18 @@ function construirBorrador(): BorradorCursoDocente {
           condicion: condicionRequisitos.value,
         }))
     : [];
-  return {
+  return normalizarCertificadoCursoDocumento({
     ...clonPlano(curso),
     requisitosAccesoActivos: requisitosAccesoActivos.value,
     requisitos,
     // El certificado toma el nombre del curso (paso 1).
     nombreCertificado: curso.titulo.trim(),
     secciones: seccionesNormalizadas,
-  };
+    origenCarga: esGestionOrganizacion.value ? "ADMINISTRACION" : "DOCENTE",
+    cantidadFirmas: esGestionOrganizacion.value
+      ? clampCantidadFirmasCertificado(curso.cantidadFirmas)
+      : 1,
+  }) as BorradorCursoDocente;
 }
 
 function mensajeErrorGuardado(causa: unknown): string {
@@ -965,10 +1357,11 @@ function notificarExito(mensaje: string) {
   });
 }
 
-async function guardar() {
+async function guardar(pasoDestino?: number) {
   if (guardando.value) return false;
   guardando.value = true;
   try {
+    await esperarDuracionesVideoPendientes();
     const { curso: guardadoCurso, borrador: borradorPersistido } =
       await docenteService.guardarCursoDesdeBorrador(
         membresiaId,
@@ -998,11 +1391,20 @@ async function guardar() {
       cursoId.value.startsWith("borrador-") ||
       cursoId.value.startsWith("curso-institucional-")
     ) {
+      const query: Record<string, string | string[] | undefined> = {
+        ...route.query,
+        borrador: undefined,
+      };
+      if (pasoDestino && pasoDestino >= 1) {
+        query.paso = String(pasoDestino);
+      } else {
+        delete query.paso;
+      }
       await router.replace({
         path: esGestionOrganizacion.value
           ? `/organizacion/cursos/${guardadoCurso.id}/constructor`
           : `/docente/cursos/${guardadoCurso.id}/constructor`,
-        query: { ...route.query, borrador: undefined },
+        query,
       });
     }
     guardado.value = true;
@@ -1325,10 +1727,31 @@ function eliminarMaterial(indiceSeccion: number, recursoId: string) {
 function agregarFirma(firma: FirmaCertificadoCurso) {
   if (!esGestionOrganizacion.value) return;
   if (curso.firmasCertificado.some((item) => item.id === firma.id)) return;
+  const tope = clampCantidadFirmasCertificado(curso.cantidadFirmas);
+  if (curso.firmasCertificado.length >= tope) {
+    toast.error(`Este certificado admite hasta ${tope} firmas.`);
+    return;
+  }
   curso.firmasCertificado.push({
     ...firma,
     origen: firma.origen ?? "INSTITUCIONAL",
   });
+}
+
+function alCambiarCantidadFirmas(valor: unknown) {
+  if (!esGestionOrganizacion.value) {
+    curso.cantidadFirmas = 1;
+    return;
+  }
+  const n = clampCantidadFirmasCertificado(
+    typeof valor === "object" && valor && "value" in valor
+      ? (valor as { value: unknown }).value
+      : valor,
+  );
+  curso.cantidadFirmas = n;
+  if (curso.firmasCertificado.length > n) {
+    curso.firmasCertificado = curso.firmasCertificado.slice(0, n);
+  }
 }
 
 function quitarFirma(id: string) {
@@ -1342,10 +1765,7 @@ function quitarFirma(id: string) {
   );
 }
 
-async function seleccionarFirmaPropia(evento: Event) {
-  const entrada = evento.target as HTMLInputElement;
-  const archivo = entrada.files?.[0];
-  if (!archivo) return;
+async function procesarArchivoFirmaPropia(archivo: File) {
   errorFirmaPropia.value = "";
   chequeosFirma.value = [];
   validandoFirma.value = true;
@@ -1415,13 +1835,13 @@ async function seleccionarFirmaPropia(evento: Event) {
   } finally {
     validandoFirma.value = false;
     subiendoFirmaPropia.value = false;
-    entrada.value = "";
   }
 }
 
 async function enviarRevision() {
   if (!listoParaEnviar.value) return;
   try {
+    await esperarDuracionesVideoPendientes();
     const borrador = construirBorrador();
     if (esGestionOrganizacion.value) {
       const { curso: guardado } = await docenteService.guardarCursoDesdeBorrador(
@@ -1470,10 +1890,18 @@ async function enviarRevision() {
   }
 }
 async function siguiente() {
-  const ok = await guardar();
-  if (!ok) return;
   const siguientePaso = pasosVisibles.value[indicePasoVisible.value + 1];
-  if (siguientePaso) paso.value = siguientePaso.pasoOriginal;
+  const pasoDestino = siguientePaso?.pasoOriginal;
+  if (!pasoDestino) return;
+  const eraCursoNuevo =
+    cursoId.value === "nuevo" ||
+    cursoId.value.startsWith("borrador-") ||
+    cursoId.value.startsWith("curso-institucional-");
+  const ok = await guardar(eraCursoNuevo ? pasoDestino : undefined);
+  if (!ok) return;
+  if (!eraCursoNuevo) {
+    paso.value = pasoDestino;
+  }
 }
 
 function anterior() {
@@ -1481,10 +1909,7 @@ function anterior() {
   if (pasoAnterior) paso.value = pasoAnterior.pasoOriginal;
 }
 
-async function seleccionarImagen(evento: Event) {
-  const entrada = evento.target as HTMLInputElement;
-  const archivo = entrada.files?.[0];
-  if (!archivo) return;
+async function procesarArchivoPortada(archivo: File) {
   errorImagen.value = "";
   if (!archivo.type.startsWith("image/")) {
     errorImagen.value = "Selecciona una imagen JPG, PNG o WebP.";
@@ -1500,7 +1925,6 @@ async function seleccionarImagen(evento: Event) {
   archivoPortadaTemp.value = archivo;
   fuentePortadaTemp.value = URL.createObjectURL(archivo);
   modalPortadaAbierto.value = true;
-  entrada.value = "";
 }
 
 function cancelarPersonalizarPortada() {
@@ -1550,6 +1974,18 @@ async function confirmarPortadaRecortada(archivo: File) {
   }
 }
 
+watch(
+  () => curso.imagen,
+  (valor) => {
+    void (async () => {
+      urlPortadaVistaPrevia.value = valor
+        ? await urlVisualizableMedia(valor, "")
+        : "";
+    })();
+  },
+  { immediate: true },
+);
+
 async function confirmarEliminarCurso() {
   if (!cursoPersistido.value || eliminandoCurso.value) return;
   eliminandoCurso.value = true;
@@ -1575,7 +2011,7 @@ async function confirmarEliminarCurso() {
 </script>
 
 <template>
-  <section class="constructor-curso mx-auto grid max-w-350 gap-6">
+  <section class="constructor-curso mx-auto grid max-w-350 gap-6 text-foreground">
     <div v-if="cargando" class="grid gap-6 lg:grid-cols-[270px_minmax(0,1fr)]">
       <Skeleton class="h-[520px] w-full" />
       <Skeleton class="h-[620px] w-full" />
@@ -1593,7 +2029,7 @@ async function confirmarEliminarCurso() {
             <p class="text-xs font-bold uppercase text-primary">
               Constructor de curso
             </p>
-            <h1 class="text-xl font-black">{{ curso.titulo.trim() || "Nuevo curso" }}</h1>
+            <h1 class="text-xl font-black text-foreground">{{ curso.titulo.trim() || "Nuevo curso" }}</h1>
             <p class="mt-1 text-xs font-semibold text-muted-foreground">
               {{ nombreAmbito }}
             </p>
@@ -1620,7 +2056,7 @@ async function confirmarEliminarCurso() {
             ><Button
               v-if="puedeEliminarCurso"
               variant="outline"
-              class="border-red-500/40 text-red-600 hover:bg-red-500/10"
+              class="border-destructive/40 text-destructive hover:bg-destructive/10"
               @click="modalEliminarCurso = true"
               ><Trash2 class="h-4 w-4" />Ocultar curso</Button
             >
@@ -1634,7 +2070,7 @@ async function confirmarEliminarCurso() {
       >
         <UserRoundCheck class="mt-0.5 h-5 w-5 shrink-0 text-amber-700 dark:text-amber-400" />
         <div>
-          <p class="font-black">Carga administrativa por encargo</p>
+          <p class="font-black text-foreground">Carga administrativa por encargo</p>
           <p class="mt-1 text-sm text-muted-foreground">
             Administración prepara el contenido, pero el docente seleccionado conserva la responsabilidad académica del curso.
           </p>
@@ -1657,18 +2093,22 @@ async function confirmarEliminarCurso() {
             >
               <span
                 class="grid h-6 w-6 place-items-center rounded-full text-xs"
-                :class="paso === item.pasoOriginal ? 'bg-primary text-white' : 'bg-border'"
+                :class="
+                  paso === item.pasoOriginal
+                    ? 'bg-primary text-primary-foreground'
+                    : 'bg-muted text-muted-foreground'
+                "
                 >{{ indice + 1 }}</span
               ><span class="flex-1">{{ item.nombre }}</span
               ><ChevronRight class="h-4 w-4" /></button></CardContent
         ></Card>
 
         <Card class="rounded-md border-border bg-card"
-          ><CardContent class="p-6 sm:p-8">
+          ><CardContent class="p-6 text-foreground sm:p-8">
             <Badge class="bg-primary/10 text-primary"
               >Paso {{ indicePasoVisible + 1 }} de {{ pasosVisibles.length }}</Badge
             >
-            <h2 class="mt-3 text-2xl font-black">{{ titulos[paso - 1] }}</h2>
+            <h2 class="mt-3 text-2xl font-black text-foreground">{{ titulos[paso - 1] }}</h2>
             <p class="mt-2 text-sm text-muted-foreground">
               {{ descripciones[paso - 1] }}
             </p>
@@ -1678,18 +2118,18 @@ async function confirmarEliminarCurso() {
               v-if="paso === 1"
               class="paso-campos mt-7 grid gap-6"
             >
-              <label class="grid gap-2 text-sm font-bold">
+              <label class="grid gap-2 text-sm font-bold text-foreground">
                 <span class="flex items-center gap-2">
-                  <BookOpen class="h-4 w-4 text-sky-600" />Nombre del curso
+                  <BookOpen class="h-4 w-4 text-primary" />Nombre del curso
                 </span>
                 <Input
                   v-model="curso.titulo"
                   placeholder="Ej. Seguridad en obra civil"
                 />
               </label>
-              <label class="grid gap-2 text-sm font-bold">
+              <label class="grid gap-2 text-sm font-bold text-foreground">
                 <span class="flex items-center gap-2">
-                  <Tag class="h-4 w-4 text-indigo-600" />Categoría
+                  <Tag class="h-4 w-4 text-primary" />Categoría
                 </span>
                 <div class="flex gap-2">
                   <Select
@@ -1709,22 +2149,22 @@ async function confirmarEliminarCurso() {
                   </Button>
                 </div>
               </label>
-              <label class="grid gap-2 text-sm font-bold">
+              <label class="grid gap-2 text-sm font-bold text-foreground">
                 <span class="flex items-center gap-2">
-                  <AlignLeft class="h-4 w-4 text-sky-600" />Descripción breve
+                  <AlignLeft class="h-4 w-4 text-primary" />Descripción breve
                 </span>
                 <textarea
                   v-model="curso.descripcion"
-                  class="min-h-28 border border-input bg-card p-3 font-normal"
+                  class="min-h-28 border border-input bg-card p-3 font-normal text-foreground"
                   placeholder="Resume de qué trata el curso"
                 />
               </label>
               <div
                 v-if="esGestionOrganizacion"
-                class="grid gap-2 text-sm font-bold"
+                class="grid gap-2 text-sm font-bold text-foreground"
               >
                 <span class="flex items-center gap-2">
-                  <Users class="h-4 w-4 text-indigo-600" />Dirigido a
+                  <Users class="h-4 w-4 text-primary" />Dirigido a
                 </span>
                 <Select
                   v-model="curso.alcanceDirigido"
@@ -1758,23 +2198,23 @@ async function confirmarEliminarCurso() {
                   />
                 </div>
               </div>
-              <label v-else class="grid gap-2 text-sm font-bold">
+              <label v-else class="grid gap-2 text-sm font-bold text-foreground">
                 <span class="flex items-center gap-2">
-                  <Users class="h-4 w-4 text-sky-600" />Dirigido a
+                  <Users class="h-4 w-4 text-primary" />Dirigido a
                 </span>
                 <textarea
                   v-model="curso.publico"
-                  class="min-h-24 border border-input bg-card p-3 font-normal"
+                  class="min-h-24 border border-input bg-card p-3 font-normal text-foreground"
                   placeholder="¿Quién debería tomar este curso?"
                 />
               </label>
               <label
                 id="campo-docente-responsable"
                 v-if="esGestionOrganizacion"
-                class="grid gap-2 text-sm font-bold"
+                class="grid gap-2 text-sm font-bold text-foreground"
               >
                 <span class="flex items-center gap-2">
-                  <UserRoundCheck class="h-4 w-4 text-indigo-600" />Docente responsable
+                  <UserRoundCheck class="h-4 w-4 text-primary" />Docente responsable
                 </span>
                 <div class="flex gap-2">
                   <Select
@@ -1799,7 +2239,7 @@ async function confirmarEliminarCurso() {
                           {{ option.nombre.split(' ').slice(0, 2).map((item: string) => item[0]).join('') }}
                         </span>
                         <span>
-                          <b class="block">{{ option.nombre }}</b>
+                          <b class="block text-foreground">{{ option.nombre }}</b>
                           <small class="text-muted-foreground">
                             {{ option.especialidad || option.cargo }}
                             <template v-if="option.origen === 'MANUAL'"> · Agregado manualmente</template>
@@ -1819,8 +2259,8 @@ async function confirmarEliminarCurso() {
               </label>
               <div>
                 <div class="flex justify-between">
-                  <h3 class="flex items-center gap-2 font-bold">
-                    <Target class="h-4 w-4 text-sky-600" />Objetivos de aprendizaje
+                  <h3 class="flex items-center gap-2 font-bold text-foreground">
+                    <Target class="h-4 w-4 text-primary" />Objetivos de aprendizaje
                   </h3>
                   <Button
                     size="sm"
@@ -1848,7 +2288,7 @@ async function confirmarEliminarCurso() {
                     aria-label="Quitar objetivo"
                     @click="quitarObjetivo(i)"
                   >
-                    <X class="h-4 w-4 text-red-600" />
+                    <X class="h-4 w-4 text-destructive" />
                   </Button>
                 </div>
               </div>
@@ -1862,7 +2302,7 @@ async function confirmarEliminarCurso() {
                     @update:model-value="alCambiarRequisitosAcceso"
                   />
                   <span>
-                    <b class="block text-sm">Añadir requisitos de acceso al curso</b>
+                    <b class="block text-sm text-foreground">Añadir requisitos de acceso al curso</b>
                     <small class="text-muted-foreground">
                       Actívalo solo si el alumno debe cumplir cursos previos
                       verificables para inscribirse. Si está apagado, no se
@@ -1871,8 +2311,8 @@ async function confirmarEliminarCurso() {
                   </span>
                 </label>
                 <div v-if="requisitosAccesoActivos" class="mt-4">
-                  <h3 class="flex items-center gap-2 font-bold">
-                    <ListChecks class="h-4 w-4 text-sky-600" />Cursos previos requeridos
+                  <h3 class="flex items-center gap-2 font-bold text-foreground">
+                    <ListChecks class="h-4 w-4 text-primary" />Cursos previos requeridos
                   </h3>
                   <div class="mt-3 grid gap-3 sm:grid-cols-[220px_1fr]">
                     <Select
@@ -1930,10 +2370,23 @@ async function confirmarEliminarCurso() {
               />
               <p
                 v-if="errorMaterial"
-                class="border-l-4 border-l-red-600 bg-red-500/10 p-3 text-sm text-red-700 dark:text-red-300"
+                class="border-l-4 border-l-destructive bg-destructive/10 p-3 text-sm text-destructive"
               >
                 {{ errorMaterial }}
               </p>
+              <div
+                v-if="duracionTotalMinutos > 0"
+                class="flex flex-wrap items-center gap-2 border border-border bg-muted/40 px-4 py-3 text-sm"
+              >
+                <Clock3 class="h-4 w-4 text-primary" />
+                <span class="font-semibold text-foreground">
+                  Duración total del curso:
+                  {{ duracionTotalTexto }}
+                </span>
+                <span class="text-xs text-muted-foreground">
+                  (suma de videos detectados y actividades estimadas)
+                </span>
+              </div>
               <article
                 v-for="(seccion, si) in secciones"
                 :key="si"
@@ -1942,7 +2395,7 @@ async function confirmarEliminarCurso() {
                 <div class="flex items-center gap-3 bg-muted p-4">
                   <GripVertical class="h-5 w-5 text-muted-foreground" /><Input
                     v-model="seccion.titulo"
-                    class="flex-1 border-0 bg-transparent font-bold shadow-none"
+                    class="flex-1 border-0 bg-transparent font-bold text-foreground shadow-none"
                     placeholder="Nombre de la sección"
                   />
                 </div>
@@ -1959,7 +2412,7 @@ async function confirmarEliminarCurso() {
                       />
                       <Input
                         v-model="item.titulo"
-                        class="min-w-40 flex-1 border-0 bg-transparent shadow-none"
+                        class="min-w-40 flex-1 border-0 bg-transparent text-foreground shadow-none"
                         :placeholder="placeholderTituloItem(item.tipo)"
                         @update:model-value="sincronizarClases(seccion)"
                       />
@@ -1979,7 +2432,7 @@ async function confirmarEliminarCurso() {
                         aria-label="Eliminar actividad"
                         @click="eliminarItem(seccion, ci)"
                       >
-                        <Trash2 class="h-4 w-4 text-red-600" />
+                        <Trash2 class="h-4 w-4 text-destructive" />
                       </Button>
                     </div>
                     <div
@@ -2013,14 +2466,104 @@ async function confirmarEliminarCurso() {
                               : "YouTube"
                         }}</label
                       >
-                      <Input
-                        v-model="item.urlYoutube"
-                        :placeholder="placeholderUrlVideo(fuenteVideoItem(item))"
-                        @update:model-value="alCambiarUrlVideo(item)"
-                      />
+                      <div class="flex flex-wrap items-stretch gap-2">
+                        <Input
+                          v-model="item.urlYoutube"
+                          class="min-w-0 flex-1"
+                          :placeholder="
+                            placeholderUrlVideo(fuenteVideoItem(item))
+                          "
+                          @update:model-value="alCambiarUrlVideo(item)"
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          class="shrink-0"
+                          :disabled="
+                            metaVideo(item).estado === 'cargando' ||
+                            !String(item.urlYoutube ?? '').trim()
+                          "
+                          @click="corroborarUrlVideo(item)"
+                        >
+                          <Loader2
+                            v-if="metaVideo(item).estado === 'cargando'"
+                            class="h-4 w-4 animate-spin"
+                          />
+                          <Link2 v-else class="h-4 w-4" />
+                          {{
+                            metaVideo(item).estado === "cargando"
+                              ? "Corroborando…"
+                              : "Corroborar URL"
+                          }}
+                        </Button>
+                      </div>
                       <p class="text-xs text-muted-foreground">
                         {{ ayudaUrlVideo(fuenteVideoItem(item)) }}
                       </p>
+                      <p
+                        v-if="metaVideo(item).estado === 'error'"
+                        class="text-xs font-medium text-destructive"
+                      >
+                        {{ metaVideo(item).error }}
+                      </p>
+                      <div
+                        v-if="
+                          metaVideo(item).estado === 'ok' ||
+                          (item.duracionMinutos &&
+                            fuenteVideoItem(item) === 'youtube')
+                        "
+                        class="grid gap-2 sm:grid-cols-3"
+                      >
+                        <div
+                          class="rounded-md border border-border bg-card px-3 py-2"
+                        >
+                          <p
+                            class="text-[10px] font-bold uppercase tracking-wide text-muted-foreground"
+                          >
+                            Estado
+                          </p>
+                          <p
+                            class="mt-1 text-sm font-semibold text-emerald-700 dark:text-emerald-400"
+                          >
+                            URL válida
+                          </p>
+                        </div>
+                        <div
+                          class="rounded-md border border-border bg-card px-3 py-2"
+                        >
+                          <p
+                            class="text-[10px] font-bold uppercase tracking-wide text-muted-foreground"
+                          >
+                            Duración
+                          </p>
+                          <p class="mt-1 text-sm font-semibold text-foreground">
+                            {{ etiquetaDuracionItem(item) || "—" }}
+                          </p>
+                        </div>
+                        <div
+                          class="rounded-md border border-border bg-card px-3 py-2"
+                        >
+                          <p
+                            class="text-[10px] font-bold uppercase tracking-wide text-muted-foreground"
+                          >
+                            Video ID
+                          </p>
+                          <p
+                            class="mt-1 truncate font-mono text-xs font-semibold text-foreground"
+                            :title="
+                              metaVideo(item).videoId ||
+                              idVideoYoutube(item.urlYoutube) ||
+                              ''
+                            "
+                          >
+                            {{
+                              metaVideo(item).videoId ||
+                              idVideoYoutube(item.urlYoutube) ||
+                              "—"
+                            }}
+                          </p>
+                        </div>
+                      </div>
                     </div>
                     <div
                       v-if="item.tipo === 'quiz'"
@@ -2046,7 +2589,7 @@ async function confirmarEliminarCurso() {
                             class="btn-borrar"
                             @click="eliminarPregunta(item, pi)"
                           >
-                            <Trash2 class="h-4 w-4 text-red-600" />
+                            <Trash2 class="h-4 w-4 text-destructive" />
                           </Button>
                         </div>
                         <div
@@ -2058,64 +2601,47 @@ async function confirmarEliminarCurso() {
                               · opcional
                             </span>
                           </p>
-                          <div
+                          <ZonaSubidaImagen
+                            compacto
+                            aspecto="auto"
+                            :src="pregunta.imagenReferencia"
+                            titulo="Imagen de referencia"
+                            ayuda="Opcional · JPG, PNG o WebP"
+                            etiqueta-boton="Agregar imagen"
+                            :cargando="
+                              subiendoImagenPregunta ===
+                              claveImagenPregunta(si, ci, pi)
+                            "
+                            :error="
+                              subiendoImagenPregunta ===
+                              claveImagenPregunta(si, ci, pi)
+                                ? errorImagenPregunta
+                                : ''
+                            "
+                            accept="image/jpeg,image/png,image/webp,image/gif"
+                            @archivo="
+                              procesarArchivoImagenPregunta(
+                                pregunta,
+                                si,
+                                ci,
+                                pi,
+                                $event,
+                              )
+                            "
+                          />
+                          <Button
                             v-if="pregunta.imagenReferencia"
-                            class="overflow-hidden border border-border bg-background"
+                            size="sm"
+                            variant="ghost"
+                            type="button"
+                            class="btn-borrar"
+                            @click="quitarImagenPregunta(pregunta)"
                           >
-                            <img
-                              :src="urlPublicaMedia(pregunta.imagenReferencia)"
-                              alt="Referencia de la pregunta"
-                              class="max-h-44 w-full object-contain"
-                            />
-                          </div>
-                          <div class="flex flex-wrap items-center gap-2">
-                            <label class="inline-flex">
-                              <input
-                                class="sr-only"
-                                type="file"
-                                accept="image/jpeg,image/png,image/webp,image/gif"
-                                :disabled="
-                                  subiendoImagenPregunta ===
-                                  claveImagenPregunta(si, ci, pi)
-                                "
-                                @change="
-                                  anclarImagenPregunta(
-                                    pregunta,
-                                    si,
-                                    ci,
-                                    pi,
-                                    $event,
-                                  )
-                                "
-                              />
-                              <span
-                                class="control-boton inline-flex h-9 cursor-pointer items-center gap-1.5 border px-3 text-xs font-semibold"
-                              >
-                                <Image class="h-3.5 w-3.5" />
-                                {{
-                                  subiendoImagenPregunta ===
-                                  claveImagenPregunta(si, ci, pi)
-                                    ? "Subiendo…"
-                                    : pregunta.imagenReferencia
-                                      ? "Cambiar imagen"
-                                      : "Agregar imagen"
-                                }}
-                              </span>
-                            </label>
-                            <Button
-                              v-if="pregunta.imagenReferencia"
-                              size="sm"
-                              variant="ghost"
-                              type="button"
-                              class="btn-borrar"
-                              @click="quitarImagenPregunta(pregunta)"
-                            >
-                              Quitar
-                            </Button>
-                          </div>
+                            Quitar imagen
+                          </Button>
                           <p
                             v-if="errorImagenPregunta"
-                            class="text-[11px] font-medium text-red-600"
+                            class="text-[11px] font-medium text-destructive"
                           >
                             {{ errorImagenPregunta }}
                           </p>
@@ -2177,7 +2703,7 @@ async function confirmarEliminarCurso() {
                   <div class="m-3 border border-dashed border-border bg-muted/30 p-4">
                     <div class="flex flex-wrap items-center justify-between gap-3">
                       <div>
-                        <p class="text-sm font-black">Material del docente</p>
+                        <p class="text-sm font-black text-foreground">Material del docente</p>
                         <p class="text-xs text-muted-foreground">
                           PDF, Word, PowerPoint, imágenes o video MP4.
                         </p>
@@ -2198,7 +2724,7 @@ async function confirmarEliminarCurso() {
                       >
                         <Paperclip class="h-4 w-4 shrink-0 text-muted-foreground" />
                         <div class="min-w-0 flex-1">
-                          <p class="truncate text-sm font-bold">{{ recurso.nombre }}</p>
+                          <p class="truncate text-sm font-bold text-foreground">{{ recurso.nombre }}</p>
                           <p class="text-[11px] text-muted-foreground">
                             {{ (recurso.tamanio / 1024).toFixed(0) }} KB
                           </p>
@@ -2210,7 +2736,7 @@ async function confirmarEliminarCurso() {
                           aria-label="Eliminar material"
                           @click="eliminarMaterial(si, recurso.id)"
                         >
-                          <Trash2 class="h-4 w-4 text-red-600" />
+                          <Trash2 class="h-4 w-4 text-destructive" />
                         </Button>
                       </div>
                     </div>
@@ -2229,12 +2755,24 @@ async function confirmarEliminarCurso() {
               v-else-if="paso === 3"
               class="paso-campos mt-7 grid gap-5"
             >
+              <div
+                v-if="duracionTotalMinutos > 0"
+                class="flex flex-wrap items-center gap-2 border border-primary/25 bg-primary/5 px-4 py-3 text-sm"
+              >
+                <Clock3 class="h-4 w-4 text-primary" />
+                <span class="font-semibold text-foreground">
+                  Duración publicada del curso: {{ duracionTotalTexto }}
+                </span>
+                <span class="text-xs text-muted-foreground">
+                  Se mostrará en el catálogo y en Mis cursos
+                </span>
+              </div>
               <div class="grid gap-4 sm:grid-cols-2">
-                <label class="grid gap-2 text-sm font-bold sm:col-span-2"
+                <label class="grid gap-2 text-sm font-bold text-foreground sm:col-span-2"
                   >Subtítulo<Input
                     v-model="curso.subtitulo"
                     placeholder="Una promesa clara para el estudiante" /></label
-                ><label class="grid gap-2 text-sm font-bold"
+                ><label class="grid gap-2 text-sm font-bold text-foreground"
                   >Nivel
                   <Select
                     v-model="curso.nivel"
@@ -2247,49 +2785,16 @@ async function confirmarEliminarCurso() {
                 </label
                 >
               </div>
-              <div
-                class="border-2 border-dashed border-border bg-muted/30 p-7 text-center"
-              >
-                <img
-                  v-if="curso.imagen"
-                  :src="curso.imagen"
-                  alt="Vista previa de la portada"
-                  class="mx-auto mb-4 aspect-video max-h-56 w-full rounded object-cover"
-                />
-                <Image v-else class="mx-auto h-8 w-8 text-primary" />
-                <p class="mt-2 font-bold">Imagen de portada</p>
-                <p class="text-xs text-muted-foreground">
-                  JPG o PNG · después de elegirla podrás recortar en 16:9
-                </p>
-                <input
-                  ref="selectorImagen"
-                  class="hidden"
-                  type="file"
-                  accept="image/png,image/jpeg,image/webp"
-                  @change="seleccionarImagen"
-                />
-                <Button
-                  class="mt-3"
-                  size="sm"
-                  variant="outline"
-                  :disabled="subiendoPortada"
-                  @click="selectorImagen?.click()"
-                >
-                  {{
-                    subiendoPortada
-                      ? "Subiendo…"
-                      : curso.imagen
-                        ? "Cambiar imagen"
-                        : "Seleccionar imagen"
-                  }}
-                </Button>
-                <p
-                  v-if="errorImagen"
-                  class="mt-2 text-xs font-semibold text-red-600"
-                >
-                  {{ errorImagen }}
-                </p>
-              </div>
+              <ZonaSubidaImagen
+                :src="curso.imagen"
+                :object-position="curso.imagenPosicion"
+                ajuste-preview="natural"
+                titulo="Imagen de portada"
+                :ayuda="`JPG o PNG · ${PORTADA_CURSO_AYUDA_BREVE}`"
+                :cargando="subiendoPortada"
+                :error="errorImagen"
+                @archivo="procesarArchivoPortada"
+              />
             </div>
 
             <div
@@ -2334,14 +2839,14 @@ async function confirmarEliminarCurso() {
               </div>
               <label
                 v-if="curso.acceso === 'PAGO'"
-                class="grid max-w-sm gap-2 text-sm font-bold"
+                class="grid max-w-sm gap-2 text-sm font-bold text-foreground"
                 >Precio en soles<Input
                   v-model.number="curso.precio"
                   type="number"
                   min="1"
               /></label>
               <template v-if="esIndependiente">
-                <label class="grid max-w-sm gap-2 text-sm font-bold"
+                <label class="grid max-w-sm gap-2 text-sm font-bold text-foreground"
                   >Visibilidad
                   <Select
                     v-model="curso.visibilidad"
@@ -2354,9 +2859,9 @@ async function confirmarEliminarCurso() {
                     fluid
                   />
                 </label>
-                <label class="flex items-center gap-3 rounded-xl border p-4"
+                <label class="flex items-center gap-3 rounded-xl border border-border bg-card p-4"
                   ><input v-model="curso.permiteEmpresas" type="checkbox" /><span
-                    ><b class="block text-sm"
+                    ><b class="block text-sm text-foreground"
                       >Permitir licencias empresariales</b
                     ><span class="text-xs text-muted-foreground"
                       >Las organizaciones podrán asignarlo a sus equipos.</span
@@ -2369,19 +2874,77 @@ async function confirmarEliminarCurso() {
             <div
               id="campo-certificado"
               v-else-if="paso === 5"
-              class="paso-campos mt-7 grid gap-6 lg:grid-cols-[1fr_360px]"
+              class="paso-campos mt-7 grid gap-6"
             >
               <div class="grid content-start gap-5">
-                <label class="flex items-center gap-3 rounded-xl border p-4"
+                <label class="flex items-center gap-3 rounded-xl border border-border bg-card p-4"
                   ><input v-model="curso.certificado" type="checkbox" /><span
-                    ><b class="block">Emitir certificado</b
+                    ><b class="block text-foreground">Emitir certificado</b
                     ><span class="text-xs text-muted-foreground"
                       >Se genera al cumplir las condiciones.</span
                     ></span
                   ></label
                 ><template v-if="curso.certificado"
-                  ><div class="grid gap-2 rounded border border-border bg-muted/20 p-4 text-sm">
-                    <p class="font-bold">Nombre del certificado</p>
+                  ><div
+                    v-if="instalacionCertificadosId"
+                    class="rounded border border-border p-4 text-sm"
+                    :class="
+                      plantillaSeleccionada
+                        ? 'border-emerald-500/30 bg-emerald-500/5'
+                        : 'border-amber-500/40 bg-amber-500/10'
+                    "
+                  >
+                    <p class="font-black text-foreground">Plantilla del certificado</p>
+                    <p
+                      v-if="cargandoPlantillaCert"
+                      class="mt-1 text-muted-foreground"
+                    >
+                      Cargando diseño del certificado…
+                    </p>
+                    <template v-else-if="plantillaSeleccionada">
+                      <p class="mt-1 text-muted-foreground">
+                        Se usará
+                        <strong class="text-foreground">{{
+                          plantillaSeleccionada.nombre
+                        }}</strong>
+                        {{
+                          plantillaSeleccionada.alcance === "DOCENTE"
+                            ? "(plantilla propia)."
+                            : "(plantilla institucional)."
+                        }}
+                        Elige otra en el catálogo de abajo.
+                      </p>
+                      <Button
+                        v-if="esGestionOrganizacion || docentesPuedenConfigurarCert"
+                        class="mt-3"
+                        size="sm"
+                        variant="outline"
+                        @click="irADisenoCertificados"
+                      >
+                        <LayoutTemplate class="mr-2 h-4 w-4" />
+                        {{
+                          esGestionOrganizacion
+                            ? "Editar diseños"
+                            : "Crear o editar mi plantilla"
+                        }}
+                      </Button>
+                    </template>
+                    <template v-else>
+                      <p class="mt-1 text-amber-900 dark:text-amber-200">
+                        Aún no hay plantilla disponible. Dirección debe configurar al menos una plantilla institucional.
+                      </p>
+                      <Button
+                        v-if="esGestionOrganizacion"
+                        class="mt-3"
+                        size="sm"
+                        @click="irADisenoCertificados"
+                      >
+                        Configurar plantilla
+                      </Button>
+                    </template>
+                  </div>
+                  <div class="grid gap-2 rounded border border-border bg-muted/20 p-4 text-sm">
+                    <p class="font-bold text-foreground">Nombre del certificado</p>
                     <p class="text-muted-foreground">
                       Se usa el nombre del curso:
                       <strong class="text-foreground">{{
@@ -2389,14 +2952,14 @@ async function confirmarEliminarCurso() {
                       }}</strong>
                     </p>
                   </div>
-                  <label class="grid gap-2 text-sm font-bold"
+                  <label class="grid gap-2 text-sm font-bold text-foreground"
                     >Nota mínima (sobre 20)<Input
                       v-model.number="curso.notaMinima"
                       type="number"
                       min="0"
                       max="20" /></label
                   ><div class="grid gap-3">
-                    <p class="text-sm font-bold">Vigencia del certificado</p>
+                    <p class="text-sm font-bold text-foreground">Vigencia del certificado</p>
                     <div class="grid gap-2 sm:grid-cols-2">
                       <button
                         type="button"
@@ -2447,16 +3010,40 @@ async function confirmarEliminarCurso() {
                   ><div class="border border-border bg-muted/20 p-4">
                     <div class="flex flex-wrap items-center justify-between gap-3">
                       <div>
-                        <p class="text-sm font-black">Firmas del certificado</p>
+                        <p class="text-sm font-black text-foreground">Firmas del certificado</p>
+                        <p class="mt-1 text-xs text-muted-foreground">
+                          <template v-if="esGestionOrganizacion">
+                            Enlaza hasta {{ curso.cantidadFirmas || 1 }} firmas (docentes contratados u otros firmantes).
+                          </template>
+                          <template v-else>
+                            Solo tu firma. El backend no permite más de una en cursos docentes.
+                          </template>
+                        </p>
                       </div>
-                      <Button
-                        v-if="esGestionOrganizacion"
-                        size="sm"
-                        variant="outline"
-                        @click="modalFirmas = true"
-                      >
-                        <Plus class="h-4 w-4" />Añadir firma
-                      </Button>
+                      <div class="flex flex-wrap items-center gap-2">
+                        <Select
+                          v-if="esGestionOrganizacion"
+                          :model-value="curso.cantidadFirmas || 1"
+                          :options="OPCIONES_CANTIDAD_FIRMAS_CERTIFICADO"
+                          option-label="label"
+                          option-value="value"
+                          class="filtro-control w-36"
+                          :panel-class="PANEL_COMBO"
+                          @update:model-value="alCambiarCantidadFirmas"
+                        />
+                        <Button
+                          v-if="esGestionOrganizacion"
+                          size="sm"
+                          variant="outline"
+                          :disabled="
+                            curso.firmasCertificado.length >=
+                            (curso.cantidadFirmas || 1)
+                          "
+                          @click="modalFirmas = true"
+                        >
+                          <Plus class="h-4 w-4" />Añadir firma
+                        </Button>
+                      </div>
                     </div>
 
                     <!-- Docente: solo firma propia por imagen -->
@@ -2472,7 +3059,7 @@ async function confirmarEliminarCurso() {
                           v-if="firmaPropiaDocente.imagen"
                           :src="firmaPropiaDocente.imagen"
                           alt="Tu firma"
-                          class="h-12 w-28 object-contain bg-white"
+                          class="h-12 w-28 object-contain border border-border bg-background"
                         />
                         <span
                           v-else
@@ -2481,7 +3068,7 @@ async function confirmarEliminarCurso() {
                           <Signature class="h-5 w-5" />
                         </span>
                         <div class="min-w-0 flex-1">
-                          <p class="truncate text-sm font-black">
+                          <p class="truncate text-sm font-black text-foreground">
                             {{ firmaPropiaDocente.nombre }}
                           </p>
                           <p class="text-xs text-muted-foreground">
@@ -2495,38 +3082,25 @@ async function confirmarEliminarCurso() {
                           aria-label="Quitar tu firma"
                           @click="quitarFirma(firmaPropiaDocente.id)"
                         >
-                          <Trash2 class="h-4 w-4 text-red-600" />
+                          <Trash2 class="h-4 w-4 text-destructive" />
                         </Button>
                       </div>
                       <div
                         class="rounded border-2 border-dashed border-border p-4"
                       >
-                        <input
-                          ref="selectorFirmaPropia"
-                          class="hidden"
-                          type="file"
+                        <ZonaSubidaImagen
+                          compacto
+                          aspecto="auto"
+                          :src="firmaPropiaDocente?.imagen ?? ''"
+                          titulo="Subir mi firma"
+                          ayuda="PNG o JPG · fondo transparente recomendado"
+                          etiqueta-boton="Subir mi firma"
+                          etiqueta-boton-cambiar="Cambiar mi firma"
+                          :cargando="validandoFirma || subiendoFirmaPropia"
+                          :error="errorFirmaPropia"
                           accept="image/png,image/jpeg"
-                          @change="seleccionarFirmaPropia"
+                          @archivo="procesarArchivoFirmaPropia"
                         />
-                        <div class="text-center">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            :disabled="validandoFirma || subiendoFirmaPropia"
-                            @click="selectorFirmaPropia?.click()"
-                          >
-                            <Upload class="h-4 w-4" />
-                            {{
-                              validandoFirma
-                                ? "Validando requisitos…"
-                                : subiendoFirmaPropia
-                                  ? "Subiendo…"
-                                  : firmaPropiaDocente
-                                    ? "Cambiar mi firma"
-                                    : "Subir mi firma"
-                            }}
-                          </Button>
-                        </div>
 
                         <div class="mt-4 rounded border border-border bg-card/60 p-3 text-left">
                           <p class="text-xs font-black uppercase tracking-wide text-muted-foreground">
@@ -2547,7 +3121,7 @@ async function confirmarEliminarCurso() {
                           class="mt-4 grid gap-2 text-left"
                         >
                           <div class="flex items-center justify-between gap-2">
-                            <p class="text-xs font-bold">
+                            <p class="text-xs font-bold text-foreground">
                               Verificación técnica
                             </p>
                             <span class="text-xs text-muted-foreground"
@@ -2573,11 +3147,11 @@ async function confirmarEliminarCurso() {
                             <span class="mt-0.5 grid h-5 w-5 shrink-0 place-items-center">
                               <Check
                                 v-if="chequeo.estado === 'ok'"
-                                class="h-3.5 w-3.5 text-emerald-600"
+                                class="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400"
                               />
                               <X
                                 v-else-if="chequeo.estado === 'error'"
-                                class="h-3.5 w-3.5 text-red-600"
+                                class="h-3.5 w-3.5 text-destructive"
                               />
                               <span
                                 v-else-if="chequeo.estado === 'revisando'"
@@ -2600,7 +3174,7 @@ async function confirmarEliminarCurso() {
                                 class="mt-0.5 text-[11px]"
                                 :class="
                                   chequeo.estado === 'error'
-                                    ? 'text-red-600'
+                                    ? 'text-destructive'
                                     : 'text-muted-foreground'
                                 "
                               >
@@ -2609,13 +3183,6 @@ async function confirmarEliminarCurso() {
                             </div>
                           </div>
                         </div>
-
-                        <p
-                          v-if="errorFirmaPropia"
-                          class="mt-3 text-center text-xs font-semibold text-red-600"
-                        >
-                          {{ errorFirmaPropia }}
-                        </p>
                       </div>
                       <div
                         v-if="firmasInstitucionales.length"
@@ -2632,7 +3199,7 @@ async function confirmarEliminarCurso() {
                             <Signature class="h-5 w-5" />
                           </span>
                           <div class="min-w-0 flex-1">
-                            <p class="truncate text-sm font-black">
+                            <p class="truncate text-sm font-black text-foreground">
                               {{ firma.nombre }}
                             </p>
                             <p class="text-xs text-muted-foreground">
@@ -2657,7 +3224,7 @@ async function confirmarEliminarCurso() {
                           v-if="firma.imagen"
                           :src="firma.imagen"
                           :alt="`Firma de ${firma.nombre}`"
-                          class="h-12 w-28 object-contain bg-white"
+                          class="h-12 w-28 object-contain border border-border bg-background"
                         />
                         <span
                           v-else
@@ -2666,7 +3233,7 @@ async function confirmarEliminarCurso() {
                           <Signature class="h-5 w-5" />
                         </span>
                         <div class="min-w-0 flex-1">
-                          <p class="truncate text-sm font-black">
+                          <p class="truncate text-sm font-black text-foreground">
                             {{ firma.nombre }}
                           </p>
                           <p class="text-xs text-muted-foreground">
@@ -2686,45 +3253,141 @@ async function confirmarEliminarCurso() {
                           :aria-label="`Quitar firma de ${firma.nombre}`"
                           @click="quitarFirma(firma.id)"
                         >
-                          <Trash2 class="h-4 w-4 text-red-600" />
+                          <Trash2 class="h-4 w-4 text-destructive" />
                         </Button>
                       </div>
                     </div>
                   </div>
-                  ></template
-                >
+                </template>
               </div>
-              <div
-                class="border bg-linear-to-br from-[#071F52] to-[#0B3A78] p-6 text-center text-white"
-              >
-                <Award class="mx-auto h-10 w-10 text-amber-300" />
-                <p class="mt-4 text-[10px] font-black uppercase tracking-widest text-blue-200">
-                  Vista previa
-                </p>
-                <p class="mt-3 text-xs text-blue-100">
-                  {{ curso.titulo.trim() || "Certificado del curso" }}
-                </p>
-                <strong class="mt-4 block text-xl">
-                  {{ curso.titulo.trim() || "Título del curso" }}
-                </strong>
-                <p class="mt-3 text-xs text-blue-200/70">
-                  El nombre de quien apruebe aparecerá al emitirse
-                </p>
-                <div
-                  v-if="curso.firmasCertificado.length"
-                  class="mt-7 grid gap-4"
-                  :class="curso.firmasCertificado.length > 1 ? 'grid-cols-2' : 'grid-cols-1'"
-                >
-                  <div v-for="firma in curso.firmasCertificado" :key="firma.id">
-                    <img
-                      v-if="firma.imagen"
-                      :src="firma.imagen"
-                      :alt="firma.nombre"
-                      class="mx-auto h-10 max-w-[7rem] object-contain"
-                    />
-                    <div class="mx-auto mt-2 h-px w-28 bg-white/50" />
-                    <p class="mt-1 text-[10px] font-bold">{{ firma.nombre }}</p>
-                    <p v-if="firma.cargo" class="text-[9px] text-blue-100">{{ firma.cargo }}</p>
+              <div class="mx-auto grid w-full max-w-3xl gap-4">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p class="text-sm font-bold text-foreground">
+                      Vista previa del certificado
+                    </p>
+                    <p class="text-xs text-muted-foreground">
+                      <template v-if="esGestionOrganizacion">
+                        Firmas configuradas en el curso (hasta {{ curso.cantidadFirmas || 1 }}).
+                      </template>
+                      <template v-else>
+                        Se muestra con el nombre del curso y tu firma (una sola).
+                      </template>
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    :disabled="!plantillaSeleccionada"
+                    @click="enfocarVistaPreviaCertificado"
+                  >
+                    <Eye class="h-4 w-4" />
+                    Ver vista previa
+                  </Button>
+                </div>
+
+                <div id="vista-previa-certificado-curso">
+                  <VistaPreviaPlantillaCertificado
+                    :plantilla="plantillaSeleccionada"
+                    :titulo-curso="curso.titulo"
+                    :firmas="firmasParaVistaPrevia"
+                    :cargando="cargandoPlantillaCert"
+                    :cantidad-firmas="cantidadFirmasVistaPrevia"
+                    :mostrar-selector-firmas="false"
+                  />
+                </div>
+
+                <div class="grid gap-3 border border-border bg-muted/20 p-4">
+                  <div class="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p class="text-sm font-black text-foreground">
+                        Catálogo de plantillas
+                      </p>
+                      <p class="mt-1 text-xs text-muted-foreground">
+                        <template v-if="docentesPuedenConfigurarCert">
+                          Puedes usar plantillas de la institución y las tuyas.
+                        </template>
+                        <template v-else>
+                          Solo plantillas que brinda la institución.
+                        </template>
+                      </p>
+                    </div>
+                    <Button
+                      v-if="
+                        esGestionOrganizacion || docentesPuedenConfigurarCert
+                      "
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      @click="irADisenoCertificados"
+                    >
+                      <LayoutTemplate class="h-4 w-4" />
+                      {{
+                        esGestionOrganizacion
+                          ? "Gestionar diseños"
+                          : "Crear mi plantilla"
+                      }}
+                    </Button>
+                  </div>
+
+                  <p
+                    v-if="cargandoPlantillaCert"
+                    class="text-sm text-muted-foreground"
+                  >
+                    Cargando plantillas…
+                  </p>
+                  <p
+                    v-else-if="!catalogoPlantillasCert.length"
+                    class="text-sm text-amber-800 dark:text-amber-200"
+                  >
+                    Aún no hay plantillas disponibles. Pide a Dirección que configure el diseño del certificado.
+                  </p>
+                  <div
+                    v-else
+                    class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3"
+                  >
+                    <button
+                      v-for="plantilla in catalogoPlantillasCert"
+                      :key="plantilla.id"
+                      type="button"
+                      class="overflow-hidden border-2 text-left transition"
+                      :class="
+                        curso.plantillaCertificadoId === plantilla.id
+                          ? 'border-primary bg-primary/5'
+                          : 'border-border bg-card hover:border-primary/40'
+                      "
+                      @click="seleccionarPlantillaCertificado(plantilla)"
+                    >
+                      <div class="aspect-[297/210] bg-muted">
+                        <img
+                          v-if="miniaturaPlantilla(plantilla)"
+                          :src="miniaturaPlantilla(plantilla)"
+                          :alt="plantilla.nombre"
+                          class="h-full w-full object-cover"
+                        />
+                        <div
+                          v-else
+                          class="grid h-full place-items-center text-xs text-muted-foreground"
+                        >
+                          Sin fondo
+                        </div>
+                      </div>
+                      <div class="grid gap-1 p-3">
+                        <p class="truncate text-sm font-bold text-foreground">
+                          {{ plantilla.nombre }}
+                        </p>
+                        <p class="text-[11px] text-muted-foreground">
+                          {{
+                            plantilla.alcance === "DOCENTE"
+                              ? "Plantilla propia"
+                              : plantilla.esDefault
+                                ? "Institucional · oficial"
+                                : "Institucional"
+                          }}
+                        </p>
+                      </div>
+                    </button>
                   </div>
                 </div>
               </div>
@@ -2735,8 +3398,8 @@ async function confirmarEliminarCurso() {
                 v-if="enviado"
                 class="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-8 text-center"
               >
-                <CheckCircle2 class="mx-auto h-12 w-12 text-emerald-600" />
-                <h3 class="mt-4 text-xl font-black">
+                <CheckCircle2 class="mx-auto h-12 w-12 text-emerald-600 dark:text-emerald-400" />
+                <h3 class="mt-4 text-xl font-black text-foreground">
                   {{ esGestionOrganizacion ? "Curso aprobado por Administración" : "Curso enviado a revisión" }}
                 </h3>
                 <p class="mt-2 text-sm text-emerald-800 dark:text-emerald-300">
@@ -2763,7 +3426,7 @@ async function confirmarEliminarCurso() {
                     v-for="item in requisitosRevision"
                     :key="item.id"
                     type="button"
-                    class="flex w-full items-center gap-3 rounded border p-4 text-left transition"
+                    class="flex w-full items-center gap-3 rounded border border-border p-4 text-left transition"
                     :class="
                       item.listo
                         ? 'border-border bg-card'
@@ -2781,13 +3444,13 @@ async function confirmarEliminarCurso() {
                       class="grid h-7 w-7 place-items-center rounded-full"
                       :class="
                         item.listo
-                          ? 'bg-emerald-500/10 text-emerald-600'
+                          ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
                           : 'bg-accent/15 text-[#B87A00] dark:text-accent'
                       "
                       ><Check v-if="item.listo" class="h-4 w-4" /><Lock
                         v-else
                         class="h-4 w-4" /></span
-                    ><span class="flex-1 text-sm font-semibold">{{
+                    ><span class="flex-1 text-sm font-semibold text-foreground">{{
                       item.texto
                     }}</span
                     ><Badge
@@ -2823,7 +3486,7 @@ async function confirmarEliminarCurso() {
 
             <div
               v-if="!enviado"
-              class="mt-8 flex flex-col gap-3 border-t pt-5"
+              class="mt-8 flex flex-col gap-3 border-t border-border pt-5"
             >
               <div class="flex justify-between gap-3">
                 <Button
@@ -2850,7 +3513,7 @@ async function confirmarEliminarCurso() {
       header="Agregar docente responsable"
       :style="{ width: 'min(48rem, calc(100vw - 2rem))' }"
     >
-      <div class="grid gap-5">
+      <div class="grid gap-5 text-foreground">
         <p class="text-sm text-muted-foreground">
           Esta información identificará al autor académico y será visible en la presentación pública del curso.
         </p>
@@ -2865,28 +3528,28 @@ async function confirmarEliminarCurso() {
               <span v-else class="grid justify-items-center gap-2"><Upload class="h-6 w-6" />Subir fotografía</span>
             </button>
             <input ref="selectorFotoDocente" type="file" accept="image/png,image/jpeg,image/webp" class="hidden" @change="seleccionarFotoDocente" />
-            <p v-if="errorFotoDocente" class="mt-2 text-xs text-red-600">{{ errorFotoDocente }}</p>
+            <p v-if="errorFotoDocente" class="mt-2 text-xs text-destructive">{{ errorFotoDocente }}</p>
             <p class="mt-2 text-xs text-muted-foreground">JPG, PNG o WEBP · máximo 1 MB.</p>
           </div>
           <div class="grid gap-4 sm:grid-cols-2">
-            <label class="grid gap-2 text-sm font-bold">Nombre completo *<Input v-model="docenteManual.nombre" placeholder="Ej. Marco Antonio Ruiz" /></label>
-            <label class="grid gap-2 text-sm font-bold">Correo<Input v-model="docenteManual.correo" type="email" placeholder="docente@correo.com" /></label>
-            <label class="grid gap-2 text-sm font-bold">Cargo profesional *<Input v-model="docenteManual.cargo" placeholder="Ej. Ingeniero civil" /></label>
-            <label class="grid gap-2 text-sm font-bold">Especialidad<Input v-model="docenteManual.especialidad" placeholder="Ej. Gestión de proyectos" /></label>
+            <label class="grid gap-2 text-sm font-bold text-foreground">Nombre completo *<Input v-model="docenteManual.nombre" placeholder="Ej. Marco Antonio Ruiz" /></label>
+            <label class="grid gap-2 text-sm font-bold text-foreground">Correo<Input v-model="docenteManual.correo" type="email" placeholder="docente@correo.com" /></label>
+            <label class="grid gap-2 text-sm font-bold text-foreground">Cargo profesional *<Input v-model="docenteManual.cargo" placeholder="Ej. Ingeniero civil" /></label>
+            <label class="grid gap-2 text-sm font-bold text-foreground">Especialidad<Input v-model="docenteManual.especialidad" placeholder="Ej. Gestión de proyectos" /></label>
           </div>
         </div>
-        <label class="grid gap-2 text-sm font-bold">
+        <label class="grid gap-2 text-sm font-bold text-foreground">
           Presentación profesional *
           <textarea v-model="docenteManual.biografia" rows="4" class="w-full border border-input bg-background px-3 py-2 font-normal outline-none focus:border-primary" placeholder="Resume su trayectoria, enfoque profesional y aporte al curso." />
         </label>
         <div class="grid gap-3">
           <div class="flex items-center justify-between">
-            <span class="text-sm font-bold">Experiencia destacada</span>
+            <span class="text-sm font-bold text-foreground">Experiencia destacada</span>
             <Button type="button" size="sm" variant="ghost" @click="agregarExperienciaDocente"><Plus class="h-4 w-4" />Añadir experiencia</Button>
           </div>
           <div v-for="(_, indice) in docenteManual.experiencia" :key="indice" class="flex gap-2">
             <Input v-model="docenteManual.experiencia[indice]" placeholder="Ej. 12 años dirigiendo proyectos de infraestructura" />
-            <Button type="button" size="icon" variant="ghost" title="Quitar experiencia" @click="quitarExperienciaDocente(indice)"><Trash2 class="h-4 w-4 text-red-600" /></Button>
+            <Button type="button" size="icon" variant="ghost" title="Quitar experiencia" @click="quitarExperienciaDocente(indice)"><Trash2 class="h-4 w-4 text-destructive" /></Button>
           </div>
         </div>
       </div>
@@ -2906,7 +3569,7 @@ async function confirmarEliminarCurso() {
       header="Gestionar categorías de cursos"
       :style="{ width: 'min(38rem, calc(100vw - 2rem))' }"
     >
-      <div class="grid gap-5">
+      <div class="grid gap-5 text-foreground">
         <div class="flex gap-2">
           <Input
             v-model="nuevaCategoria"
@@ -2930,7 +3593,7 @@ async function confirmarEliminarCurso() {
             :key="categoria"
             class="flex items-center gap-3 border border-border bg-card p-3"
           >
-            <span class="min-w-0 flex-1 truncate text-sm font-bold">{{ categoria }}</span>
+            <span class="min-w-0 flex-1 truncate text-sm font-bold text-foreground">{{ categoria }}</span>
             <Badge v-if="curso.categoria === categoria" class="bg-primary text-white">
               En uso
             </Badge>
@@ -2945,7 +3608,7 @@ async function confirmarEliminarCurso() {
               "
               @click="solicitarEliminarCategoria(categoria)"
             >
-              <Trash2 class="h-4 w-4 text-red-600" />
+              <Trash2 class="h-4 w-4 text-destructive" />
             </Button>
           </div>
         </div>
@@ -2954,7 +3617,7 @@ async function confirmarEliminarCurso() {
           v-if="categoriaPendienteEliminar"
           class="border-l-4 border-l-red-600 bg-red-500/10 p-4"
         >
-          <p class="text-sm font-black">
+          <p class="text-sm font-black text-foreground">
             ¿Eliminar la categoría “{{ categoriaPendienteEliminar }}”?
           </p>
           <p class="mt-1 text-xs text-muted-foreground">
@@ -3031,7 +3694,7 @@ async function confirmarEliminarCurso() {
               <b class="block truncate text-sm">{{ firma.nombre }}</b>
               <small v-if="firma.cargo" class="text-muted-foreground">{{ firma.cargo }}</small>
             </span>
-            <Check v-if="curso.firmasCertificado.some((item) => item.id === firma.id)" class="h-5 w-5 text-emerald-600" />
+            <Check v-if="curso.firmasCertificado.some((item) => item.id === firma.id)" class="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
             <Plus v-else class="h-5 w-5 text-primary" />
           </button>
           <p v-if="!firmasDisponibles.length" class="py-8 text-center text-sm text-muted-foreground">
@@ -3045,18 +3708,20 @@ async function confirmarEliminarCurso() {
     </Dialog>
     <div
       v-if="mostrandoVistaPrevia"
-      class="fixed inset-0 z-50 grid place-items-center bg-slate-950/70 p-4"
+      class="fixed inset-0 z-50 grid place-items-center bg-background/80 p-4 backdrop-blur-sm"
       @click.self="mostrandoVistaPrevia = false"
     >
       <article
         class="max-h-[90vh] w-full max-w-4xl overflow-auto border border-border bg-card shadow-2xl"
       >
         <div class="relative aspect-[16/7] bg-slate-900">
-          <img
-            v-if="curso.imagen"
-            :src="curso.imagen"
+          <ImagenPortadaCurso
+            v-if="urlPortadaVistaPrevia"
+            :src="urlPortadaVistaPrevia"
             :alt="curso.titulo"
-            class="h-full w-full object-cover opacity-65"
+            :object-position="curso.imagenPosicion"
+            :opacidad="0.65"
+            contenedor-class="aspect-[16/7] h-full w-full bg-slate-900"
           />
           <div
             class="absolute inset-0 bg-linear-to-r from-slate-950 via-slate-950/60 to-transparent"
@@ -3073,7 +3738,7 @@ async function confirmarEliminarCurso() {
         </div>
         <div class="grid gap-6 p-7 sm:grid-cols-[1fr_260px]">
           <div>
-            <h3 class="font-black">Lo que aprenderás</h3>
+            <h3 class="font-black text-foreground">Lo que aprenderás</h3>
             <ul class="mt-3 grid gap-2 text-sm text-muted-foreground">
               <li
                 v-for="(objetivo, indice) in curso.objetivos.filter((item) => item.trim())"
@@ -3083,7 +3748,7 @@ async function confirmarEliminarCurso() {
               </li>
             </ul>
             <template v-if="etiquetasRequisitosVista.length">
-              <h3 class="mt-6 font-black">Requisitos</h3>
+              <h3 class="mt-6 font-black text-foreground">Requisitos</h3>
               <ul class="mt-3 grid gap-2 text-sm text-muted-foreground">
                 <li
                   v-for="etiqueta in etiquetasRequisitosVista"
@@ -3095,7 +3760,7 @@ async function confirmarEliminarCurso() {
             </template>
           </div>
           <div class="border-l border-border pl-5 text-sm">
-            <p class="font-black">{{ curso.categoria }}</p>
+            <p class="font-black text-foreground">{{ curso.categoria }}</p>
             <p class="mt-2 text-muted-foreground">
               {{ secciones.length }} secciones ·
               {{
@@ -3127,7 +3792,7 @@ async function confirmarEliminarCurso() {
           </div>
           <div>
             <p class="text-xs font-black uppercase tracking-[0.18em] text-primary">Docente responsable</p>
-            <h3 class="mt-1 text-xl font-black">{{ curso.docenteResponsablePerfil.nombre }}</h3>
+            <h3 class="mt-1 text-xl font-black text-foreground">{{ curso.docenteResponsablePerfil.nombre }}</h3>
             <p class="text-sm font-semibold text-muted-foreground">
               {{ curso.docenteResponsablePerfil.cargo }}
               <template v-if="curso.docenteResponsablePerfil.especialidad"> · {{ curso.docenteResponsablePerfil.especialidad }}</template>
@@ -3161,6 +3826,7 @@ async function confirmarEliminarCurso() {
 /* Radio suave en todo el constructor (5 pasos), no solo botones. */
 .constructor-curso {
   --constructor-radio: 0.3125rem;
+  color: var(--color-foreground);
 }
 
 .constructor-curso :deep(button:not(.rounded-full)),
@@ -3202,45 +3868,94 @@ async function confirmarEliminarCurso() {
 
 .constructor-curso :deep(input::placeholder),
 .constructor-curso :deep(textarea::placeholder) {
-  color: currentColor !important;
-  opacity: 0.38 !important;
+  color: var(--color-muted-foreground) !important;
+  opacity: 1 !important;
 }
 
 .constructor-curso :deep(.p-select-label.p-placeholder),
 .constructor-curso :deep(.p-multiselect-label.p-placeholder) {
-  color: currentColor !important;
-  opacity: 0.38 !important;
+  color: var(--color-muted-foreground) !important;
+  opacity: 1 !important;
 }
 
-/* Todos los pasos: un color por tipo de control. */
-.paso-campos :deep(input:not([type="radio"]):not([type="checkbox"]):not([type="file"])),
+/* Campos de texto: tokens del tema (claro y oscuro). */
+.paso-campos :deep(input:not([type="radio"]):not([type="checkbox"]):not([type="file"]):not(.border-0)),
 .paso-campos :deep(textarea) {
-  border-color: #7dd3fc !important;
-  background-color: #f0f9ff !important;
+  border-color: var(--color-border) !important;
+  background-color: var(--color-card) !important;
+  color: var(--color-foreground) !important;
 }
 
-/* Combos: un solo estilo (filtro-control). Sin tinte índigo aparte. */
+.paso-campos :deep(input.border-0),
+.paso-campos :deep(.bg-muted input) {
+  background-color: transparent !important;
+  border-color: transparent !important;
+  color: var(--color-foreground) !important;
+}
+
 .paso-campos :deep(.filtro-control.p-select),
-.paso-campos :deep(.filtro-control.p-multiselect) {
-  border-color: #cfd9e7 !important;
-  background-color: #ffffff !important;
+.paso-campos :deep(.filtro-control.p-multiselect),
+.paso-campos :deep(.filtro-control.p-inputtext) {
+  background-color: var(--color-card) !important;
+  border-color: var(--color-border) !important;
+  color: var(--color-foreground) !important;
 }
 
-.dark .paso-campos :deep(.filtro-control.p-select),
-.dark .paso-campos :deep(.filtro-control.p-multiselect) {
-  border-color: #273246 !important;
-  background-color: #121a28 !important;
+.paso-campos :deep(.filtro-control.p-select .p-select-label),
+.paso-campos :deep(.filtro-control.p-multiselect .p-multiselect-label),
+.paso-campos :deep(.filtro-control.p-multiselect .p-multiselect-label-container) {
+  color: var(--color-foreground) !important;
 }
 
-.paso-campos :deep(button:not(.btn-borrar):not(.btn-opcion)),
+.paso-campos :deep(.filtro-control.p-select .p-select-label.p-placeholder),
+.paso-campos :deep(.filtro-control.p-multiselect .p-multiselect-label.p-placeholder) {
+  color: var(--color-muted-foreground) !important;
+}
+
+.paso-campos :deep(.filtro-control.p-select .p-select-dropdown),
+.paso-campos :deep(.filtro-control.p-multiselect .p-multiselect-dropdown) {
+  color: var(--color-muted-foreground) !important;
+}
+
+.paso-campos :deep(.filtro-control.p-multiselect .p-chip),
+.paso-campos :deep(.filtro-control.p-multiselect .p-multiselect-chip) {
+  background: color-mix(in srgb, var(--color-primary) 22%, var(--color-muted)) !important;
+  color: var(--color-foreground) !important;
+}
+
+.paso-campos :deep(.filtro-control.p-multiselect .p-chip-remove-icon),
+.paso-campos :deep(.filtro-control.p-multiselect .p-multiselect-chip-icon) {
+  color: var(--color-muted-foreground) !important;
+}
+
+.paso-campos :deep(input:not([type="radio"]):not([type="checkbox"]):not([type="file"]):focus),
+.paso-campos :deep(textarea:focus) {
+  border-color: var(--color-ring) !important;
+  outline: 2px solid color-mix(in srgb, var(--color-ring) 35%, transparent);
+  outline-offset: 0;
+}
+
 .paso-campos :deep(.control-boton) {
-  border-color: #6ee7b7 !important;
-  background-color: #ecfdf5 !important;
-  color: #065f46 !important;
+  border-color: var(--color-border) !important;
+  background-color: var(--color-muted) !important;
+  color: var(--color-foreground) !important;
 }
 
-.paso-campos :deep(button:not(.btn-borrar):not(.btn-opcion):hover),
 .paso-campos :deep(.control-boton:hover) {
-  background-color: #d1fae5 !important;
+  border-color: var(--color-primary) !important;
+  background-color: color-mix(
+    in srgb,
+    var(--color-primary) 12%,
+    var(--color-muted)
+  ) !important;
+}
+
+.paso-campos :deep(.btn-opcion) {
+  background-color: var(--color-card) !important;
+  color: var(--color-foreground) !important;
+}
+
+.paso-campos :deep(.btn-opcion:hover) {
+  background-color: var(--color-muted) !important;
 }
 </style>

@@ -45,3 +45,70 @@ export function modulosDePermisos(permisos: readonly string[], portal: ModuloAcc
     (modulo) => modulo.portal === portal && modulo.permisos.some((permiso) => asignados.has(permiso)),
   );
 }
+
+const ACCIONES_PERMISO: Record<string, string> = {
+  ver: "Ver",
+  crear: "Crear",
+  editar: "Editar",
+  administrar: "Administrar",
+  invitar: "Invitar",
+  aprobar: "Aprobar",
+  revisar: "Revisar",
+  gestionar: "Gestionar",
+  emitir: "Emitir",
+  preparar: "Preparar",
+  firmar: "Firmar",
+  verificar: "Verificar",
+  revocar: "Revocar",
+  configurar: "Configurar",
+  exportar: "Exportar",
+  publicar: "Publicar",
+  designar: "Designar",
+  gobernar: "Gobernar",
+  consumir: "Consumir",
+  calificar: "Calificar",
+  definir_precio: "Definir precio",
+};
+
+const RECURSOS_PERMISO: Record<string, string> = {
+  usuarios: "usuarios",
+  estudiantes: "estudiantes",
+  cursos: "cursos",
+  categorias: "categorías",
+  asignaciones: "asignaciones",
+  rutas: "rutas",
+  certificados: "certificados",
+  sesiones: "sesiones en vivo",
+  equipos: "equipos",
+  estructura: "estructura",
+  perfiles: "perfiles",
+  reportes: "reportes",
+  auditoria: "auditoría",
+  licencias: "licencias",
+  facturacion: "facturación",
+  configuracion: "configuración",
+  vacantes: "vacantes",
+  postulaciones: "postulaciones",
+  organizaciones: "organizaciones",
+  planes: "planes",
+  entidad: "entidad",
+  administradores: "administradores",
+  aprendizaje: "aprendizaje",
+  evaluaciones: "evaluaciones",
+};
+
+/** Convierte `cursos.aprobar` en texto legible para la UI. */
+export function etiquetaLegiblePermiso(codigo: string): string {
+  const partes = String(codigo ?? "").trim().split(".");
+  if (partes.length < 2) return codigo;
+  const accion = ACCIONES_PERMISO[partes.at(-1)!] ?? partes.at(-1)!;
+  const recurso = RECURSOS_PERMISO[partes[0]!] ?? partes[0]!;
+  return `${accion} ${recurso}`;
+}
+
+export function resumenModulosActivos(
+  permisos: readonly string[],
+  portal: ModuloAcceso["portal"] = "organizacion",
+): string[] {
+  return modulosDePermisos(permisos, portal).map((modulo) => modulo.nombre);
+}

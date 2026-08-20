@@ -5,6 +5,7 @@ import {
   Check,
   ChevronDown,
   Clock3,
+  Loader2,
   Play,
   ShieldCheck,
   Star,
@@ -15,6 +16,7 @@ import { useRoute, useRouter } from "vue-router";
 
 import { cursoPublicoService } from "@/api/services/curso-publico.service";
 import EsqueletoDetalleCurso from "@/components/shared/EsqueletoDetalleCurso.vue";
+import ImagenPortadaCurso from "@/components/shared/ImagenPortadaCurso.vue";
 import PortalSection from "@/components/shared/PortalSection.vue";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -128,6 +130,7 @@ function comprarAhora() {
 
 function accionPrincipal() {
   if (!cursoPresentado.value) return;
+  if (portal.estaInscribiendoCurso(cursoPresentado.value.id)) return;
   if (yaMatriculado.value) {
     continuarCurso();
     return;
@@ -140,6 +143,9 @@ function accionPrincipal() {
 }
 
 const etiquetaPrincipal = computed(() => {
+  if (portal.estaInscribiendoCurso(cursoId.value)) {
+    return "Inscribiendo…";
+  }
   if (yaMatriculado.value) {
     return progreso.value >= 100 ? "Revisar curso" : "Continuar curso";
   }
@@ -283,11 +289,12 @@ const inicialesInstructor = computed(() =>
                 <source :src="detalle.videoPresentacion" type="video/mp4" />
                 Tu navegador no permite reproducir este video.
               </video>
-              <img
+              <ImagenPortadaCurso
                 v-else
                 :src="cursoPresentado.image"
                 :alt="cursoPresentado.title"
-                class="h-full w-full object-cover"
+                :object-position="cursoPresentado.imagenPosicion"
+                contenedor-class="aspect-video h-full w-full bg-black"
               />
               <span
                 class="pointer-events-none absolute left-3 top-3 inline-flex items-center gap-2 bg-black/65 px-2.5 py-1 text-xs font-bold backdrop-blur"
@@ -355,10 +362,18 @@ const inicialesInstructor = computed(() =>
               <Button
                 v-else
                 class="mt-5 h-12 w-full bg-[#F5B400] px-6 text-[#07152B] hover:bg-amber-400"
+                :disabled="portal.estaInscribiendoCurso(cursoPresentado.id)"
                 @click="accionPrincipal"
               >
+                <Loader2
+                  v-if="portal.estaInscribiendoCurso(cursoPresentado.id)"
+                  class="h-4 w-4 animate-spin"
+                />
                 {{ etiquetaPrincipal }}
-                <ArrowRight class="h-4 w-4" />
+                <ArrowRight
+                  v-if="!portal.estaInscribiendoCurso(cursoPresentado.id)"
+                  class="h-4 w-4"
+                />
               </Button>
 
               <div class="mt-5 grid gap-2.5 border-t border-white/15 pt-4">

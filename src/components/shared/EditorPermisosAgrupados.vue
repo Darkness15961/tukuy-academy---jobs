@@ -24,10 +24,13 @@ const props = withDefaults(
     modelValue: string[];
     disabled?: boolean;
     ayuda?: string;
+    /** Activa interruptores por área/módulo en lugar de listar todos los permisos de entrada. */
+    modoModulo?: boolean;
   }>(),
   {
     disabled: false,
-    ayuda: "Primero elige un grupo; luego marca solo los permisos de ese grupo.",
+    ayuda: "Activa las áreas que necesitas. Solo abre el detalle si quieres afinar permisos puntuales.",
+    modoModulo: false,
   },
 );
 
@@ -55,11 +58,22 @@ const grupoActivo = computed(
   () => props.grupos.find((grupo) => grupo.id === grupoActivoId.value) ?? null,
 );
 
+const areasActivas = computed(() =>
+  props.grupos.filter((grupo) => conteoGrupo(grupo).activos > 0).length,
+);
+
 function conteoGrupo(grupo: GrupoPermisosEditor) {
   const activos = grupo.permisos.filter((permiso) =>
     seleccion.value.has(permiso.codigo),
   ).length;
   return { activos, total: grupo.permisos.length };
+}
+
+function estadoGrupo(grupo: GrupoPermisosEditor) {
+  const { activos, total } = conteoGrupo(grupo);
+  if (activos <= 0) return "off" as const;
+  if (activos >= total) return "on" as const;
+  return "partial" as const;
 }
 
 function abrirGrupo(id: string) {
@@ -93,34 +107,97 @@ function alternarTodoGrupo(grupo: GrupoPermisosEditor, activar: boolean) {
   <div class="grid gap-3">
     <p v-if="ayuda" class="text-xs text-muted-foreground">{{ ayuda }}</p>
 
+    <p
+      v-if="modoModulo && grupos.length && !grupoActivo"
+      class="text-xs font-semibold text-foreground"
+    >
+      {{ areasActivas }} de {{ grupos.length }} áreas activas
+    </p>
+
     <!-- Lista de grupos -->
     <div v-if="!grupoActivo" class="grid gap-2">
-      <button
+      <div
         v-for="grupo in grupos"
         :key="grupo.id"
-        type="button"
-        class="flex items-center justify-between gap-3 border border-border bg-card p-4 text-left transition hover:border-primary/50"
-        @click="abrirGrupo(grupo.id)"
+        class="flex items-center gap-3 border border-border bg-card p-4 transition hover:border-primary/40"
       >
-        <span class="min-w-0">
-          <span class="block font-bold">{{ grupo.nombre }}</span>
-          <span
-            v-if="grupo.descripcion"
-            class="mt-1 block text-xs text-muted-foreground"
-          >
-            {{ grupo.descripcion }}
+        <label
+          v-if="modoModulo"
+          class="flex min-w-0 flex-1 cursor-pointer items-start gap-3"
+          :class="disabled ? 'opacity-70' : ''"
+          @click.stop
+        >
+          <input
+            type="checkbox"
+            class="mt-1 h-4 w-4 shrink-0"
+            :checked="estadoGrupo(grupo) === 'on'"
+            :disabled="disabled"
+            @change="
+              alternarTodoGrupo(
+                grupo,
+                ($event.target as HTMLInputElement).checked,
+              )
+            "
+          />
+          <span class="min-w-0">
+            <span class="block font-bold">{{ grupo.nombre }}</span>
+            <span
+              v-if="grupo.descripcion"
+              class="mt-1 block text-xs text-muted-foreground"
+            >
+              {{ grupo.descripcion }}
+            </span>
+            <span class="mt-2 block text-[11px] font-semibold text-muted-foreground">
+              <template v-if="estadoGrupo(grupo) === 'partial'">
+                Parcial · {{ conteoGrupo(grupo).activos }}/{{ conteoGrupo(grupo).total }}
+              </template>
+              <template v-else-if="estadoGrupo(grupo) === 'on'">
+                Área completa activa
+              </template>
+              <template v-else>
+                Sin acceso
+              </template>
+            </span>
           </span>
-          <span class="mt-2 block text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-            {{ conteoGrupo(grupo).activos }}/{{ conteoGrupo(grupo).total }} permisos activos
+        </label>
+
+        <button
+          v-else
+          type="button"
+          class="flex min-w-0 flex-1 items-center justify-between gap-3 text-left"
+          @click="abrirGrupo(grupo.id)"
+        >
+          <span class="min-w-0">
+            <span class="block font-bold">{{ grupo.nombre }}</span>
+            <span
+              v-if="grupo.descripcion"
+              class="mt-1 block text-xs text-muted-foreground"
+            >
+              {{ grupo.descripcion }}
+            </span>
+            <span class="mt-2 block text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              {{ conteoGrupo(grupo).activos }}/{{ conteoGrupo(grupo).total }} activos
+            </span>
           </span>
-        </span>
-        <ChevronRight class="h-4 w-4 shrink-0 text-muted-foreground" />
-      </button>
+          <ChevronRight class="h-4 w-4 shrink-0 text-muted-foreground" />
+        </button>
+
+        <Button
+          v-if="modoModulo"
+          size="sm"
+          variant="outline"
+          type="button"
+          @click="abrirGrupo(grupo.id)"
+        >
+          Afinar
+        </Button>
+      </div>
+
       <p
         v-if="!grupos.length"
         class="border border-dashed border-border p-6 text-center text-sm text-muted-foreground"
       >
-        No hay grupos de permisos para mostrar.
+        No hay áreas de acceso para configurar.
       </p>
     </div>
 
@@ -129,40 +206,40 @@ function alternarTodoGrupo(grupo: GrupoPermisosEditor, activar: boolean) {
       <div class="flex flex-wrap items-center justify-between gap-2">
         <Button size="sm" variant="outline" @click="volverAGrupos">
           <ChevronLeft class="h-4 w-4" />
-          Grupos
+          Volver
         </Button>
         <div v-if="!disabled" class="flex flex-wrap gap-2">
           <Button
             size="sm"
             variant="outline"
-            @click="alternarTodoGrupo(grupoActivo, true)"
+            @click="alternarTodoGrupo(grupoActivo!, true)"
           >
-            Marcar todos
+            Activar todo
           </Button>
           <Button
             size="sm"
             variant="outline"
-            @click="alternarTodoGrupo(grupoActivo, false)"
+            @click="alternarTodoGrupo(grupoActivo!, false)"
           >
-            Quitar todos
+            Quitar todo
           </Button>
         </div>
       </div>
 
       <div class="border border-border bg-card p-4">
-        <p class="font-black">{{ grupoActivo.nombre }}</p>
-        <p v-if="grupoActivo.descripcion" class="mt-1 text-sm text-muted-foreground">
-          {{ grupoActivo.descripcion }}
+        <p class="font-black">{{ grupoActivo!.nombre }}</p>
+        <p v-if="grupoActivo!.descripcion" class="mt-1 text-sm text-muted-foreground">
+          {{ grupoActivo!.descripcion }}
         </p>
         <p class="mt-2 text-xs text-muted-foreground">
-          {{ conteoGrupo(grupoActivo).activos }} de
-          {{ conteoGrupo(grupoActivo).total }} permisos activos en este grupo
+          {{ conteoGrupo(grupoActivo!).activos }} de
+          {{ conteoGrupo(grupoActivo!).total }} capacidades activas
         </p>
       </div>
 
-      <div class="grid max-h-80 gap-2 overflow-auto pr-1 sm:grid-cols-2">
+      <div class="grid max-h-72 gap-2 overflow-auto pr-1 sm:grid-cols-2">
         <label
-          v-for="permiso in grupoActivo.permisos"
+          v-for="permiso in grupoActivo!.permisos"
           :key="permiso.codigo"
           class="flex items-start gap-2 border border-border bg-background p-3 text-xs"
           :class="disabled ? 'opacity-70' : 'cursor-pointer hover:border-primary/40'"

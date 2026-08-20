@@ -4,6 +4,7 @@ import { API } from "@/api/endpoints";
 import { resolveMock } from "@/api/mock";
 import { crearAlmacenDocumento } from "@/api/repositorio-local";
 import { authService } from "@/api/services/auth.service";
+import { cuentaAlumnoService } from "@/api/services/cuenta-alumno.service";
 import {
   user as userMock,
   workExperiences as workExperiencesMock,
@@ -11,6 +12,7 @@ import {
 import { USUARIO_SESION_KEY } from "@/lib/constants";
 import { env } from "@/lib/env";
 import { urlFotoPerfilReal } from "@/lib/foto-perfil";
+import { actualizarPerfilSesion } from "@/composables/useAuth";
 import {
   mapUserProfileDto,
   mapWorkExperienceList,
@@ -37,20 +39,32 @@ function perfilSesionAuth(): UserProfile | null {
   }
 }
 
-function fusionarPerfilAuth(auth: UserProfile, local: UserProfile): UserProfile {
-  const localEsDemo =
-    local.name === userMock.name && local.trade === userMock.trade;
+function completarProgresoPerfil(perfil: UserProfile): number {
+  const campos = [
+    perfil.name,
+    perfil.email,
+    perfil.phone,
+    perfil.birthDate,
+    perfil.trade,
+    perfil.specialty,
+    perfil.location,
+    perfil.avatarUrl,
+  ];
+  const llenos = campos.filter((valor) => String(valor ?? "").trim()).length;
+  return Math.round((llenos / campos.length) * 100);
+}
+
+function perfilRealDesdeAuth(auth: UserProfile): UserProfile {
   return {
-    ...local,
-    name: auth.name || local.name,
-    initials: auth.initials || local.initials,
-    avatarUrl:
-      urlFotoPerfilReal(auth.avatarUrl) || urlFotoPerfilReal(local.avatarUrl),
-    trade: localEsDemo ? auth.trade || local.trade : local.trade,
-    specialty: localEsDemo
-      ? auth.specialty || local.specialty
-      : local.specialty,
-    location: localEsDemo ? auth.location || local.location : local.location,
+    ...auth,
+    avatarUrl: urlFotoPerfilReal(auth.avatarUrl),
+    trade: auth.trade?.trim() || "",
+    specialty: auth.specialty?.trim() || "",
+    location: auth.location?.trim() || "",
+    profileProgress: completarProgresoPerfil(auth),
+    employabilityScore: 0,
+    certificates: auth.certificates ?? 0,
+    applications: 0,
   };
 }
 
@@ -60,26 +74,26 @@ export const usuarioService = {
       let authPerfil = perfilSesionAuth();
       try {
         authPerfil = mapUserProfileDto(await authService.me());
-        localStorage.setItem(USUARIO_SESION_KEY, JSON.stringify(authPerfil));
       } catch {
         // Conserva la sesión local si /me falla temporalmente.
       }
       if (authPerfil) {
-        const local = perfilLocal.leer();
-        const fusionado = fusionarPerfilAuth(authPerfil, local);
-        // Evita que el mock "Carlos Alberto" se quede pegado tras login Google.
-        if (local.name === userMock.name) {
-          perfilLocal.guardar({
-            ...local,
-            name: fusionado.name,
-            initials: fusionado.initials,
-            avatarUrl: fusionado.avatarUrl,
-            trade: fusionado.trade,
-            specialty: fusionado.specialty,
-            location: fusionado.location,
-          });
+        try {
+          const cuenta = await cuentaAlumnoService.obtener();
+          authPerfil = {
+            ...authPerfil,
+            email: cuenta.correo || authPerfil.email,
+            phone: cuenta.telefono || authPerfil.phone,
+            birthDate: cuenta.fechaNacimiento || authPerfil.birthDate,
+            name: cuenta.nombre || authPerfil.name,
+            authProvider: cuenta.proveedor || authPerfil.authProvider,
+          };
+        } catch {
+          /* RPC aún no aplicada: usa auth */
         }
-        return resolveMock(fusionado);
+        const real = perfilRealDesdeAuth(authPerfil);
+        localStorage.setItem(USUARIO_SESION_KEY, JSON.stringify(real));
+        return real;
       }
     }
 
@@ -92,6 +106,9 @@ export const usuarioService = {
   },
 
   async getExperiences(): Promise<WorkExperience[]> {
+    if (apiConfig.sinDatosDemo) {
+      return [];
+    }
     if (apiConfig.useMock || env.authProvider === "supabase") {
       return resolveMock(experienciasLocales.leer());
     }
@@ -101,7 +118,29 @@ export const usuarioService = {
   },
 
   async updateProfile(updates: Partial<UserProfile>): Promise<UserProfile> {
-    if (apiConfig.useMock || env.authProvider === "supabase") {
+    if (env.authProvider === "supabase") {
+      if (
+        updates.phone !== undefined ||
+        updates.birthDate !== undefined ||
+        updates.name !== undefined
+      ) {
+        await cuentaAlumnoService.guardar({
+          ...(updates.phone !== undefined
+            ? { telefono: updates.phone }
+            : {}),
+          ...(updates.birthDate !== undefined
+            ? { fechaNacimiento: updates.birthDate }
+            : {}),
+          ...(updates.name !== undefined ? { nombre: updates.name } : {}),
+        });
+      }
+      const actual = await this.getProfile();
+      const siguiente = perfilRealDesdeAuth({ ...actual, ...updates });
+      localStorage.setItem(USUARIO_SESION_KEY, JSON.stringify(siguiente));
+      actualizarPerfilSesion(siguiente);
+      return siguiente;
+    }
+    if (apiConfig.useMock) {
       const actual = await this.getProfile();
       const siguiente = { ...actual, ...updates };
       perfilLocal.guardar(siguiente);

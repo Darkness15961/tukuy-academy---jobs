@@ -262,9 +262,9 @@ export function posicionesFirmantesAutomaticas(
   ];
 }
 
-/** Distribución 1–4 firmas (4 solo para simulación en vista previa). */
+/** Distribución 1–5 firmas (vista previa / cursos institucionales). */
 export function posicionesFirmantesVistaPrevia(
-  cantidad: 1 | 2 | 3 | 4,
+  cantidad: 1 | 2 | 3 | 4 | 5,
   yMm = Y_FIRMAS_DEFAULT,
 ): Array<
   Pick<
@@ -278,11 +278,20 @@ export function posicionesFirmantesVistaPrevia(
       yMm,
     );
   }
+  if (cantidad === 4) {
+    return [
+      { xMm: 42, yMm, align: "center", anchoLineaMm: 34, fontSize: 8 },
+      { xMm: 110, yMm, align: "center", anchoLineaMm: 34, fontSize: 8 },
+      { xMm: 187, yMm, align: "center", anchoLineaMm: 34, fontSize: 8 },
+      { xMm: 255, yMm, align: "center", anchoLineaMm: 34, fontSize: 8 },
+    ];
+  }
   return [
-    { xMm: 42, yMm, align: "center", anchoLineaMm: 34, fontSize: 8 },
-    { xMm: 110, yMm, align: "center", anchoLineaMm: 34, fontSize: 8 },
-    { xMm: 187, yMm, align: "center", anchoLineaMm: 34, fontSize: 8 },
-    { xMm: 255, yMm, align: "center", anchoLineaMm: 34, fontSize: 8 },
+    { xMm: 36, yMm, align: "center", anchoLineaMm: 28, fontSize: 8 },
+    { xMm: 92, yMm, align: "center", anchoLineaMm: 28, fontSize: 8 },
+    { xMm: 148.5, yMm, align: "center", anchoLineaMm: 28, fontSize: 8 },
+    { xMm: 205, yMm, align: "center", anchoLineaMm: 28, fontSize: 8 },
+    { xMm: 261, yMm, align: "center", anchoLineaMm: 28, fontSize: 8 },
   ];
 }
 

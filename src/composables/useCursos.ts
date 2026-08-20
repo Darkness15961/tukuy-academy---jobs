@@ -1,8 +1,12 @@
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 
 import { cursosService } from "@/api/services/cursos.service";
+import { useContextoSesion } from "@/composables/useContextoSesion";
+import { AUTH_TOKEN_KEY } from "@/lib/constants";
 import { toast } from "@/lib/toast";
 import type { Course } from "@/types/academia";
+
+const { contextoActivo } = useContextoSesion();
 
 /** Estado compartido: evita refetch al remount y permite pintar con datos previos. */
 const courses = ref<Course[]>([]);
@@ -10,6 +14,17 @@ const loading = ref(false);
 const error = ref<string | null>(null);
 const cargadoUnaVez = ref(false);
 let fetchEnCurso: Promise<void> | null = null;
+/** Descarta respuestas viejas tras invalidar / forzar (p. ej. post-onboarding). */
+let generacionFetch = 0;
+
+/** Tras login o cambio de perfil: evita reutilizar un catálogo vacío obsoleto. */
+export function invalidarCacheCursos() {
+  generacionFetch += 1;
+  courses.value = [];
+  cargadoUnaVez.value = false;
+  error.value = null;
+  fetchEnCurso = null;
+}
 
 async function fetchCourses(
   opciones: { silencioso?: boolean; forzar?: boolean } = {},
@@ -19,15 +34,36 @@ async function fetchCourses(
     await fetchEnCurso.catch(() => undefined);
   }
 
+  const generacion = ++generacionFetch;
+  const portalAlInicio = contextoActivo.value?.portal;
   const mostrarLoading = !opciones.silencioso && !cargadoUnaVez.value;
   if (mostrarLoading) loading.value = true;
   error.value = null;
 
   fetchEnCurso = (async () => {
     try {
-      courses.value = await cursosService.getAll();
+      // Sin contexto alumno aún: no marcar como cargado (evita catálogo vacío pegado).
+      if (
+        !!localStorage.getItem(AUTH_TOKEN_KEY) &&
+        portalAlInicio !== "estudiante"
+      ) {
+        return;
+      }
+
+      const lista = await cursosService.getAll();
+      if (generacion !== generacionFetch) return;
+
+      const portal = contextoActivo.value?.portal;
+      const autenticado = !!localStorage.getItem(AUTH_TOKEN_KEY);
+
+      if (lista.length === 0 && autenticado && portal !== "estudiante") {
+        return;
+      }
+
+      courses.value = lista;
       cargadoUnaVez.value = true;
     } catch (causa) {
+      if (generacion !== generacionFetch) return;
       error.value = "No se pudieron cargar los cursos";
       toast.error(
         causa instanceof Error
@@ -35,13 +71,31 @@ async function fetchCourses(
           : "No se pudieron cargar los cursos",
       );
     } finally {
-      loading.value = false;
-      fetchEnCurso = null;
+      if (generacion === generacionFetch) {
+        loading.value = false;
+        fetchEnCurso = null;
+      }
     }
   })();
 
   return fetchEnCurso;
 }
+
+watch(
+  () =>
+    [
+      contextoActivo.value?.portal,
+      contextoActivo.value?.organizacionId,
+    ] as const,
+  ([portal], [portalAnterior]) => {
+    if (portal === "estudiante" && portal !== portalAnterior) {
+      void fetchCourses({
+        forzar: true,
+        silencioso: cargadoUnaVez.value,
+      });
+    }
+  },
+);
 
 /** Espera a que el catálogo esté disponible (útil en deep-link / F5). */
 export function asegurarCursosCargados() {

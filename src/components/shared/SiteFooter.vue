@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Button } from "@/components/ui/button";
+import { CORREO_VENTAS } from "@/lib/constants";
 import { computed } from "vue";
 import { useRouter } from "vue-router";
 
@@ -135,8 +136,16 @@ function handleFooterLink() {
         <span :class="['text-sm', isDark ? 'text-white/65' : 'text-muted-foreground']"
           >+51 930 804 475</span
         >
-        <span :class="['text-sm', isDark ? 'text-white/65' : 'text-muted-foreground']"
-          >academy@tukuyobra.com</span
+        <a
+          :href="`mailto:${CORREO_VENTAS}`"
+          :class="[
+            'text-sm font-semibold hover:underline',
+            isDark ? 'text-[#F5B400]' : 'text-primary',
+          ]"
+          >{{ CORREO_VENTAS }}</a
+        >
+        <span :class="['text-xs', isDark ? 'text-white/50' : 'text-muted-foreground']"
+          >Ventas, cotizaciones y promos</span
         >
         <span :class="['text-sm', isDark ? 'text-white/65' : 'text-muted-foreground']"
           >Lun - Vie · 9am - 7pm</span

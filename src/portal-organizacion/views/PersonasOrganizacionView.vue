@@ -26,6 +26,8 @@ import { Button } from "@/components/ui/button";
 import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "@/lib/toast";
+import { ORG_ESTRUCTURA_SELECCIONADA_KEY } from "@/lib/constants";
+import { useContextoSesion } from "@/composables/useContextoSesion";
 import type {
   EstructuraOrganizacional,
   NivelOrganizacional,
@@ -34,6 +36,22 @@ import type {
 } from "@/portal-organizacion/types/estructura-organizacional.types";
 
 const route = useRoute();
+const { contextoActivo } = useContextoSesion();
+
+const operadorId = computed(
+  () => contextoActivo.value?.usuarioId?.trim() || "",
+);
+
+function leerEstructuraSeleccionada() {
+  const guardada = localStorage.getItem(ORG_ESTRUCTURA_SELECCIONADA_KEY);
+  if (guardada) return guardada;
+  const legacy = localStorage.getItem("tukuy_demo_organizacion_estructura_seleccionada");
+  if (legacy) {
+    localStorage.setItem(ORG_ESTRUCTURA_SELECCIONADA_KEY, legacy);
+    localStorage.removeItem("tukuy_demo_organizacion_estructura_seleccionada");
+  }
+  return legacy;
+}
 
 const cargando = ref(true);
 const mensaje = ref("");
@@ -53,6 +71,7 @@ const filtroEstadoAsignacion = ref<"TODOS" | "SIN_ASIGNAR" | "ASIGNADOS" | "PEND
   "TODOS",
 );
 const buscarPersonaVinculacion = ref("");
+const mostrarFiltrosAvanzados = ref(false);
 
 /** Búsqueda para vincular: DNI o correo de alguien que ya tiene cuenta. */
 const criterioBusqueda = ref("");
@@ -112,7 +131,7 @@ async function cargar() {
     vinculaciones.value = snap.vinculaciones;
     requiereDniEnrolamiento.value = configuracion.requiereDniEnrolamiento;
 
-    const guardadaId = localStorage.getItem("tukuy_demo_organizacion_estructura_seleccionada");
+    const guardadaId = leerEstructuraSeleccionada();
     if (guardadaId && estructuras.value.some((e) => e.id === guardadaId && !e.esSistema)) {
       estructuraSeleccionadaId.value = guardadaId;
     } else {
@@ -147,9 +166,21 @@ async function cargar() {
 watch(estructuraSeleccionadaId, (nuevoId) => {
   filtrosNodosVinculaciones.value = [];
   if (nuevoId) {
-    localStorage.setItem("tukuy_demo_organizacion_estructura_seleccionada", nuevoId);
+    localStorage.setItem(ORG_ESTRUCTURA_SELECCIONADA_KEY, nuevoId);
   }
 });
+
+async function recargarDirectorio() {
+  const [snap, listaUsuarios] = await Promise.all([
+    organizacionService.estructura.obtenerSnapshot(true),
+    organizacionService.usuarios.listar(true),
+  ]);
+  estructuras.value = snap.estructuras;
+  niveles.value = snap.niveles;
+  unidades.value = snap.unidades;
+  vinculaciones.value = snap.vinculaciones;
+  usuarios.value = listaUsuarios;
+}
 
 const usuariosPorId = computed(
   () => new Map(usuarios.value.map((usuario) => [String(usuario.id), usuario])),
@@ -554,39 +585,38 @@ function buscarPersonaParaVincular() {
 async function crearVinculacion() {
   if (!formularioVinculacion.usuarioId || !formularioVinculacion.unidadId) return;
   try {
-    const creada = await organizacionService.estructura.vincularPersonaANodo({
+    await organizacionService.estructura.vincularPersonaANodo({
       usuarioId: formularioVinculacion.usuarioId,
       unidadId: formularioVinculacion.unidadId,
       tipo: formularioVinculacion.tipo,
       origen: formularioVinculacion.origen,
-      aprobadaPor: "usuario-demo",
+      aprobadaPor: operadorId.value || undefined,
     });
-    vinculaciones.value.unshift(creada);
+    await recargarDirectorio();
     modalVinculacion.value = false;
     toast.success("La persona fue vinculada al nodo seleccionado.");
   } catch (error) {
-    toast.success(error instanceof Error ? error.message : "No se pudo crear la vinculación.");
+    toast.error(error instanceof Error ? error.message : "No se pudo crear la vinculación.");
   }
 }
 
 async function aprobarSolicitud(vinculacion: VinculacionUnidad) {
-  const actualizada = await organizacionService.estructura.aprobarVinculacion(
+  await organizacionService.estructura.aprobarVinculacion(
     vinculacion.id,
-    "usuario-demo",
+    operadorId.value,
   );
-  const indice = vinculaciones.value.findIndex((item) => item.id === actualizada.id);
-  if (indice >= 0) vinculaciones.value[indice] = actualizada;
+  await recargarDirectorio();
   toast.success("La solicitud de nodo fue aprobada.");
 }
 
 async function activarIncorporacion(usuario: UsuarioOrganizacion) {
   const actualizado = await organizacionService.activarIncorporacion(
     String(usuario.id),
-    "usuario-demo",
+    operadorId.value,
   );
   const posicion = usuarios.value.findIndex((item) => item.id === usuario.id);
   if (posicion >= 0) usuarios.value[posicion] = actualizado;
-  vinculaciones.value = await organizacionService.estructura.vinculaciones.listar();
+  await recargarDirectorio();
   toast.success(`${actualizado.nombre}: ingreso aceptado.`);
   if (!filasSolicitudes.value.length) modalSolicitudes.value = false;
 }
@@ -610,7 +640,7 @@ async function resolverSolicitud(fila: FilaSolicitud) {
         <TituloConAyuda
           eyebrow="Gobierno institucional"
           titulo="Usuarios"
-          ayuda="Las personas crean su cuenta en Tukuy. Aquí apruebas solicitudes de ingreso y vinculas a un nodo de la estructura por DNI o correo."
+          ayuda="Aprueba solicitudes de ingreso y asigna personas a nodos de la estructura."
         />
       </div>
       <div class="flex flex-wrap gap-2">
@@ -691,14 +721,72 @@ async function resolverSolicitud(fila: FilaSolicitud) {
     <section class="overflow-hidden border border-border bg-card">
       <div class="flex flex-wrap items-center justify-between gap-3 border-b border-border p-5">
         <div>
-          <h2 class="font-black">Personas y nodos</h2>
+          <h2 class="font-black">Directorio de personas</h2>
           <p class="text-xs text-muted-foreground">
-            Lista completa de personas inscritas en la entidad. Filtra por asignación o rama y asigna nodos desde la tabla.
+            Busca por nombre o correo y asigna nodos. Los filtros por rama son opcionales.
           </p>
         </div>
       </div>
       <div class="border-b border-border bg-muted/20 p-4">
-        <div class="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(min(100%,14rem),1fr))]">
+        <div class="grid gap-3 sm:grid-cols-2">
+          <label class="grid min-w-0 gap-1.5">
+            <span class="text-[10px] font-black uppercase tracking-[.14em] text-muted-foreground">
+              Buscar
+            </span>
+            <div class="relative">
+              <Search class="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <InputText
+                v-model="buscarPersonaVinculacion"
+                class="filtro-control w-full pl-10"
+                placeholder="Nombre, correo o DNI"
+              />
+            </div>
+          </label>
+          <label class="grid min-w-0 gap-1.5">
+            <span class="text-[10px] font-black uppercase tracking-[.14em] text-muted-foreground">
+              Asignación
+            </span>
+            <Select
+              v-model="filtroEstadoAsignacion"
+              :options="opcionesEstadoAsignacion"
+              option-label="label"
+              option-value="value"
+              class="filtro-control w-full min-w-0"
+            />
+          </label>
+        </div>
+        <div class="mt-3 flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            @click="mostrarFiltrosAvanzados = !mostrarFiltrosAvanzados"
+          >
+            {{ mostrarFiltrosAvanzados ? "Ocultar filtros por rama" : "Filtrar por rama" }}
+          </Button>
+          <p class="text-xs text-muted-foreground">
+            {{ resumenFiltroVinculaciones.total }} personas
+            <template v-if="resumenFiltroVinculaciones.sinAsignar">
+              · {{ resumenFiltroVinculaciones.sinAsignar }} sin nodo
+            </template>
+          </p>
+          <Button
+            v-if="
+              filtroEstadoAsignacion !== 'TODOS' ||
+              buscarPersonaVinculacion ||
+              filtrosNodosVinculaciones.some(Boolean)
+            "
+            size="sm"
+            variant="ghost"
+            class="ml-auto"
+            @click="limpiarFiltrosVinculaciones"
+          >
+            Limpiar
+          </Button>
+        </div>
+        <div
+          v-if="mostrarFiltrosAvanzados"
+          class="mt-3 grid gap-3 border-t border-border pt-3 [grid-template-columns:repeat(auto-fit,minmax(min(100%,14rem),1fr))]"
+        >
           <label v-if="estructurasConfigurables.length > 1" class="grid min-w-0 gap-1.5">
             <span class="text-[10px] font-black uppercase tracking-[.14em] text-muted-foreground">
               Estructura
@@ -711,45 +799,20 @@ async function resolverSolicitud(fila: FilaSolicitud) {
               class="filtro-control w-full min-w-0"
             />
           </label>
-          <label class="grid min-w-0 gap-1.5">
-            <span class="text-[10px] font-black uppercase tracking-[.14em] text-muted-foreground">
-              Estado de asignación
-            </span>
-            <Select
-              v-model="filtroEstadoAsignacion"
-              :options="opcionesEstadoAsignacion"
-              option-label="label"
-              option-value="value"
-              class="filtro-control w-full min-w-0"
-            />
-          </label>
-          <label class="grid min-w-0 gap-1.5">
-            <span class="text-[10px] font-black uppercase tracking-[.14em] text-muted-foreground">
-              Buscar persona
-            </span>
-            <div class="relative">
-              <Search class="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <InputText
-                v-model="buscarPersonaVinculacion"
-                class="filtro-control w-full pl-10"
-                placeholder="Nombre, correo, DNI o iniciales"
-              />
-            </div>
-          </label>
           <label
             v-for="(filtro, indice) in filtrosJerarquicosVinculaciones"
             :key="filtro.nivelId"
             class="grid min-w-0 gap-1.5"
           >
             <span class="truncate text-[10px] font-black uppercase tracking-[.14em] text-muted-foreground">
-              Nivel {{ filtro.orden }} · {{ filtro.nombre }}
+              {{ filtro.nombre }}
             </span>
             <Select
               v-model="filtrosNodosVinculaciones[indice]"
               :options="filtro.opciones"
               option-label="nombre"
               option-value="id"
-              :placeholder="`Todos los nodos de ${filtro.nombre}`"
+              :placeholder="`Todos en ${filtro.nombre}`"
               :disabled="filtroEstadoAsignacion === 'SIN_ASIGNAR'"
               show-clear
               class="filtro-control w-full min-w-0"
@@ -757,74 +820,58 @@ async function resolverSolicitud(fila: FilaSolicitud) {
             />
           </label>
         </div>
-        <div class="mt-3 flex flex-wrap items-center justify-between gap-2">
-          <p class="text-xs text-muted-foreground">
-            {{ resumenFiltroVinculaciones.total }} personas ·
-            {{ resumenFiltroVinculaciones.sinAsignar }} sin asignar ·
-            {{ resumenFiltroVinculaciones.asignadas }} asignadas ·
-            {{ resumenFiltroVinculaciones.pendientes }} pendientes
-          </p>
-          <Button
-            v-if="
-              filtroEstadoAsignacion !== 'TODOS' ||
-              buscarPersonaVinculacion ||
-              filtrosNodosVinculaciones.some(Boolean)
-            "
-            size="sm"
-            variant="outline"
-            @click="limpiarFiltrosVinculaciones"
-          >
-            Limpiar filtros
-          </Button>
-        </div>
       </div>
       <DataTable
         :value="filasPersonasVinculacion"
         data-key="id"
         size="small"
-        :paginator="filasPersonasVinculacion.length > 8"
-        :rows="8"
-        table-style="min-width: 72rem"
+        :paginator="filasPersonasVinculacion.length > 10"
+        :rows="10"
+        table-style="min-width: 48rem"
       >
         <template #empty>
           <div class="py-10 text-center text-sm text-muted-foreground">
             No hay personas con los filtros actuales.
           </div>
         </template>
-        <Column header="Persona" style="min-width: 18rem">
+        <Column header="Persona" style="min-width: 16rem">
           <template #body="{ data }">
             <div class="flex items-center gap-3">
               <span class="grid h-9 w-9 shrink-0 place-items-center bg-primary/10 text-xs font-black text-primary">
                 {{ data.usuario.iniciales }}
               </span>
               <div>
-                <b>{{ data.usuario.nombre }}</b>
+                <div class="flex flex-wrap items-center gap-2">
+                  <b>{{ data.usuario.nombre }}</b>
+                  <Tag
+                    v-if="data.usuario.estado !== 'ACTIVO'"
+                    :value="data.usuario.estado"
+                    :severity="data.usuario.estado === 'INVITADO' ? 'info' : 'secondary'"
+                    class="text-[10px]"
+                  />
+                </div>
                 <p class="text-xs text-muted-foreground">{{ data.usuario.correo }}</p>
+                <p
+                  v-if="data.usuario.dni || requiereDniEnrolamiento"
+                  class="text-[11px]"
+                  :class="
+                    requiereDniEnrolamiento && !data.usuario.dni
+                      ? 'font-semibold text-amber-700'
+                      : 'text-muted-foreground'
+                  "
+                >
+                  DNI {{ data.usuario.dni || "pendiente" }}
+                </p>
               </div>
             </div>
           </template>
         </Column>
-        <Column header="DNI" style="min-width: 9rem">
+        <Column header="Nodo" style="min-width: 14rem">
           <template #body="{ data }">
-            <span
-              class="font-mono text-sm font-semibold"
-              :class="
-                requiereDniEnrolamiento && !data.usuario.dni
-                  ? 'text-amber-700'
-                  : 'text-foreground'
-              "
-            >
-              {{ data.usuario.dni || "—" }}
-            </span>
-            <p
-              v-if="requiereDniEnrolamiento && !data.usuario.dni"
-              class="text-[10px] font-bold uppercase tracking-wide text-amber-700"
-            >
-              Requerido
-            </p>
+            <b class="block text-sm">{{ data.nodosResumen }}</b>
           </template>
         </Column>
-        <Column header="Asignación" style="min-width: 9rem">
+        <Column header="Estado" style="min-width: 8rem">
           <template #body="{ data }">
             <Tag
               :value="etiquetaEstadoAsignacion(data.estadoAsignacion)"
@@ -832,30 +879,7 @@ async function resolverSolicitud(fila: FilaSolicitud) {
             />
           </template>
         </Column>
-        <Column header="Nodo / vínculos" style="min-width: 20rem">
-          <template #body="{ data }">
-            <b class="block text-sm">{{ data.nodosResumen }}</b>
-            <p class="text-xs text-muted-foreground">
-              {{ data.totalVinculos }}
-              {{ data.totalVinculos === 1 ? "vínculo registrado" : "vínculos registrados" }}
-            </p>
-          </template>
-        </Column>
-        <Column header="Estado persona" style="min-width: 8rem">
-          <template #body="{ data }">
-            <Tag
-              :value="data.usuario.estado"
-              :severity="
-                data.usuario.estado === 'ACTIVO'
-                  ? 'success'
-                  : data.usuario.estado === 'INVITADO'
-                    ? 'info'
-                    : 'secondary'
-              "
-            />
-          </template>
-        </Column>
-        <Column header="Acción" style="min-width: 14rem">
+        <Column header="" style="min-width: 11rem">
           <template #body="{ data }">
             <div class="flex flex-wrap gap-2">
               <Button

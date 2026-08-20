@@ -7,11 +7,223 @@ import {
 
 const INSTALACION_TUKUY = "30000000-0000-4000-8000-000000000001";
 
+const CANTIDAD_FIRMAS_CERT_MAX = 5;
+
+/** Minutos reales del curso tipado (suma de actividades); fallback a horas de versión. */
+function duracionMinutosDesdeCursoSec(
+  cursoSec: Record<string, unknown> | null | undefined,
+): number {
+  const total = Number(cursoSec?.duracionMinutosTotal ?? 0);
+  if (Number.isFinite(total) && total > 0) return Math.round(total);
+  const versionActual =
+    (cursoSec?.versionActual as Record<string, unknown> | null) ?? null;
+  const horas = Number(versionActual?.horas ?? 0);
+  if (Number.isFinite(horas) && horas > 0) {
+    return Math.max(1, Math.round(horas * 60));
+  }
+  return 1;
+}
+
+async function sincronizarCatalogoRetirado(entrada: {
+  principal: SupabaseClient;
+  secundaria: SupabaseClient;
+  instalacionId: string;
+  cursoId: string;
+  cursoSec?: Record<string, unknown> | null;
+  permanente?: boolean;
+  esSuperAdmin?: boolean;
+}) {
+  const {
+    principal,
+    secundaria,
+    instalacionId,
+    cursoId,
+    permanente = false,
+    esSuperAdmin = false,
+  } = entrada;
+
+  if (permanente) {
+    const borrado = await principal.rpc(
+      "org_eliminar_curso_catalogo_permanente",
+      {
+        p_instalacion_id: instalacionId,
+        p_curso_secundario_ref: cursoId,
+      },
+    );
+    if (borrado.error) {
+      console.warn(
+        "org_eliminar_curso_catalogo_permanente:",
+        borrado.error.message,
+      );
+    }
+    return;
+  }
+
+  let curso = entrada.cursoSec ?? null;
+  if (!curso) {
+    const detalle = await secundaria.rpc("servicio_obtener_curso_tipado", {
+      p_curso_id: cursoId,
+    });
+    if (detalle.data?.ok && detalle.data?.curso) {
+      curso = detalle.data.curso as Record<string, unknown>;
+    }
+  }
+
+  const oculto = await principal.rpc("org_ocultar_curso_catalogo", {
+    p_instalacion_id: instalacionId,
+    p_curso_secundario_ref: cursoId,
+    p_datos_historicos: {
+      origen: "ocultar_curso",
+      titulo: curso?.titulo ?? null,
+      ocultoEn: new Date().toISOString(),
+    },
+  });
+  if (oculto.error) {
+    console.warn("sincronizarCatalogoRetirado:", oculto.error.message);
+  }
+}
+
+/** Docente → 1 firma; Administración → 1..5 + plantillaCertificadoId. */
+function normalizarCertificadoDocumentoGateway(
+  documento: Record<string, unknown>,
+): Record<string, unknown> {
+  const origen = String(documento.origenCarga ?? "DOCENTE")
+    .trim()
+    .toUpperCase();
+  const esAdmin = origen === "ADMINISTRACION";
+  const certificadoActivo = documento.certificado !== false;
+  const plantillaCertificadoId = String(
+    documento.plantillaCertificadoId ?? "",
+  ).trim();
+
+  const firmasRaw = Array.isArray(documento.firmasCertificado)
+    ? (documento.firmasCertificado as Record<string, unknown>[])
+    : [];
+
+  const firmas = firmasRaw
+    .map((f) => ({
+      id: String(f.id ?? "").trim() || crypto.randomUUID(),
+      personaId: f.personaId ? String(f.personaId) : undefined,
+      nombre: String(f.nombre ?? "").trim(),
+      cargo: String(f.cargo ?? "").trim(),
+      tipo:
+        String(f.tipo ?? "DIGITAL").toUpperCase() === "ELECTRONICA"
+          ? "ELECTRONICA"
+          : "DIGITAL",
+      imagen: f.imagen ? String(f.imagen) : undefined,
+      origen:
+        String(f.origen ?? "").toUpperCase() === "PROPIA"
+          ? "PROPIA"
+          : "INSTITUCIONAL",
+    }))
+    .filter((f) => f.nombre);
+
+  if (!certificadoActivo) {
+    return {
+      ...documento,
+      plantillaCertificadoId,
+      cantidadFirmas: 1,
+      firmasCertificado: [],
+    };
+  }
+
+  if (!esAdmin) {
+    const propia = firmas.find((f) => f.origen === "PROPIA");
+    return {
+      ...documento,
+      plantillaCertificadoId,
+      cantidadFirmas: 1,
+      firmasCertificado: propia
+        ? [propia]
+        : firmas.slice(0, 1).map((f) => ({ ...f, origen: "PROPIA" })),
+    };
+  }
+
+  const nRaw = Number(documento.cantidadFirmas);
+  const cantidadFirmas = Number.isFinite(nRaw)
+    ? Math.min(CANTIDAD_FIRMAS_CERT_MAX, Math.max(1, Math.round(nRaw)))
+    : 1;
+
+  return {
+    ...documento,
+    plantillaCertificadoId,
+    cantidadFirmas,
+    firmasCertificado: firmas.slice(0, cantidadFirmas),
+  };
+}
+
 const json = (body: unknown, status = 200, headers: HeadersInit = {}) =>
   new Response(JSON.stringify(body), {
     status,
     headers: { "content-type": "application/json", ...headers },
   });
+
+function idVideoYoutubeDesdeEnlace(entrada: string): string | null {
+  const raw = String(entrada ?? "").trim();
+  if (!raw) return null;
+  if (/^[\w-]{11}$/.test(raw)) return raw;
+  try {
+    const url = new URL(raw);
+    const host = url.hostname.replace(/^www\./, "").toLowerCase();
+    if (host === "youtu.be") {
+      const id = url.pathname.split("/").filter(Boolean)[0] ?? "";
+      return /^[\w-]{11}$/.test(id) ? id : null;
+    }
+    if (
+      host === "youtube.com" ||
+      host === "m.youtube.com" ||
+      host === "music.youtube.com"
+    ) {
+      const v = url.searchParams.get("v");
+      if (v && /^[\w-]{11}$/.test(v)) return v;
+      const partes = url.pathname.split("/").filter(Boolean);
+      if (
+        (partes[0] === "embed" ||
+          partes[0] === "shorts" ||
+          partes[0] === "live" ||
+          partes[0] === "v") &&
+        partes[1] &&
+        /^[\w-]{11}$/.test(partes[1])
+      ) {
+        return partes[1];
+      }
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function segundosDesdeIso8601Youtube(iso: string): number | null {
+  const valor = String(iso ?? "").trim();
+  if (!valor.startsWith("PT")) return null;
+  const horas = valor.match(/(\d+)H/i)?.[1];
+  const minutos = valor.match(/(\d+)M/i)?.[1];
+  const segundos = valor.match(/(\d+)S/i)?.[1];
+  const total =
+    (horas ? Number(horas) * 3600 : 0) +
+    (minutos ? Number(minutos) * 60 : 0) +
+    (segundos ? Number(segundos) : 0);
+  return total > 0 ? total : null;
+}
+
+async function consultarDuracionYoutubeApi(
+  videoId: string,
+): Promise<number | null> {
+  const apiKey = Deno.env.get("YOUTUBE_API_KEY")?.trim();
+  if (!apiKey) return null;
+  const endpoint = new URL("https://www.googleapis.com/youtube/v3/videos");
+  endpoint.searchParams.set("id", videoId);
+  endpoint.searchParams.set("part", "contentDetails");
+  endpoint.searchParams.set("key", apiKey);
+  const respuesta = await fetch(endpoint.toString());
+  if (!respuesta.ok) return null;
+  const cuerpo = (await respuesta.json()) as {
+    items?: Array<{ contentDetails?: { duration?: string } }>;
+  };
+  const iso = cuerpo.items?.[0]?.contentDetails?.duration;
+  return iso ? segundosDesdeIso8601Youtube(iso) : null;
+}
 
 function cors(req: Request) {
   const origin = req.headers.get("origin") ?? "";
@@ -481,6 +693,47 @@ Deno.serve(async (req) => {
       );
     }
 
+    if (entrada.action === "youtube-duracion") {
+      const urlEntrada =
+        typeof entrada.url === "string" ? entrada.url.trim() : "";
+      const videoIdEntrada =
+        typeof entrada.videoId === "string" ? entrada.videoId.trim() : "";
+      const videoId =
+        (videoIdEntrada && /^[\w-]{11}$/.test(videoIdEntrada)
+          ? videoIdEntrada
+          : null) ?? idVideoYoutubeDesdeEnlace(urlEntrada);
+      if (!videoId) {
+        return json(
+          { ok: false, error: "Enlace o videoId de YouTube no válido" },
+          400,
+          corsHeaders,
+        );
+      }
+      const segundos = await consultarDuracionYoutubeApi(videoId);
+      if (segundos == null) {
+        return json(
+          {
+            ok: false,
+            code: "SIN_DURACION",
+            error:
+              "No se pudo leer la duración. Configura el secreto YOUTUBE_API_KEY en el gateway (YouTube Data API v3).",
+          },
+          200,
+          corsHeaders,
+        );
+      }
+      return json(
+        {
+          ok: true,
+          videoId,
+          segundos,
+          minutos: Math.max(1, Math.ceil(segundos / 60)),
+        },
+        200,
+        corsHeaders,
+      );
+    }
+
     if (entrada.action === "probe-google-calendar") {
       const configurado = googleCalendarConfigurado();
       if (!configurado) {
@@ -544,7 +797,8 @@ Deno.serve(async (req) => {
 
     if (entrada.action === "list-cursos" || entrada.action === "get-curso" ||
       entrada.action === "get-borrador" || entrada.action === "guardar-curso" ||
-      entrada.action === "eliminar-curso") {
+      entrada.action === "eliminar-curso" ||
+      entrada.action === "eliminar-curso-permanente") {
       const { data: esAdmin, error: errorAdmin } = await principal.rpc(
         "es_super_admin_actual",
       );
@@ -659,10 +913,12 @@ Deno.serve(async (req) => {
           !cursoIdRaw.startsWith("curso-institucional-")
             ? cursoIdRaw
             : null;
-        const borrador =
+        const borradorCrudo =
           entrada.borrador && typeof entrada.borrador === "object"
-            ? entrada.borrador
+            ? (entrada.borrador as Record<string, unknown>)
             : {};
+        // Reglas de certificado en gateway (docente=1 firma; admin=1..5 + plantillaId).
+        const borrador = normalizarCertificadoDocumentoGateway(borradorCrudo);
         const estado =
           typeof entrada.estado === "string" && entrada.estado.trim()
             ? entrada.estado.trim()
@@ -736,7 +992,7 @@ Deno.serve(async (req) => {
                 ? cursoGuardado.resumen
                 : null,
             p_modalidad: String(cursoGuardado.modalidad ?? "VIRTUAL"),
-            p_duracion_minutos: Math.max(1, Math.round(horas * 60)),
+            p_duracion_minutos: duracionMinutosDesdeCursoSec(cursoGuardado),
             p_imagen_publica_ref:
               typeof cursoGuardado.portadaClave === "string"
                 ? cursoGuardado.portadaClave
@@ -837,6 +1093,69 @@ Deno.serve(async (req) => {
             corsHeaders,
           );
         }
+        await sincronizarCatalogoRetirado({
+          principal,
+          secundaria,
+          instalacionId,
+          cursoId,
+          cursoSec: (eliminado.data?.curso as Record<string, unknown>) ?? null,
+          esSuperAdmin: esAdmin === true,
+        });
+        return json({ ok: true, ...eliminado.data }, 200, corsHeaders);
+      }
+
+      if (entrada.action === "eliminar-curso-permanente") {
+        const cursoId =
+          typeof entrada.cursoId === "string" ? entrada.cursoId.trim() : "";
+        if (!cursoId) {
+          return json({ error: "cursoId requerido" }, 400, corsHeaders);
+        }
+        if (esAdmin !== true) {
+          const { data: puede } = await principal.rpc("org_tiene_permiso", {
+            p_instalacion_id: instalacionId,
+            p_permiso: "cursos.aprobar",
+          });
+          if (puede !== true) {
+            const { data: puedeAdmin } = await principal.rpc(
+              "org_tiene_permiso",
+              {
+                p_instalacion_id: instalacionId,
+                p_permiso: "cursos.administrar",
+              },
+            );
+            if (puedeAdmin !== true) {
+              return json(
+                { error: "Solo Administración puede eliminar el material." },
+                403,
+                corsHeaders,
+              );
+            }
+          }
+        }
+        const eliminado = await secundaria.rpc(
+          "servicio_eliminar_curso_permanente",
+          { p_curso_id: cursoId },
+        );
+        if (eliminado.error) {
+          return json(
+            {
+              ok: false,
+              error:
+                "No se pudo eliminar el curso. Ejecuta 20260820160000_duracion_ocultar_eliminar_curso.sql en la secundaria.",
+              details: eliminado.error.message,
+            },
+            200,
+            corsHeaders,
+          );
+        }
+        await sincronizarCatalogoRetirado({
+          principal,
+          secundaria,
+          instalacionId,
+          cursoId,
+          permanente: true,
+          esSuperAdmin: esAdmin === true,
+        });
         return json({ ok: true, ...eliminado.data }, 200, corsHeaders);
       }
 
@@ -938,8 +1257,7 @@ Deno.serve(async (req) => {
 
       const versionActual =
         (cursoSec.versionActual as Record<string, unknown> | null) ?? null;
-      const horas = Number(versionActual?.horas ?? 1);
-      const duracionMinutos = Math.max(1, Math.round(horas * 60));
+      const duracionMinutos = duracionMinutosDesdeCursoSec(cursoSec);
       const versionNumero = Number(
         versionActual?.numero ?? cursoSec.totalVersiones ?? 1,
       );
@@ -1590,12 +1908,19 @@ Deno.serve(async (req) => {
           },
         );
         if (listado.error) {
+          const mensaje = listado.error.message ?? "";
+          const faltaFuncion =
+            mensaje.includes("Could not find the function") ||
+            listado.error.code === "PGRST202";
           return json(
             {
               ok: false,
-              error:
-                "Falta ejecutar en la secundaria 20260810200000_listar_alumnos_resumen_paginado.sql",
-              details: listado.error.message,
+              error: faltaFuncion
+                ? "Falta ejecutar en la secundaria 20260818160000_fix_listar_alumnos_resumen_cte.sql"
+                : mensaje.includes("filtrado")
+                  ? "Falta ejecutar en la secundaria 20260818160000_fix_listar_alumnos_resumen_cte.sql"
+                  : mensaje,
+              details: mensaje,
             },
             200,
             corsHeaders,
@@ -1631,6 +1956,20 @@ Deno.serve(async (req) => {
             200,
             corsHeaders,
           );
+        }
+        if (estado.toUpperCase() === "ARCHIVADO") {
+          const { data: esAdminEstado } = await principal.rpc(
+            "es_super_admin_actual",
+          );
+          await sincronizarCatalogoRetirado({
+            principal,
+            secundaria,
+            instalacionId,
+            cursoId,
+            cursoSec:
+              (actualizado.data?.curso as Record<string, unknown>) ?? null,
+            esSuperAdmin: esAdminEstado === true,
+          });
         }
         return json({ ok: true, ...actualizado.data }, 200, corsHeaders);
       }
@@ -2906,7 +3245,7 @@ Deno.serve(async (req) => {
         p_titulo: String(cursoSec.titulo ?? "Curso sin título"),
         p_resumen: typeof cursoSec.resumen === "string" ? cursoSec.resumen : null,
         p_modalidad: String(cursoSec.modalidad ?? "VIRTUAL"),
-        p_duracion_minutos: Math.max(1, Math.round(horas * 60)),
+        p_duracion_minutos: duracionMinutosDesdeCursoSec(cursoSec),
         p_imagen_publica_ref:
           typeof cursoSec.portadaClave === "string"
             ? cursoSec.portadaClave

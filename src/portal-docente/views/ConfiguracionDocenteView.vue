@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Bell, Plus, Save, ShieldCheck, Trash2, UserRound } from "lucide-vue-next";
+import { Plus, Save, Trash2, UserRound } from "lucide-vue-next";
 import { computed, onMounted, reactive, ref } from "vue";
 import {
   docenteService,
@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import Skeleton from "primevue/skeleton";
 import { inicialesNombre, urlFotoPerfilReal } from "@/lib/foto-perfil";
 import { toast } from "@/lib/toast";
+import { actualizarPerfilSesion } from "@/composables/useAuth";
 
 const cargando = ref(true);
 const guardando = ref(false);
@@ -23,10 +24,6 @@ const configuracion = reactive<ConfiguracionDocente>({
   biografia: "",
   experiencia: [""],
   fotoUrl: undefined,
-  avisos: true,
-  autenticacionDosPasos: false,
-  alertasInicioSesion: true,
-  zonaHoraria: "America/Lima",
 });
 
 const fotoVisible = computed(() => urlFotoPerfilReal(configuracion.fotoUrl));
@@ -84,6 +81,7 @@ async function guardar() {
     });
     Object.assign(configuracion, guardada);
     if (!configuracion.experiencia.length) configuracion.experiencia = [""];
+    actualizarPerfilSesion({ name: guardada.nombre });
     toast.success("Perfil docente guardado.");
   } catch (causa) {
     toast.error(
@@ -146,8 +144,8 @@ async function guardar() {
             </div>
             <div class="grid min-w-0 flex-1 gap-4 sm:grid-cols-2">
               <label class="grid gap-2 text-sm font-bold"
-                >Nombre
-                <Input v-model="configuracion.nombre" placeholder="Tu nombre" />
+                >Nombre completo
+                <Input v-model="configuracion.nombre" placeholder="Nombres y apellidos" />
               </label>
               <label class="grid gap-2 text-sm font-bold"
                 >Cargo
@@ -200,100 +198,6 @@ async function guardar() {
                 <Trash2 class="h-4 w-4 text-red-600" />
               </Button>
             </div>
-          </div>
-        </CardContent>
-      </Card>
-      <Card
-        class="overflow-hidden border border-border border-t-4 border-t-accent bg-card"
-      >
-        <CardContent class="flex items-center gap-4 p-6">
-          <Bell class="h-6 w-6 text-accent" />
-          <div class="flex-1">
-            <h2 class="font-black">Notificaciones académicas</h2>
-            <p class="text-xs text-muted-foreground">
-              Recibir alertas de entregas, mensajes y sesiones.
-            </p>
-          </div>
-          <button
-            class="h-6 w-11 rounded-full p-1 transition"
-            :class="
-              configuracion.avisos ? 'bg-primary' : 'bg-muted-foreground/40'
-            "
-            type="button"
-            @click="configuracion.avisos = !configuracion.avisos"
-          >
-            <span
-              class="block h-4 w-4 rounded-full bg-white transition"
-              :class="configuracion.avisos ? 'translate-x-5' : ''"
-            />
-          </button>
-        </CardContent>
-      </Card>
-      <Card class="border-border bg-card">
-        <CardContent class="flex gap-4 p-6">
-          <ShieldCheck class="h-6 w-6 text-emerald-600 dark:text-emerald-400" />
-          <div>
-            <h2 class="font-black">Seguridad</h2>
-            <p class="mt-1 text-sm text-muted-foreground">
-              Tu cuenta utiliza autenticación y permisos asociados a Academia
-              Tukuy.
-            </p>
-            <div class="mt-4 grid gap-3 sm:grid-cols-2">
-              <label
-                class="flex items-center justify-between gap-3 border border-border bg-muted/40 p-3 text-sm"
-              >
-                <span class="font-bold">Autenticación en dos pasos</span>
-                <button
-                  type="button"
-                  class="h-6 w-11 rounded-full p-1 transition"
-                  :class="
-                    configuracion.autenticacionDosPasos
-                      ? 'bg-primary'
-                      : 'bg-muted-foreground/40'
-                  "
-                  @click="
-                    configuracion.autenticacionDosPasos =
-                      !configuracion.autenticacionDosPasos
-                  "
-                >
-                  <span
-                    class="block h-4 w-4 rounded-full bg-white transition"
-                    :class="
-                      configuracion.autenticacionDosPasos ? 'translate-x-5' : ''
-                    "
-                  />
-                </button>
-              </label>
-              <label
-                class="flex items-center justify-between gap-3 border border-border bg-muted/40 p-3 text-sm"
-              >
-                <span class="font-bold">Alertas de inicio de sesión</span>
-                <button
-                  type="button"
-                  class="h-6 w-11 rounded-full p-1 transition"
-                  :class="
-                    configuracion.alertasInicioSesion
-                      ? 'bg-primary'
-                      : 'bg-muted-foreground/40'
-                  "
-                  @click="
-                    configuracion.alertasInicioSesion =
-                      !configuracion.alertasInicioSesion
-                  "
-                >
-                  <span
-                    class="block h-4 w-4 rounded-full bg-white transition"
-                    :class="
-                      configuracion.alertasInicioSesion ? 'translate-x-5' : ''
-                    "
-                  />
-                </button>
-              </label>
-            </div>
-            <label class="mt-3 grid gap-2 text-sm font-bold">
-              Zona horaria
-              <Input v-model="configuracion.zonaHoraria" />
-            </label>
           </div>
         </CardContent>
       </Card>

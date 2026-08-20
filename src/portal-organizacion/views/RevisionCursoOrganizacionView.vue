@@ -24,6 +24,7 @@ import {
   organizacionService,
   type PropuestaCursoOrganizacion,
 } from "@/api/services/organizacion.service";
+import ImagenPortadaCurso from "@/components/shared/ImagenPortadaCurso.vue";
 import { apiConfig } from "@/api/config";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -31,16 +32,13 @@ import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import IconoAyuda from "@/components/shared/IconoAyuda.vue";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { obtenerRevisionCursoMock } from "@/portal-organizacion/data/revision-cursos.mock";
+import {
+  cargarRevisionAcademicaDesdeSecundaria,
+} from "@/lib/mapear-revision-curso";
 import type {
   ActividadRevisionCurso,
   RevisionAcademicaCurso,
 } from "@/portal-organizacion/types/revision-curso.types";
-import {
-  etiquetasRequisitos,
-  normalizarRequisitos,
-} from "@/lib/requisitos-curso";
-import { mapearSeccionesAModulosRevision } from "@/lib/mapear-revision-curso";
 import { toast } from "@/lib/toast";
 import { etiquetaFuenteVideo } from "@/lib/video-curso";
 
@@ -104,66 +102,15 @@ async function cargarRevisionAcademica(
   propuestaActual: PropuestaCursoOrganizacion,
 ): Promise<RevisionAcademicaCurso> {
   if (!apiConfig.secundariaCursos) {
-    return obtenerRevisionCursoMock(
-      propuestaActual.id,
-      propuestaActual.cursoDocenteId,
-      propuestaActual.titulo,
+    throw new Error(
+      "Activa VITE_SECUNDARIA_CURSOS=true y aplica las migraciones de revisión en PRINCIPAL y secundaria.",
     );
   }
-
-  try {
-    const { secundariaGatewayService } = await import(
-      "@/api/services/secundaria-gateway.service"
-    );
-    const detalle = await secundariaGatewayService.obtenerBorrador(
-      propuestaActual.cursoDocenteId,
-    );
-    const borrador = (detalle.borrador ?? {}) as Record<string, unknown>;
-    const curso = (detalle.curso ?? {}) as Record<string, unknown>;
-    const secciones = Array.isArray(borrador.secciones)
-      ? (borrador.secciones as Array<Record<string, unknown>>)
-      : [];
-    const objetivos = Array.isArray(borrador.objetivos)
-      ? borrador.objetivos.map(String)
-      : String(borrador.descripcion ?? curso.resumen ?? "")
-        ? [String(borrador.descripcion ?? curso.resumen)]
-        : [];
-    const requisitos = etiquetasRequisitos(
-      normalizarRequisitos(borrador.requisitos),
-    );
-
-    return {
-      cursoId: propuestaActual.cursoDocenteId,
-      version: Number(curso.totalVersiones ?? 1),
-      descripcion: String(
-        borrador.descripcion ?? curso.resumen ?? propuestaActual.titulo,
-      ),
-      objetivos: objetivos.length
-        ? objetivos
-        : [`Revisar el contenido de ${propuestaActual.titulo}.`],
-      requisitos: requisitos.length
-        ? requisitos
-        : ["Sin requisitos enlazados"],
-      modulos: mapearSeccionesAModulosRevision(
-        secciones,
-        propuestaActual.cursoDocenteId,
-      ),
-      horasCertificables: Number(
-        borrador.horas ??
-          ((curso.versionActual as Record<string, unknown> | undefined)?.horas ??
-            1),
-      ),
-      notaMinimaPropuesta: Number(borrador.notaMinima ?? 11),
-      certificadoPropuesto: Boolean(borrador.certificado ?? true),
-      enviadaEn: String(curso.actualizadoEn ?? new Date().toISOString()),
-    };
-  } catch {
-    return obtenerRevisionCursoMock(
-      propuestaActual.id,
-      propuestaActual.cursoDocenteId,
-      propuestaActual.titulo,
-    );
-  }
+  return cargarRevisionAcademicaDesdeSecundaria(
+    propuestaActual.cursoDocenteId,
+    propuestaActual.titulo,
+    propuestaActual.enviado,
+  );
 }
 
 onMounted(async () => {
@@ -346,10 +293,10 @@ async function confirmarObservacion() {
       <article
         class="grid gap-5 border border-border bg-card p-4 sm:p-5 lg:grid-cols-[minmax(12rem,14rem)_minmax(0,1fr)]"
       >
-        <img
+        <ImagenPortadaCurso
           :src="propuesta.imagen"
           :alt="propuesta.titulo"
-          class="aspect-video h-auto w-full object-cover lg:aspect-auto lg:h-full lg:min-h-40"
+          contenedor-class="aspect-video h-auto w-full lg:aspect-auto lg:h-full lg:min-h-40"
         />
         <div class="grid min-w-0 gap-3">
           <div>

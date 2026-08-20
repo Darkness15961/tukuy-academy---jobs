@@ -46,6 +46,7 @@ import {
   leerProgresoVideoSegundos,
   limpiarProgresoVideo,
 } from "@/lib/youtube";
+import { formatearDuracionVideo } from "@/lib/youtube-duracion";
 import {
   descripcionVisibleAlumno,
   etiquetaFuenteVideo,
@@ -66,6 +67,7 @@ import { asegurarCursosCargados } from "@/composables/useCursos";
 import { apiConfig } from "@/api/config";
 import { secundariaGatewayService } from "@/api/services/secundaria-gateway.service";
 import { mapearContenidoAprendizajeSecundaria } from "@/api/services/mapper-curso-secundaria";
+import { inicialesNombre, urlFotoPerfilReal } from "@/lib/foto-perfil";
 import { urlPublicaMedia } from "@/lib/storage-academia";
 
 const route = useRoute();
@@ -127,6 +129,14 @@ const descripcionClase = computed(() =>
   }),
 );
 
+const duracionClaseVisible = computed(() => {
+  if (duracionVideoYoutubeSegundos.value > 0) {
+    return formatearDuracionVideo(duracionVideoYoutubeSegundos.value);
+  }
+  if (activeItem.value.duration?.trim()) return activeItem.value.duration.trim();
+  return course.value?.duration ?? "";
+});
+
 const videoActivo = computed(() => {
   if (activeItem.value.type !== "video") return null;
   const start = leerProgresoVideoSegundos(courseId.value, activeItem.value.id);
@@ -144,9 +154,12 @@ const urlAperturaVideoActiva = computed(() =>
 );
 
 const iframeYoutube = ref<HTMLIFrameElement | null>(null);
+const duracionVideoYoutubeSegundos = ref(0);
 let timerProgresoVideo: ReturnType<typeof setInterval> | null = null;
+let timerDuracionVideo: ReturnType<typeof setInterval> | null = null;
 let ytPlayer: {
   getCurrentTime?: () => number;
+  getDuration?: () => number;
   destroy?: () => void;
 } | null = null;
 
@@ -158,10 +171,23 @@ declare global {
         opts: Record<string, unknown>,
       ) => {
         getCurrentTime: () => number;
+        getDuration: () => number;
         destroy: () => void;
       };
     };
     onYouTubeIframeAPIReady?: () => void;
+  }
+}
+
+function aplicarDuracionSegundosAItem(itemId: string, segundos: number) {
+  const seguro = Math.round(segundos);
+  if (!Number.isFinite(seguro) || seguro <= 0) return;
+  duracionVideoYoutubeSegundos.value = seguro;
+  const etiqueta = formatearDuracionVideo(seguro);
+  if (!etiqueta || !contenido.value) return;
+  for (const modulo of contenido.value.modulos) {
+    const item = modulo.items.find((fila) => fila.id === itemId);
+    if (item) item.duration = etiqueta;
   }
 }
 
@@ -184,15 +210,66 @@ function cargarApiYoutube(): Promise<void> {
   });
 }
 
+function capturarDuracionDesdePlayer(
+  target?: { getDuration?: () => number },
+  itemId?: string,
+) {
+  const duracion = target?.getDuration?.() ?? ytPlayer?.getDuration?.();
+  if (typeof duracion === "number" && Number.isFinite(duracion) && duracion > 1) {
+    aplicarDuracionSegundosAItem(itemId ?? activeItem.value.id, duracion);
+    if (timerDuracionVideo) {
+      clearInterval(timerDuracionVideo);
+      timerDuracionVideo = null;
+    }
+  }
+}
+
+async function resolverDuracionDesdeGateway(itemId: string, videoUrl?: string) {
+  const url = String(videoUrl ?? "").trim();
+  if (!url) return;
+  try {
+    const respuesta =
+      await secundariaGatewayService.obtenerDuracionYoutube(url);
+    if (!respuesta.ok || !respuesta.segundos) return;
+    if (activeItem.value.id !== itemId) return;
+    aplicarDuracionSegundosAItem(itemId, respuesta.segundos);
+  } catch {
+    /* Sin API key: se intenta luego con IFrame API */
+  }
+}
+
 async function montarPlayerYoutube() {
   if (activeItem.value.type !== "video" || !iframeYoutube.value) return;
   if (!embedVideo.value || fuenteVideoActiva.value !== "youtube") return;
+  const itemId = activeItem.value.id;
+  const videoUrl = activeItem.value.videoUrl;
+  const duracionGuardada = String(activeItem.value.duration ?? "").trim();
+  const parecePlaceholder =
+    !duracionGuardada ||
+    duracionGuardada === "1 min" ||
+    duracionGuardada === "10 min";
+  if (parecePlaceholder) {
+    void resolverDuracionDesdeGateway(itemId, videoUrl);
+  }
   try {
     await cargarApiYoutube();
     if (!window.YT?.Player || !iframeYoutube.value) return;
     ytPlayer?.destroy?.();
     ytPlayer = new window.YT.Player(iframeYoutube.value, {
       events: {
+        onReady: (evento: { target?: { getDuration?: () => number } }) => {
+          capturarDuracionDesdePlayer(evento.target, itemId);
+          if (timerDuracionVideo) clearInterval(timerDuracionVideo);
+          let intentos = 0;
+          timerDuracionVideo = setInterval(() => {
+            intentos += 1;
+            capturarDuracionDesdePlayer(evento.target, itemId);
+            if (intentos >= 15 && timerDuracionVideo) {
+              clearInterval(timerDuracionVideo);
+              timerDuracionVideo = null;
+            }
+          }, 500);
+        },
         onStateChange: (evento: { data?: number }) => {
           // 0 = ended
           if (evento.data === 0) {
@@ -200,6 +277,10 @@ async function montarPlayerYoutube() {
             if (!completedItems.value.includes(activeItem.value.id)) {
               void marcarActividadCompleta(activeItem.value.id);
             }
+          }
+          // 1 = playing: metadata ya disponible
+          if (evento.data === 1) {
+            capturarDuracionDesdePlayer(undefined, itemId);
           }
         },
       },
@@ -225,6 +306,10 @@ function destruirPlayerYoutube() {
     clearInterval(timerProgresoVideo);
     timerProgresoVideo = null;
   }
+  if (timerDuracionVideo) {
+    clearInterval(timerDuracionVideo);
+    timerDuracionVideo = null;
+  }
   try {
     ytPlayer?.destroy?.();
   } catch {
@@ -238,6 +323,7 @@ watch(
     [activeItem.value.id, activeItem.value.type, embedVideo.value, fuenteVideoActiva.value] as const,
   async () => {
     destruirPlayerYoutube();
+    duracionVideoYoutubeSegundos.value = 0;
     if (
       activeItem.value.type === "video" &&
       embedVideo.value &&
@@ -367,6 +453,15 @@ const textoMensajeDocente = ref("");
 const cargandoChat = ref(false);
 const enviandoMensaje = ref(false);
 const errorChat = ref("");
+
+const inicialesAlumno = computed(
+  () =>
+    portal.user.value?.initials?.trim() ||
+    inicialesNombre(portal.user.value?.name, "TU"),
+);
+const avatarAlumnoUrl = computed(() =>
+  urlFotoPerfilReal(portal.user.value?.avatarUrl),
+);
 
 const sidebarOpen = ref(true);
 const menuMasAbierto = ref(false);
@@ -1761,7 +1856,7 @@ watch(courseId, cargarCurso);
               >
               <span
                 class="rounded-none border border-border bg-muted/60 px-2 py-0.5 text-foreground"
-                >{{ course.duration }}</span
+                >{{ duracionClaseVisible }}</span
               >
               <span
                 class="rounded-none border border-primary/20 bg-primary/10 px-2 py-0.5 text-primary"
@@ -1824,18 +1919,11 @@ watch(courseId, cargarCurso);
           </template>
 
           <template v-else-if="activeTab === 'preguntas'">
-            <div class="grid gap-4">
-              <div class="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <h3 class="text-base font-bold text-foreground">
-                    Preguntas y respuestas
-                  </h3>
-                  <p class="mt-1 text-sm text-muted-foreground">
-                    Conversación privada con
-                    {{ docenteCurso?.nombre || "tu instructor" }}. No es el foro
-                    entre compañeros.
-                  </p>
-                </div>
+            <div class="grid gap-3">
+              <div class="flex flex-wrap items-center justify-between gap-3">
+                <h3 class="text-base font-bold text-foreground">
+                  Preguntas y respuestas
+                </h3>
                 <div
                   v-if="docenteCurso"
                   class="flex items-center gap-2 rounded-full border border-border bg-muted px-3 py-1.5"
@@ -1851,21 +1939,62 @@ watch(courseId, cargarCurso);
                 {{ errorChat }}
               </p>
 
-              <div
-                class="flex max-h-80 min-h-56 flex-col gap-3 overflow-y-auto rounded-xl border border-border bg-muted/30 p-4"
+              <form
+                class="flex items-start gap-3"
+                @submit.prevent="enviarMensajeAlDocente"
               >
                 <div
-                  v-if="cargandoChat"
-                  class="py-10 text-center text-sm text-muted-foreground"
+                  class="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-primary/15 text-xs font-bold text-primary"
                 >
-                  Cargando conversación…
+                  <img
+                    v-if="avatarAlumnoUrl"
+                    :src="avatarAlumnoUrl"
+                    alt=""
+                    class="h-full w-full object-cover"
+                  />
+                  <span v-else>{{ inicialesAlumno }}</span>
                 </div>
-                <p
-                  v-else-if="!mensajesDocente.length"
-                  class="py-10 text-center text-sm text-muted-foreground"
-                >
-                  Aún no hay mensajes. Escribe tu primera duda al docente.
-                </p>
+                <div class="min-w-0 flex-1">
+                  <textarea
+                    v-model="textoMensajeDocente"
+                    rows="2"
+                    class="w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none ring-primary placeholder:text-muted-foreground focus:ring-2"
+                    placeholder="Escribe tu pregunta para el docente…"
+                    :disabled="!conversacionId || enviandoMensaje || cargandoChat"
+                    @keydown.enter.exact.prevent="
+                      textoMensajeDocente.trim() && enviarMensajeAlDocente()
+                    "
+                  />
+                  <div
+                    v-if="textoMensajeDocente.trim()"
+                    class="mt-2 flex justify-end"
+                  >
+                    <Button
+                      type="submit"
+                      size="sm"
+                      :disabled="
+                        !textoMensajeDocente.trim() ||
+                        !conversacionId ||
+                        enviandoMensaje
+                      "
+                    >
+                      <Send class="h-4 w-4" />
+                      Publicar pregunta
+                    </Button>
+                  </div>
+                </div>
+              </form>
+
+              <div
+                v-if="cargandoChat"
+                class="border-t border-border pt-3 text-center text-sm text-muted-foreground"
+              >
+                Cargando conversación…
+              </div>
+              <div
+                v-else-if="mensajesDocente.length"
+                class="flex max-h-72 flex-col gap-2 overflow-y-auto border-t border-border pt-3"
+              >
                 <div
                   v-for="mensaje in mensajesDocente"
                   :key="mensaje.id"
@@ -1873,7 +2002,7 @@ watch(courseId, cargarCurso);
                   :class="
                     mensaje.autor === 'ESTUDIANTE'
                       ? 'ml-auto bg-primary text-white'
-                      : 'bg-card text-foreground'
+                      : 'bg-muted text-foreground'
                   "
                 >
                   <p>{{ mensaje.contenido }}</p>
@@ -1882,56 +2011,13 @@ watch(courseId, cargarCurso);
                   </p>
                 </div>
               </div>
-
-              <form
-                class="flex gap-2"
-                @submit.prevent="enviarMensajeAlDocente"
-              >
-                <input
-                  v-model="textoMensajeDocente"
-                  class="h-10 flex-1 rounded-md border border-border bg-background px-3 text-sm outline-none ring-primary focus:ring-2"
-                  placeholder="Escribe un mensaje para tu docente…"
-                  :disabled="!conversacionId || enviandoMensaje"
-                />
-                <Button
-                  type="submit"
-                  :disabled="
-                    !textoMensajeDocente.trim() ||
-                    !conversacionId ||
-                    enviandoMensaje
-                  "
-                >
-                  <Send class="h-4 w-4" />
-                  Enviar
-                </Button>
-              </form>
             </div>
           </template>
 
           <template v-else-if="activeTab === 'notas'">
-            <div class="grid gap-4">
-              <div>
+            <div class="grid gap-3">
+              <div class="flex flex-wrap items-center justify-between gap-3">
                 <h3 class="text-base font-bold text-foreground">Tus apuntes</h3>
-                <p class="mt-1 text-sm text-muted-foreground">
-                  Se guardan automáticamente.
-                </p>
-              </div>
-              <textarea
-                v-model="apuntes"
-                rows="10"
-                class="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none ring-primary focus:ring-2"
-                placeholder="Escribe ideas clave, dudas o recordatorios de la clase…"
-                @input="programarGuardadoApuntes"
-                @blur="persistirApuntes"
-              />
-              <div class="flex items-center justify-between gap-3">
-                <p class="text-xs text-muted-foreground">
-                  {{
-                    guardandoApuntes
-                      ? "Guardando…"
-                      : mensajeApuntes || "Autoguardado al escribir."
-                  }}
-                </p>
                 <Button
                   variant="outline"
                   size="sm"
@@ -1941,6 +2027,20 @@ watch(courseId, cargarCurso);
                   Guardar ahora
                 </Button>
               </div>
+              <textarea
+                v-model="apuntes"
+                rows="5"
+                class="w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none ring-primary placeholder:text-muted-foreground focus:ring-2"
+                placeholder="Escribe ideas clave, dudas o recordatorios de esta clase…"
+                @input="programarGuardadoApuntes"
+                @blur="persistirApuntes"
+              />
+              <p
+                v-if="guardandoApuntes || mensajeApuntes"
+                class="text-xs text-muted-foreground"
+              >
+                {{ guardandoApuntes ? "Guardando…" : mensajeApuntes }}
+              </p>
             </div>
           </template>
         </div>

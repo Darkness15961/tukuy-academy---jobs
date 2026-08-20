@@ -13,6 +13,7 @@ import { onMounted, reactive, ref } from "vue";
 
 import { Button } from "@/components/ui/button";
 import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
+import EditorNombreCuenta from "@/components/shared/EditorNombreCuenta.vue";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { configuracionAuditoriaPrincipalService } from "@/api/services/configuracion-auditoria-principal.service";
@@ -59,6 +60,8 @@ async function guardar() {
         ayuda="Define reglas transversales de operación, revisión, seguridad y notificaciones."
       />
     </div>
+
+    <EditorNombreCuenta />
 
     <div
       v-if="guardado"
