@@ -1,4 +1,4 @@
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 import { env } from "@/lib/env";
 import {
@@ -11,11 +11,14 @@ import {
   detectarYMarcarRecuperacionClave,
   marcarRecuperacionClave,
 } from "@/lib/recuperacion-clave";
+import type { Database } from "@/types/database.types";
 
-let clientePrincipal: ReturnType<typeof createClient> | null = null;
+export type ClienteSupabasePrincipal = SupabaseClient<Database>;
+
+let clientePrincipal: ClienteSupabasePrincipal | null = null;
 
 /** Cliente público del proyecto principal. No contiene service_role. */
-export function supabasePrincipal() {
+export function supabasePrincipal(): ClienteSupabasePrincipal {
   if (!env.supabasePrimaryUrl || !env.supabasePrimaryAnonKey) {
     throw new Error(
       "Supabase principal no está configurado. Revisa VITE_SUPABASE_PRIMARY_URL y VITE_SUPABASE_PRIMARY_ANON_KEY.",
@@ -25,7 +28,7 @@ export function supabasePrincipal() {
   if (!clientePrincipal) {
     // Hay que leer type=recovery del hash antes de que el cliente lo consuma.
     detectarYMarcarRecuperacionClave();
-    clientePrincipal = createClient(
+    clientePrincipal = createClient<Database>(
       env.supabasePrimaryUrl,
       env.supabasePrimaryAnonKey,
       {

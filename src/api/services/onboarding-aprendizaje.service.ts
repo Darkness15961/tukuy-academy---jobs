@@ -215,7 +215,7 @@ export const onboardingAprendizajeService = {
         p_carrera_id: entrada.carreraId,
         p_situacion: entrada.situacion,
         p_interes_ids: entrada.interesIds,
-      } as never,
+      },
     );
     if (error) throw new Error(error.message);
     const raw = (data ?? {}) as Record<string, unknown>;

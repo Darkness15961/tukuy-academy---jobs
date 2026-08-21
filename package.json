@@ -11,7 +11,8 @@
     "build-only": "VITE_USE_MOCK=false vite build",
     "type-check": "vue-tsc --build",
     "test": "bun test",
-    "seed:anuncios-portal": "bun scripts/subir-anuncios-portal-s3.mjs"
+    "seed:anuncios-portal": "bun scripts/subir-anuncios-portal-s3.mjs",
+    "gen:supabase-types": "bash scripts/gen-supabase-types.sh"
   },
   "dependencies": {
     "@dankira/izipay": "^2.1.1",
