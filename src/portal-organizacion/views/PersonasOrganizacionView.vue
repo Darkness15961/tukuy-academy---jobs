@@ -28,6 +28,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "@/lib/toast";
 import { ORG_ESTRUCTURA_SELECCIONADA_KEY } from "@/lib/constants";
 import { useContextoSesion } from "@/composables/useContextoSesion";
+import { notificacionesCorreoService } from "@/api/services/notificaciones-correo.service";
+import { env } from "@/lib/env";
 import type {
   EstructuraOrganizacional,
   NivelOrganizacional,
@@ -111,6 +113,7 @@ const formularioVinculacion = reactive({
   tipo: "PRINCIPAL" as VinculacionUnidad["tipo"],
   origen: "ASIGNACION_ADMINISTRATIVA" as VinculacionUnidad["origen"],
 });
+const notificarPorCorreo = ref(true);
 const opcionesTipoVinculacion = ["PRINCIPAL", "SECUNDARIA", "TEMPORAL"];
 
 onMounted(cargar);
@@ -148,11 +151,6 @@ async function cargar() {
       await nextTick();
       filtrosNodosVinculaciones.value = rutaIdsUnidad(unidadDestino.id);
       toast.success(`Mostrando personas de “${unidadDestino.nombre}”.`);
-    } else if (
-      usuarios.value.length &&
-      usuarios.value.every((u) => typeof u.id === "string" && u.id.includes("-"))
-    ) {
-      toast.success("Directorio de personal (sin alumnos STUDENT). Los alumnos están en Alumnos.");
     }
   } catch (error) {
     toast.success(error instanceof Error
@@ -584,6 +582,8 @@ function buscarPersonaParaVincular() {
 
 async function crearVinculacion() {
   if (!formularioVinculacion.usuarioId || !formularioVinculacion.unidadId) return;
+  const persona = personaEncontrada.value;
+  const unidad = unidadesPorId.value.get(formularioVinculacion.unidadId);
   try {
     await organizacionService.estructura.vincularPersonaANodo({
       usuarioId: formularioVinculacion.usuarioId,
@@ -595,6 +595,34 @@ async function crearVinculacion() {
     await recargarDirectorio();
     modalVinculacion.value = false;
     toast.success("La persona fue vinculada al nodo seleccionado.");
+
+    if (
+      notificarPorCorreo.value &&
+      persona?.correo &&
+      unidad &&
+      formularioVinculacion.origen !== "SOLICITUD_USUARIO"
+    ) {
+      const resultado = await notificacionesCorreoService.enviarNodoAsignado({
+        para: persona.correo,
+        datos: {
+          nombrePersona: persona.nombre,
+          nombreOrganizacion:
+            contextoActivo.value?.organizacionNombre?.trim() ||
+            "tu organización",
+          nombreNodo: unidad.nombre,
+          urlPortal: env.appUrl,
+        },
+      });
+      if (!resultado.ok) {
+        toast.warning(
+          resultado.error
+            ? `Vinculación guardada, pero el correo no se envió: ${resultado.error}`
+            : "Vinculación guardada, pero el correo no se envió.",
+        );
+      } else {
+        toast.success("Correo de asignación enviado.");
+      }
+    }
   } catch (error) {
     toast.error(error instanceof Error ? error.message : "No se pudo crear la vinculación.");
   }
@@ -640,7 +668,7 @@ async function resolverSolicitud(fila: FilaSolicitud) {
         <TituloConAyuda
           eyebrow="Gobierno institucional"
           titulo="Usuarios"
-          ayuda="Aprueba solicitudes de ingreso y asigna personas a nodos de la estructura."
+          ayuda="Personal y colaboradores con acceso al portal. Aprueba solicitudes de ingreso, asigna personas a nodos y vincula cuentas. Los alumnos se gestionan en la sección Alumnos."
         />
       </div>
       <div class="flex flex-wrap gap-2">
@@ -1084,6 +1112,19 @@ async function resolverSolicitud(fila: FilaSolicitud) {
               :options="opcionesTipoVinculacion"
               class="filtro-control w-full"
             />
+          </label>
+          <label class="flex items-start gap-3 border border-border px-3 py-3">
+            <input
+              v-model="notificarPorCorreo"
+              type="checkbox"
+              class="mt-1 h-4 w-4 accent-[#0B3A78]"
+            />
+            <span>
+              <span class="block text-sm font-semibold">Notificar por correo</span>
+              <span class="mt-0.5 block text-xs text-muted-foreground">
+                Avisa a la persona que quedó vinculada a este nodo.
+              </span>
+            </span>
           </label>
         </template>
       </div>

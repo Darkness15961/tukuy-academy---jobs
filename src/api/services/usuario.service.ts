@@ -4,11 +4,12 @@ import { API } from "@/api/endpoints";
 import { resolveMock } from "@/api/mock";
 import { crearAlmacenDocumento } from "@/api/repositorio-local";
 import { authService } from "@/api/services/auth.service";
-import { cuentaAlumnoService } from "@/api/services/cuenta-alumno.service";
+import { cuentaAlumnoService, type PreferenciasCuenta } from "@/api/services/cuenta-alumno.service";
 import {
   user as userMock,
   workExperiences as workExperiencesMock,
 } from "@/data/academia.mock";
+import { leerPerfilLaboralPreferencias } from "@/lib/datos-certificado-alumno";
 import { USUARIO_SESION_KEY } from "@/lib/constants";
 import { env } from "@/lib/env";
 import { urlFotoPerfilReal } from "@/lib/foto-perfil";
@@ -80,6 +81,7 @@ export const usuarioService = {
       if (authPerfil) {
         try {
           const cuenta = await cuentaAlumnoService.obtener();
+          const laboral = leerPerfilLaboralPreferencias(cuenta.preferencias);
           authPerfil = {
             ...authPerfil,
             email: cuenta.correo || authPerfil.email,
@@ -87,6 +89,9 @@ export const usuarioService = {
             birthDate: cuenta.fechaNacimiento || authPerfil.birthDate,
             name: cuenta.nombre || authPerfil.name,
             authProvider: cuenta.proveedor || authPerfil.authProvider,
+            trade: laboral.trade || authPerfil.trade,
+            specialty: laboral.specialty || authPerfil.specialty,
+            location: laboral.location || authPerfil.location,
           };
         } catch {
           /* RPC aún no aplicada: usa auth */
@@ -119,11 +124,36 @@ export const usuarioService = {
 
   async updateProfile(updates: Partial<UserProfile>): Promise<UserProfile> {
     if (env.authProvider === "supabase") {
+      const perfilLaboralActualizado =
+        updates.trade !== undefined ||
+        updates.specialty !== undefined ||
+        updates.location !== undefined;
+
       if (
         updates.phone !== undefined ||
         updates.birthDate !== undefined ||
-        updates.name !== undefined
+        updates.name !== undefined ||
+        perfilLaboralActualizado
       ) {
+        let preferencias: PreferenciasCuenta | undefined;
+        if (perfilLaboralActualizado) {
+          const cuenta = await cuentaAlumnoService.obtener();
+          preferencias = {
+            ...cuenta.preferencias,
+            perfilLaboral: {
+              ...cuenta.preferencias.perfilLaboral,
+              ...(updates.trade !== undefined
+                ? { trade: updates.trade.trim() || undefined }
+                : {}),
+              ...(updates.specialty !== undefined
+                ? { specialty: updates.specialty.trim() || undefined }
+                : {}),
+              ...(updates.location !== undefined
+                ? { location: updates.location.trim() || undefined }
+                : {}),
+            },
+          };
+        }
         await cuentaAlumnoService.guardar({
           ...(updates.phone !== undefined
             ? { telefono: updates.phone }
@@ -132,6 +162,7 @@ export const usuarioService = {
             ? { fechaNacimiento: updates.birthDate }
             : {}),
           ...(updates.name !== undefined ? { nombre: updates.name } : {}),
+          ...(preferencias ? { preferencias } : {}),
         });
       }
       const actual = await this.getProfile();

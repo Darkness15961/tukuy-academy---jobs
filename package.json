@@ -12,7 +12,8 @@
     "type-check": "vue-tsc --build",
     "test": "bun test",
     "seed:anuncios-portal": "bun scripts/subir-anuncios-portal-s3.mjs",
-    "gen:supabase-types": "bash scripts/gen-supabase-types.sh"
+    "gen:supabase-types": "bash scripts/gen-supabase-types.sh",
+    "google:calendar-auth": "bun scripts/google-calendar-auth.mjs"
   },
   "dependencies": {
     "@dankira/izipay": "^2.1.1",
@@ -25,6 +26,7 @@
     "clsx": "^2.1.1",
     "jspdf": "^4.2.1",
     "lucide-vue-next": "^1.0.0",
+    "plyr": "^3.8.4",
     "primevue": "^4.5.5",
     "qrcode": "^1.5.4",
     "reka-ui": "^2.10.1",

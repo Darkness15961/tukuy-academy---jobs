@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Search } from "lucide-vue-next";
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 
 import TarjetaCursoTendencia from "@/components/shared/TarjetaCursoTendencia.vue";
 import EsqueletoCursoTendencia from "@/components/shared/EsqueletoCursoTendencia.vue";
@@ -14,6 +15,8 @@ import { Progress } from "@/components/ui/progress";
 import { usePortalContext } from "../composables/usePortalContext";
 
 const portal = usePortalContext();
+const route = useRoute();
+const router = useRouter();
 
 const searchTerm = ref("");
 const filtroEstado = ref<"todos" | "en-curso" | "completados">("todos");
@@ -44,6 +47,26 @@ const learningCourses = computed(() => {
       )
     : base;
 });
+
+async function abrirCertificadoDesdeQuery() {
+  const cursoId = route.query.certificado;
+  if (typeof cursoId !== "string" || !cursoId) return;
+  const course =
+    portal.enrolledCourses.value.find((item) => item.id === cursoId) ??
+    portal.courses.value.find((item) => item.id === cursoId);
+  if (!course) return;
+  await portal.solicitarCertificadoCurso(course);
+  const { certificado: _omit, ...resto } = route.query;
+  await router.replace({ query: resto });
+}
+
+watch(
+  () => route.query.certificado,
+  () => {
+    void abrirCertificadoDesdeQuery();
+  },
+  { immediate: true },
+);
 </script>
 
 <template>
@@ -184,6 +207,7 @@ const learningCourses = computed(() => {
           :show-detail="false"
           :is-favorite="portal.isFavorite(course.id)"
           @continue-course="portal.openSimuladorCurso(course)"
+          @solicitar-certificado="portal.solicitarCertificadoCurso(course)"
           @select="portal.verDetalleCurso(course)"
           @toggle-favorite="portal.toggleFavorite(course.id)"
         />

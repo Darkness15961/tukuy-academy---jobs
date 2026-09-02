@@ -43,7 +43,7 @@ import {
   crearRepositorioLocal,
 } from "@/api/repositorio-local";
 import { resolveMock } from "@/api/mock";
-import { CONTEXTO_SESION_KEY } from "@/lib/constants";
+import { CONTEXTO_SESION_KEY, INSTALACION_TUKUY_ACADEMY_ID } from "@/lib/constants";
 import { resolverDuracionCursoTexto } from "@/lib/duracion-curso";
 import {
   areasOrganizacion,
@@ -2512,6 +2512,45 @@ async function sincronizarMatriculasDeAsignacion(
   }
 }
 
+async function notificarMatriculaPorCorreo(entrada: {
+  correo: string;
+  nombrePersona: string;
+  nombreCurso: string;
+  cursoId: string;
+}) {
+  const [{ notificacionesCorreoService }, { correoEnSegundoPlano }, { env }] =
+    await Promise.all([
+      import("@/api/services/notificaciones-correo.service"),
+      import("@/lib/correo-en-segundo-plano"),
+      import("@/lib/env"),
+    ]);
+  const base = env.appUrl.replace(/\/$/, "");
+  const [{ datosSesionEnVivoParaCorreo }, { urlPortalLoginConsumoCurso, urlPortalLoginClaseEnVivo }] =
+    await Promise.all([
+      import("@/lib/sesion-en-vivo-correo"),
+      import("@/lib/ruta-consumo-curso"),
+    ]);
+  const sesionEnVivo = await datosSesionEnVivoParaCorreo(entrada.cursoId);
+  const urlCurso =
+    (sesionEnVivo.tituloClase || sesionEnVivo.urlMeet || sesionEnVivo.fechaHora
+      ? urlPortalLoginClaseEnVivo(entrada.cursoId)
+      : urlPortalLoginConsumoCurso(entrada.cursoId)) ??
+    `${base}/login?continuar=/tukuy-academy/aprendizaje/${encodeURIComponent(entrada.cursoId)}`;
+  correoEnSegundoPlano(
+    notificacionesCorreoService.enviarMatriculaCurso({
+      para: entrada.correo,
+      datos: {
+        nombrePersona: entrada.nombrePersona,
+        nombreCurso: entrada.nombreCurso,
+        nombreOrganizacion: contextoActual().organizacionNombre,
+        urlCurso,
+        ...sesionEnVivo,
+      },
+    }),
+    "matricula-curso",
+  );
+}
+
 async function matricularUsuarioEnCurso(datos: {
   usuarioId: string;
   cursoId: string;
@@ -2545,6 +2584,14 @@ async function matricularUsuarioEnCurso(datos: {
       (item) => String(item.id) === datos.usuarioId,
     );
     emitirCambio("matriculas-alumnos");
+    if (!pendiente && persona?.correo) {
+      void notificarMatriculaPorCorreo({
+        correo: persona.correo,
+        nombrePersona: persona.nombre,
+        nombreCurso: datos.curso,
+        cursoId: datos.cursoId,
+      });
+    }
     return {
       id: resultado.matriculaId,
       alumnoId: datos.usuarioId,
@@ -2579,7 +2626,7 @@ async function matricularUsuarioEnCurso(datos: {
   );
   if (existente) return existente;
 
-  return matriculas.crear({
+  const creada = await matriculas.crear({
     id: `mat-${Date.now()}-${persona.id}`,
     alumnoId,
     cursoId: datos.cursoId,
@@ -2605,6 +2652,15 @@ async function matricularUsuarioEnCurso(datos: {
     unidadOrigenId: datos.unidadOrigenId,
     modalidad: datos.modalidad,
   });
+  if (creada.estado !== "PENDIENTE" && persona.correo) {
+    void notificarMatriculaPorCorreo({
+      correo: persona.correo,
+      nombrePersona: persona.nombre,
+      nombreCurso: datos.curso,
+      cursoId: datos.cursoId,
+    });
+  }
+  return creada;
 }
 
 async function solicitarMatriculaCurso(datos: {
@@ -2633,6 +2689,21 @@ async function aprobarSolicitudMatricula(id: string) {
     );
     emitirCambio("matriculas-alumnos");
     if (pendiente) {
+      const { notificacionesCorreoService } = await import(
+        "@/api/services/notificaciones-correo.service"
+      );
+      const correo =
+        (await notificacionesCorreoService.resolverCorreoIdentidad(
+          String(pendiente.alumnoId),
+        )) ?? null;
+      if (correo) {
+        void notificarMatriculaPorCorreo({
+          correo,
+          nombrePersona: pendiente.nombre,
+          nombreCurso: pendiente.curso,
+          cursoId: pendiente.cursoId,
+        });
+      }
       return {
         ...pendiente,
         estado: "ACTIVO" as const,
@@ -4063,6 +4134,23 @@ export const organizacionService = {
     eliminar: certificadosPendientes.eliminar.bind(certificadosPendientes),
   },
   emitirCertificado: emitirCertificadoInstitucional,
+  emitirCertificadoManual: async (entrada: {
+    titularNombre: string;
+    motivoTitulo: string;
+    correoTitular?: string | null;
+    detalle?: string | null;
+    titularIdentidadRef?: string | null;
+    plantillaId?: string | null;
+    logoEntidadUrl?: string | null;
+    logoOverrideUrl?: string | null;
+    firmanteNombre?: string | null;
+    firmanteCargo?: string | null;
+    firmaImagenUrl?: string | null;
+    layoutOverride?: import("@/lib/plantilla-certificado").LayoutPlantillaCertificado | null;
+  }) => {
+    const { docenteService } = await import("@/api/services/docente.service");
+    return docenteService.emitirCertificadoManual(entrada);
+  },
   listarPendientesFirma: async () => {
     if (!apiConfig.secundariaCursos) return [];
     const { docenteService } = await import("@/api/services/docente.service");
@@ -4071,6 +4159,12 @@ export const organizacionService = {
   firmarCertificado: async (certificadoId: string, firmaId?: string) => {
     const { docenteService } = await import("@/api/services/docente.service");
     return docenteService.firmarCertificado(certificadoId, firmaId);
+  },
+  publicarIndiceCertificado: async (certificadoId: string) => {
+    const { secundariaGatewayService } = await import(
+      "@/api/services/secundaria-gateway.service"
+    );
+    return secundariaGatewayService.publicarIndiceCertificado(certificadoId);
   },
   revocarCertificado: async (certificadoId: string, motivo?: string) => {
     const { docenteService } = await import("@/api/services/docente.service");
@@ -4168,6 +4262,24 @@ export const organizacionService = {
     iniciar: iniciarSesionEnVivo,
     cancelar: cancelarSesionEnVivo,
     reenviarInvitaciones: reenviarInvitacionesSesion,
+    actualizar: (
+      id: Identificador,
+      cambios: Partial<SesionEnVivoOrganizacion>,
+    ) => {
+      const ctx = contextoActual();
+      return sesionesEnVivoCompartidas.actualizar(
+        ctx.organizacionId || INSTALACION_TUKUY_ACADEMY_ID,
+        String(id),
+        cambios,
+      );
+    },
+    eliminar: (id: Identificador) => {
+      const ctx = contextoActual();
+      return sesionesEnVivoCompartidas.eliminar(
+        ctx.organizacionId || INSTALACION_TUKUY_ACADEMY_ID,
+        String(id),
+      );
+    },
   },
   obtenerConfiguracion: async () => {
     if (usarOrgPrincipal() && presenciaBdDisponible()) {

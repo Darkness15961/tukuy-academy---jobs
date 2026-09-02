@@ -53,8 +53,11 @@ function aliasCategoria(nombre: string): string {
   const mapa: Record<string, string> = {
     operaciones: "operaciones internas",
     planificacion: "gestion de obra",
-    "tukuy obra": "tecnologia",
-    "documentacion digital": "tecnologia",
+    "gestion de obras": "gestion de obra",
+    seguridad: "seguridad en obra",
+    "tukuy obra": "tecnologia / digital",
+    "documentacion digital": "tecnologia / digital",
+    "especializacion tecnica": "certificacion profesional",
     "expedientes tecnicos": "construccion civil",
   };
   return mapa[clave] ?? clave;

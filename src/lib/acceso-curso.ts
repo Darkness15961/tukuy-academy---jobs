@@ -72,6 +72,70 @@ export async function matricularCurso(
   if (apiConfig.secundariaCursos) {
     await secundariaGatewayService.matricularCurso(cursoId);
     if (actualizarLista && curso) aplicarMatriculaEnLista(curso);
+
+    // Correo en segundo plano: no bloquea la navegación al curso.
+    void (async () => {
+      try {
+        const [
+          { notificacionesCorreoService },
+          { correoEnSegundoPlano },
+          { env },
+        ] = await Promise.all([
+          import("@/api/services/notificaciones-correo.service"),
+          import("@/lib/correo-en-segundo-plano"),
+          import("@/lib/env"),
+        ]);
+        const { supabasePrincipal } = await import("@/lib/supabase");
+        const { data: sesion } = await supabasePrincipal().auth.getUser();
+        const correo = sesion.user?.email?.trim().toLowerCase();
+        if (!correo) return;
+
+        const nombre =
+          (typeof sesion.user?.user_metadata?.nombre === "string" &&
+            sesion.user.user_metadata.nombre.trim()) ||
+          sesion.user?.email?.split("@")[0] ||
+          "Hola";
+        const base = env.appUrl.replace(/\/$/, "");
+        const { urlPortalLoginConsumoCurso } = await import(
+          "@/lib/ruta-consumo-curso"
+        );
+        const { modalidadSecundariaAMode } = await import(
+          "@/lib/presentacion-curso"
+        );
+        let mode = curso?.mode;
+        try {
+          const remoto = await secundariaGatewayService.obtenerCurso(cursoId);
+          mode = modalidadSecundariaAMode(remoto.modalidad);
+        } catch {
+          /* catálogo local */
+        }
+        const { datosSesionEnVivoParaCorreo } = await import(
+          "@/lib/sesion-en-vivo-correo"
+        );
+        const sesionEnVivo = await datosSesionEnVivoParaCorreo(cursoId);
+        correoEnSegundoPlano(
+          notificacionesCorreoService.enviarMatriculaCurso({
+            para: correo,
+            datos: {
+              nombrePersona: nombre,
+              nombreCurso: curso?.title ?? "tu curso",
+              urlCurso:
+                urlPortalLoginConsumoCurso(
+                  cursoId,
+                  mode,
+                  undefined,
+                  curso?.category,
+                ) ??
+                `${base}/login?continuar=/tukuy-academy/mi-aprendizaje`,
+              ...sesionEnVivo,
+            },
+          }),
+          "matricula-alumno",
+        );
+      } catch {
+        /* no bloquear inscripción */
+      }
+    })();
     return;
   }
 

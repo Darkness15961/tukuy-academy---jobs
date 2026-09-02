@@ -39,6 +39,7 @@ import ImagenPortadaCurso from "@/components/shared/ImagenPortadaCurso.vue";
 import { urlFotoPerfilReal } from "@/lib/foto-perfil";
 import { pasarelaCursosHabilitada } from "@/lib/pasarela-cursos";
 import { portalPathByView } from "@/lib/portal-routes";
+import { rutaConsumoCursoAlumno } from "@/lib/ruta-consumo-curso";
 import {
   etiquetaRol,
   rutaInicioPortal,
@@ -182,7 +183,13 @@ function getNavIcon(id: ViewId) {
 
 function navigateToCourse(courseId: string) {
   isDropdownOpen.value = false;
-  router.push(`/tukuy-academy/aprendizaje/${courseId}`);
+  const course = props.enrolledCourses.find((item) => item.id === courseId);
+  void router.push(
+    rutaConsumoCursoAlumno(courseId, {
+      mode: course?.mode,
+      categoria: course?.category,
+    }),
+  );
 }
 
 function navigateToLearning() {

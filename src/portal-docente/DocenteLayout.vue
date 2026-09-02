@@ -6,7 +6,6 @@ import {
   Bell,
   BookOpen,
   BriefcaseBusiness,
-  CalendarDays,
   CheckSquare,
   ChevronDown,
   DollarSign,
@@ -182,15 +181,9 @@ const navegacion = computed((): ItemNavegacionDocente[] =>
         permiso: "certificados.emitir",
       },
       {
-        etiqueta: "Sesiones",
-        ruta: "/docente/sesiones",
-        icono: Video,
-        permiso: "sesiones.gestionar",
-      },
-      {
-        etiqueta: "Calendario en vivo",
+        etiqueta: "Clases en vivo",
         ruta: "/docente/calendario",
-        icono: CalendarDays,
+        icono: Video,
         permiso: "sesiones.gestionar",
       },
       {

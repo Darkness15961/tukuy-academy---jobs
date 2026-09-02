@@ -68,6 +68,7 @@ export type PortalContext = {
   toggleFavorite: (courseId: string) => void;
   handleViewCertificate: (course: Course) => Promise<void>;
   handleDownloadCertificate: (course: Course) => Promise<void>;
+  solicitarCertificadoCurso: (course: Course) => Promise<void>;
   openSimuladorCurso: (course: Course) => void | Promise<void>;
   matricularTrasCompra: (cursoIds: string[]) => Promise<void>;
   sincronizarProgresosCursos: () => Promise<void>;

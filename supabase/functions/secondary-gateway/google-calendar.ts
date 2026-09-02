@@ -156,6 +156,8 @@ export async function crearEventoCalendarMeet(entrada: {
   iniciaEn: string;
   terminaEn: string;
   attendees?: string[];
+  /** Invitados que entran sin «solicitar unirse» (p. ej. docente creador). */
+  anfitriones?: string[];
 }): Promise<ResultadoEventoMeet> {
   if (!secretsListos()) {
     return {
@@ -173,11 +175,22 @@ export async function crearEventoCalendarMeet(entrada: {
       (Deno.env.get("GOOGLE_CALENDAR_TIMEZONE") ?? "America/Lima").trim() ||
       "America/Lima";
 
+    const anfitriones = new Set(
+      (entrada.anfitriones ?? [])
+        .map((e) => e.trim().toLowerCase())
+        .filter((e) => e.includes("@")),
+    );
+
     const attendees = (entrada.attendees ?? [])
       .map((e) => e.trim().toLowerCase())
       .filter((e) => e.includes("@"))
       .filter((e, i, arr) => arr.indexOf(e) === i)
-      .map((email) => ({ email }));
+      .map((email) => ({
+        email,
+        ...(anfitriones.has(email)
+          ? { responseStatus: "accepted" as const }
+          : {}),
+      }));
 
     const startLocal = fechaEnZona(entrada.iniciaEn, timeZone);
     const endLocal = fechaEnZona(entrada.terminaEn, timeZone);
@@ -238,6 +251,85 @@ export async function crearEventoCalendarMeet(entrada: {
     return {
       ...meetUrlSimulado(entrada.titulo),
       motivo,
+    };
+  }
+}
+
+export async function agregarAsistentesEventoCalendar(
+  calendarEventId: string,
+  emails: string[],
+): Promise<{ ok: boolean; omitido?: boolean; motivo?: string }> {
+  if (!secretsListos()) {
+    return { ok: false, omitido: true, motivo: "Sin secretos Google Calendar" };
+  }
+  const eventId = calendarEventId.trim();
+  if (!eventId || eventId.startsWith("sim_")) {
+    return { ok: true, omitido: true };
+  }
+
+  const nuevos = (emails ?? [])
+    .map((e) => e.trim().toLowerCase())
+    .filter((e) => e.includes("@"))
+    .filter((e, i, arr) => arr.indexOf(e) === i);
+  if (!nuevos.length) return { ok: true, omitido: true };
+
+  try {
+    const token = await accessTokenDesdeRefresh();
+    const calendarId = encodeURIComponent(
+      (Deno.env.get("GOOGLE_CALENDAR_ID") ?? "primary").trim() || "primary",
+    );
+    const getUrl =
+      `https://www.googleapis.com/calendar/v3/calendars/${calendarId}/events/` +
+      `${encodeURIComponent(eventId)}`;
+
+    const existente = await fetch(getUrl, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const evento = await existente.json();
+    if (!existente.ok) {
+      throw new Error(
+        mensajeErrorGoogle(evento, existente.status, "calendar.events.get"),
+      );
+    }
+
+    const actuales = Array.isArray(evento.attendees)
+      ? (evento.attendees as Array<{ email?: string }>)
+          .map((a) => String(a.email ?? "").trim().toLowerCase())
+          .filter((e) => e.includes("@"))
+      : [];
+    const vistos = new Set(actuales);
+    const merged = [...actuales];
+    for (const email of nuevos) {
+      if (vistos.has(email)) continue;
+      vistos.add(email);
+      merged.push(email);
+    }
+    if (merged.length === actuales.length) {
+      return { ok: true, omitido: true };
+    }
+
+    const patchUrl = `${getUrl}?sendUpdates=all`;
+    const res = await fetch(patchUrl, {
+      method: "PATCH",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        attendees: merged.map((email) => ({ email })),
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(
+        mensajeErrorGoogle(data, res.status, "calendar.events.patch"),
+      );
+    }
+    return { ok: true };
+  } catch (err) {
+    return {
+      ok: false,
+      motivo: err instanceof Error ? err.message : String(err),
     };
   }
 }

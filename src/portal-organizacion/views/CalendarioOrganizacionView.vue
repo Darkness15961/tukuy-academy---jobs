@@ -6,12 +6,15 @@ import { organizacionService } from "@/api/services/organizacion.service";
 import { sesionesEnVivoCompartidas } from "@/api/services/sesiones-en-vivo-compartidas.service";
 import AsistenciaSesionPanel from "@/components/shared/AsistenciaSesionPanel.vue";
 import CalendarioSesionesEnVivo from "@/components/shared/CalendarioSesionesEnVivo.vue";
+import CompartirSesionRedes from "@/components/shared/CompartirSesionRedes.vue";
+import ModalEditarSesionEnVivo from "@/components/shared/ModalEditarSesionEnVivo.vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useContextoSesion } from "@/composables/useContextoSesion";
 import { USUARIO_SESION_KEY } from "@/lib/constants";
 import type { SesionEnVivoOrganizacion } from "@/portal-organizacion/types/sesiones-en-vivo.types";
+import { toast } from "@/lib/toast";
 
 const { contextoActivo } = useContextoSesion();
 
@@ -21,8 +24,12 @@ const cursos = ref<{ id: string; titulo: string }[]>([]);
 const cursoInicial = ref("TODOS");
 const modalProgramar = ref(false);
 const sesionDetalle = ref<SesionEnVivoOrganizacion>();
+const sesionPendienteEliminar = ref<SesionEnVivoOrganizacion>();
+const modalEditar = ref(false);
 const aviso = ref("");
 const procesando = ref(false);
+const procesandoEdicion = ref(false);
+const procesandoEliminacion = ref(false);
 
 const formulario = reactive({
   titulo: "",
@@ -147,6 +154,80 @@ function unirse(sesion: SesionEnVivoOrganizacion) {
   window.open(sesion.meetUrl, "_blank", "noopener,noreferrer");
 }
 
+function abrirEditar(sesion: SesionEnVivoOrganizacion) {
+  sesionDetalle.value = sesion;
+  modalEditar.value = true;
+}
+
+async function guardarEdicion(payload: {
+  titulo: string;
+  fechaHoraInicio: string;
+  duracionMinutos: number;
+  meetUrl?: string;
+}) {
+  const sesion = sesionDetalle.value;
+  if (!sesion || procesandoEdicion.value) return;
+  procesandoEdicion.value = true;
+  try {
+    const actualizada = await organizacionService.sesionesEnVivo.actualizar(
+      sesion.id,
+      payload,
+    );
+    sesiones.value = sesiones.value.map((item) =>
+      item.id === actualizada.id ? actualizada : item,
+    );
+    sesionDetalle.value = actualizada;
+    modalEditar.value = false;
+    toast.success("Sesión actualizada");
+  } catch (err) {
+    toast.error("No se pudo editar", {
+      description: err instanceof Error ? err.message : undefined,
+    });
+  } finally {
+    procesandoEdicion.value = false;
+  }
+}
+
+function solicitarEliminar(sesion: SesionEnVivoOrganizacion) {
+  sesionPendienteEliminar.value = sesion;
+}
+
+async function confirmarEliminarSesion() {
+  const sesion = sesionPendienteEliminar.value;
+  if (!sesion || procesandoEliminacion.value) return;
+  procesandoEliminacion.value = true;
+  try {
+    await organizacionService.sesionesEnVivo.eliminar(sesion.id);
+    sesiones.value = sesiones.value.filter((item) => item.id !== sesion.id);
+    if (sesionDetalle.value?.id === sesion.id) sesionDetalle.value = undefined;
+    sesionPendienteEliminar.value = undefined;
+    toast.success("Sesión eliminada");
+  } catch (err) {
+    toast.error("No se pudo eliminar", {
+      description: err instanceof Error ? err.message : undefined,
+    });
+  } finally {
+    procesandoEliminacion.value = false;
+  }
+}
+
+async function cancelarSesion(sesion: SesionEnVivoOrganizacion) {
+  try {
+    const actualizada = await organizacionService.sesionesEnVivo.cancelar(
+      sesion.id,
+    );
+    sesiones.value = sesiones.value.map((item) =>
+      item.id === actualizada.id ? actualizada : item,
+    );
+    sesionDetalle.value = actualizada;
+    toast.success("Sesión cancelada");
+  } catch (err) {
+    toast.error("No se pudo cancelar", {
+      description: err instanceof Error ? err.message : undefined,
+    });
+  }
+}
+
 function etiquetaEstado(estado: SesionEnVivoOrganizacion["estado"]) {
   return (
     {
@@ -179,7 +260,7 @@ function etiquetaEstado(estado: SesionEnVivoOrganizacion["estado"]) {
 
     <CalendarioSesionesEnVivo
       :titulo="`Clases en vivo · ${contextoActivo?.organizacionNombre ?? 'Organización'}`"
-      descripcion="Calendario exclusivo de sesiones sincrónicas (Meet simulado). Separado del catálogo de cursos virtuales asíncronos; misma lógica de vínculo por curso."
+      descripcion="Calendario de sesiones sincrónicas con Google Meet. Separado del catálogo virtual asíncrono; solo cursos EN_VIVO o HIBRIDA."
       :cargando="cargando"
       :sesiones="sesiones"
       :cursos="cursos"
@@ -199,8 +280,8 @@ function etiquetaEstado(estado: SesionEnVivoOrganizacion["estado"]) {
         <CardContent class="p-6">
           <h2 class="text-xl font-black">Programar sesión institucional</h2>
           <p class="mt-1 text-sm text-muted-foreground">
-            La sesión se guarda en la academia. Meet simulado (Google Calendar
-            OAuth pendiente).
+            La sesión se guarda en la academia. Si Google Calendar está
+            configurado, se crea el enlace Meet automáticamente.
           </p>
           <div class="mt-5 grid gap-3">
             <input
@@ -308,6 +389,12 @@ function etiquetaEstado(estado: SesionEnVivoOrganizacion["estado"]) {
               >{{ sesionDetalle.meetUrl }}</a
             >
           </p>
+          <CompartirSesionRedes
+            :titulo="sesionDetalle.titulo"
+            :curso-titulo="sesionDetalle.cursoTitulo"
+            :url-meet="sesionDetalle.meetUrl"
+            :fecha-hora-inicio="sesionDetalle.fechaHoraInicio"
+          />
           <div class="mt-5">
             <h3 class="font-black">
               Invitados ({{ sesionDetalle.invitados.length }})
@@ -334,10 +421,36 @@ function etiquetaEstado(estado: SesionEnVivoOrganizacion["estado"]) {
 
           <AsistenciaSesionPanel :sesion-id="sesionDetalle.id" />
 
-          <div class="mt-5 flex justify-end gap-2">
-            <Button variant="outline" @click="sesionDetalle = undefined"
-              >Cerrar</Button
+          <div class="mt-5 flex flex-wrap justify-end gap-2">
+            <Button
+              v-if="
+                sesionDetalle.estado !== 'CANCELADA' &&
+                sesionDetalle.estado !== 'FINALIZADA'
+              "
+              variant="outline"
+              @click="abrirEditar(sesionDetalle)"
             >
+              Editar sesión
+            </Button>
+            <Button
+              v-if="
+                sesionDetalle.estado !== 'CANCELADA' &&
+                sesionDetalle.estado !== 'FINALIZADA'
+              "
+              variant="outline"
+              @click="cancelarSesion(sesionDetalle)"
+            >
+              Cancelar sesión
+            </Button>
+            <Button
+              variant="destructive"
+              @click="solicitarEliminar(sesionDetalle)"
+            >
+              Eliminar sesión
+            </Button>
+            <Button variant="outline" @click="sesionDetalle = undefined">
+              Cerrar
+            </Button>
             <Button @click="unirse(sesionDetalle)">
               <Video class="h-4 w-4" />
               Abrir Meet
@@ -345,6 +458,45 @@ function etiquetaEstado(estado: SesionEnVivoOrganizacion["estado"]) {
           </div>
         </CardContent>
       </Card>
+    </div>
+
+    <ModalEditarSesionEnVivo
+      v-model:abierto="modalEditar"
+      :sesion="sesionDetalle"
+      :procesando="procesandoEdicion"
+      @guardar="guardarEdicion"
+    />
+
+    <div
+      v-if="sesionPendienteEliminar"
+      class="fixed inset-0 z-[60] grid place-items-center bg-slate-950/70 p-4"
+      @click.self="sesionPendienteEliminar = undefined"
+    >
+      <article class="w-full max-w-lg border border-border bg-card p-6 shadow-2xl">
+        <h2 class="text-lg font-black">¿Eliminar esta sesión en vivo?</h2>
+        <p class="mt-2 text-sm text-muted-foreground">
+          <strong class="text-foreground">{{
+            sesionPendienteEliminar.titulo
+          }}</strong>
+          se borrará y se cancelará en Google Calendar si tenía evento.
+        </p>
+        <div class="mt-6 flex justify-end gap-2">
+          <Button
+            variant="outline"
+            :disabled="procesandoEliminacion"
+            @click="sesionPendienteEliminar = undefined"
+          >
+            No, volver
+          </Button>
+          <Button
+            variant="destructive"
+            :disabled="procesandoEliminacion"
+            @click="confirmarEliminarSesion"
+          >
+            {{ procesandoEliminacion ? "Eliminando…" : "Sí, eliminar" }}
+          </Button>
+        </div>
+      </article>
     </div>
   </div>
 </template>

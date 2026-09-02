@@ -41,7 +41,7 @@ export function mensajeUsuarioDeError(
     return "Este curso requiere compra. Agrégalo al carrito para continuar.";
   }
   if (t.includes("accion no soportada") || t.includes("acción no soportada")) {
-    return "Esta acción aún no está disponible. Si continúa, avisa a soporte.";
+    return "El servidor no reconoce esta acción (Edge Function desactualizada). Redeploya secondary-gateway en el proyecto principal.";
   }
   if (t.includes("read-only transaction")) {
     return "No se pudo cargar el contenido. Vuelve a intentarlo.";

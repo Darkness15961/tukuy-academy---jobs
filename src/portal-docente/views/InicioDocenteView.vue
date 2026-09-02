@@ -358,7 +358,7 @@ function fechaActividad(fecha: string) {
             </div>
             <Button
               class="mt-4 w-full bg-primary text-primary-foreground hover:bg-primary/90"
-              @click="router.push('/docente/sesiones')"
+              @click="router.push('/docente/calendario')"
             >
               Preparar sesión
             </Button>

@@ -18,12 +18,16 @@ import { RouterLink } from "vue-router";
 import { organizacionService } from "@/api/services/organizacion.service";
 import { sesionesEnVivoCompartidas } from "@/api/services/sesiones-en-vivo-compartidas.service";
 import AsistenciaSesionPanel from "@/components/shared/AsistenciaSesionPanel.vue";
+import CompartirSesionRedes from "@/components/shared/CompartirSesionRedes.vue";
+import CrearSesionEnVivoRapidaModal from "@/components/shared/CrearSesionEnVivoRapidaModal.vue";
+import ModalEditarSesionEnVivo from "@/components/shared/ModalEditarSesionEnVivo.vue";
 import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useContextoSesion } from "@/composables/useContextoSesion";
-import { USUARIO_SESION_KEY } from "@/lib/constants";
+import { INSTALACION_TUKUY_ACADEMY_ID, USUARIO_SESION_KEY } from "@/lib/constants";
+import { urlCompartirCursoConOpenGraph } from "@/lib/compartir-sesion-en-vivo";
 import type {
   SesionEnVivoOrganizacion,
 } from "@/portal-organizacion/types/sesiones-en-vivo.types";
@@ -37,9 +41,15 @@ const cursos = ref<{ id: string; titulo: string }[]>([]);
 const mesVisible = ref(new Date());
 const diaSeleccionado = ref<string>(claveDia(new Date()));
 const modalProgramar = ref(false);
+const modalRapida = ref(false);
 const sesionDetalle = ref<SesionEnVivoOrganizacion>();
+const sesionPendienteEliminar = ref<SesionEnVivoOrganizacion>();
+const modalEditar = ref(false);
 const aviso = ref("");
 const procesando = ref(false);
+const procesandoRapida = ref(false);
+const procesandoEdicion = ref(false);
+const procesandoEliminacion = ref(false);
 
 const formulario = reactive({
   titulo: "",
@@ -248,6 +258,84 @@ function abrirProgramar() {
   modalProgramar.value = true;
 }
 
+function abrirRapida() {
+  aplicarDocenteDesdeSesion();
+  modalRapida.value = true;
+}
+
+const fechaInicialRapida = computed(() => {
+  const base = parseClave(diaSeleccionado.value);
+  base.setHours(16, 0, 0, 0);
+  return new Date(base.getTime() - base.getTimezoneOffset() * 60000)
+    .toISOString()
+    .slice(0, 16);
+});
+
+async function crearSesionRapida(payload: {
+  tituloCurso: string;
+  descripcion?: string;
+  tituloSesion?: string;
+  fechaHoraInicio: string;
+  duracionMinutos: number;
+  alcance?: "PUBLICO" | "INTERNO";
+  portadaUrl?: string | null;
+  emailsInvitados?: string[];
+  invitarMatriculados?: boolean;
+  certificado?: boolean;
+  exigirAsistencia?: boolean;
+  porcentajeMinimoAsistencia?: number;
+  exigirNota?: boolean;
+  notaMinima?: number;
+  docenteNombre: string;
+  docenteEmail: string;
+}) {
+  const organizacionId =
+    contextoActivo.value?.organizacionId || INSTALACION_TUKUY_ACADEMY_ID;
+
+  procesandoRapida.value = true;
+  try {
+    const creada = await sesionesEnVivoCompartidas.programarRapida({
+      ...payload,
+      organizacionId,
+      creadoPor: {
+        portal: "organizacion",
+        nombre: payload.docenteNombre || "Administración",
+      },
+    });
+    sesiones.value = [...sesiones.value, creada].sort(
+      (a, b) =>
+        new Date(a.fechaHoraInicio).getTime() -
+        new Date(b.fechaHoraInicio).getTime(),
+    );
+    cursos.value = [
+      { id: creada.cursoId, titulo: creada.cursoTitulo },
+      ...cursos.value.filter((c) => c.id !== creada.cursoId),
+    ];
+    diaSeleccionado.value = claveDia(new Date(creada.fechaHoraInicio));
+    modalRapida.value = false;
+    sesionDetalle.value = creada;
+    if (creada.meetSimulado) {
+      aviso.value = `Sesión creada (Meet simulado): ${creada.meetAviso ?? ""}`;
+      toast.warning("Sesión creada con Meet simulado", {
+        description: creada.meetAviso,
+      });
+    } else {
+      aviso.value =
+        "Sesión en vivo creada: curso publicado + Meet. Comparte el curso o el Meet en el detalle.";
+      toast.success("Sesión en vivo creada", {
+        description: "Curso mínimo publicado y Meet listo. Usa «Compartir» abajo.",
+      });
+    }
+  } catch (err) {
+    const msg =
+      err instanceof Error ? err.message : "No se pudo crear la sesión rápida.";
+    aviso.value = msg;
+    toast.error("No se pudo crear", { description: msg });
+  } finally {
+    procesandoRapida.value = false;
+  }
+}
+
 async function programar() {
   if (
     !formulario.titulo.trim() ||
@@ -372,6 +460,61 @@ function reemplazar(sesion: SesionEnVivoOrganizacion) {
   const indice = sesiones.value.findIndex((item) => item.id === sesion.id);
   if (indice >= 0) sesiones.value[indice] = sesion;
 }
+
+function abrirEditar(sesion: SesionEnVivoOrganizacion) {
+  sesionDetalle.value = sesion;
+  modalEditar.value = true;
+}
+
+async function guardarEdicion(payload: {
+  titulo: string;
+  fechaHoraInicio: string;
+  duracionMinutos: number;
+  meetUrl?: string;
+}) {
+  const sesion = sesionDetalle.value;
+  if (!sesion || procesandoEdicion.value) return;
+  procesandoEdicion.value = true;
+  try {
+    const actualizada = await organizacionService.sesionesEnVivo.actualizar(
+      sesion.id,
+      payload,
+    );
+    reemplazar(actualizada);
+    sesionDetalle.value = actualizada;
+    modalEditar.value = false;
+    toast.success("Sesión actualizada");
+  } catch (err) {
+    toast.error("No se pudo editar", {
+      description: err instanceof Error ? err.message : undefined,
+    });
+  } finally {
+    procesandoEdicion.value = false;
+  }
+}
+
+function solicitarEliminar(sesion: SesionEnVivoOrganizacion) {
+  sesionPendienteEliminar.value = sesion;
+}
+
+async function confirmarEliminarSesion() {
+  const sesion = sesionPendienteEliminar.value;
+  if (!sesion || procesandoEliminacion.value) return;
+  procesandoEliminacion.value = true;
+  try {
+    await organizacionService.sesionesEnVivo.eliminar(sesion.id);
+    sesiones.value = sesiones.value.filter((item) => item.id !== sesion.id);
+    if (sesionDetalle.value?.id === sesion.id) sesionDetalle.value = undefined;
+    sesionPendienteEliminar.value = undefined;
+    toast.success("Sesión eliminada del calendario y de la academia");
+  } catch (err) {
+    toast.error("No se pudo eliminar", {
+      description: err instanceof Error ? err.message : undefined,
+    });
+  } finally {
+    procesandoEliminacion.value = false;
+  }
+}
 </script>
 
 <template>
@@ -381,12 +524,10 @@ function reemplazar(sesion: SesionEnVivoOrganizacion) {
         <TituloConAyuda
           titulo="Sesiones en vivo"
           clase-titulo="text-2xl font-black"
-          ayuda="Apartado distinto al catálogo asíncrono. Al programar se crea un evento compartido (Meet simulado): lo ven administración, el docente del curso y los alumnos matriculados. Integración Google pendiente."
+          ayuda="Apartado distinto al catálogo asíncrono. Al programar se crea un evento compartido con Meet (si Google Calendar está configurado): lo ven administración, el docente del curso y los alumnos matriculados."
         />
         <p class="mt-1 text-sm text-muted-foreground">
-          Fuente única sincronizada ·
-          <strong class="text-foreground">Meet simulado</strong>
-          ·
+          Fuente única sincronizada · Google Meet ·
           <RouterLink
             class="font-bold text-primary underline-offset-2 hover:underline"
             to="/organizacion/calendario"
@@ -394,10 +535,15 @@ function reemplazar(sesion: SesionEnVivoOrganizacion) {
           >
         </p>
       </div>
-      <Button class="bg-primary" @click="abrirProgramar">
-        <Plus class="h-4 w-4" />
-        Programar sesión
-      </Button>
+      <div class="flex flex-wrap gap-2">
+        <Button variant="outline" @click="abrirProgramar">
+          Programar en curso
+        </Button>
+        <Button class="bg-primary" @click="abrirRapida">
+          <Plus class="h-4 w-4" />
+          Crear sesión en vivo
+        </Button>
+      </div>
     </div>
 
     <p
@@ -593,10 +739,10 @@ function reemplazar(sesion: SesionEnVivoOrganizacion) {
     >
       <Card class="max-h-[90vh] w-full max-w-xl overflow-y-auto bg-card">
         <CardContent class="p-6">
-          <h2 class="text-xl font-black">Programar sesión en vivo</h2>
+          <h2 class="text-xl font-black">Programar en curso existente</h2>
           <p class="mt-1 text-sm text-muted-foreground">
-            La sesión se guarda en la academia. El enlace Meet es simulado por
-            ahora (Google Calendar OAuth pendiente).
+            Para agregar otra clase a un curso ya creado. Si quieres crear curso
+            + sesión juntos, usa «Crear sesión en vivo».
           </p>
 
           <div class="mt-5 grid gap-3">
@@ -726,6 +872,19 @@ function reemplazar(sesion: SesionEnVivoOrganizacion) {
                 {{ sesionDetalle.meetUrl }}
               </a>
             </p>
+            <CompartirSesionRedes
+              etiqueta="Compartir curso"
+              :titulo="sesionDetalle.cursoTitulo || sesionDetalle.titulo"
+              :url="urlCompartirCursoConOpenGraph(sesionDetalle.cursoId)"
+              etiqueta-enlace="Ver curso e inscribirte"
+            />
+            <CompartirSesionRedes
+              etiqueta="Compartir Meet"
+              :titulo="sesionDetalle.titulo"
+              :curso-titulo="sesionDetalle.cursoTitulo"
+              :url-meet="sesionDetalle.meetUrl"
+              :fecha-hora-inicio="sesionDetalle.fechaHoraInicio"
+            />
             <p class="text-xs text-muted-foreground">
               Calendar event:
               <code>{{ sesionDetalle.calendarEventId }}</code>
@@ -774,6 +933,16 @@ function reemplazar(sesion: SesionEnVivoOrganizacion) {
                 sesionDetalle.estado !== 'FINALIZADA'
               "
               variant="outline"
+              @click="abrirEditar(sesionDetalle)"
+            >
+              Editar sesión
+            </Button>
+            <Button
+              v-if="
+                sesionDetalle.estado !== 'CANCELADA' &&
+                sesionDetalle.estado !== 'FINALIZADA'
+              "
+              variant="outline"
               @click="reenviar(sesionDetalle)"
             >
               Reenviar invitaciones
@@ -793,14 +962,70 @@ function reemplazar(sesion: SesionEnVivoOrganizacion) {
                 sesionDetalle.estado !== 'CANCELADA' &&
                 sesionDetalle.estado !== 'FINALIZADA'
               "
-              variant="destructive"
+              variant="outline"
               @click="cancelar(sesionDetalle)"
             >
               Cancelar sesión
             </Button>
+            <Button
+              variant="destructive"
+              @click="solicitarEliminar(sesionDetalle)"
+            >
+              Eliminar sesión
+            </Button>
           </div>
         </CardContent>
       </Card>
+    </div>
+
+    <CrearSesionEnVivoRapidaModal
+      v-model:abierto="modalRapida"
+      :procesando="procesandoRapida"
+      :docente-nombre="formulario.docenteNombre"
+      :docente-email="formulario.docenteEmail"
+      :fecha-inicial="fechaInicialRapida"
+      :instalacion-id="contextoActivo?.organizacionId || INSTALACION_TUKUY_ACADEMY_ID"
+      @crear="crearSesionRapida"
+    />
+
+    <ModalEditarSesionEnVivo
+      v-model:abierto="modalEditar"
+      :sesion="sesionDetalle"
+      :procesando="procesandoEdicion"
+      @guardar="guardarEdicion"
+    />
+
+    <div
+      v-if="sesionPendienteEliminar"
+      class="fixed inset-0 z-[60] grid place-items-center bg-slate-950/70 p-4"
+      @click.self="sesionPendienteEliminar = undefined"
+    >
+      <article class="w-full max-w-lg border border-border bg-card p-6 shadow-2xl">
+        <h2 class="text-lg font-black">¿Eliminar esta sesión en vivo?</h2>
+        <p class="mt-2 text-sm text-muted-foreground">
+          <strong class="text-foreground">{{
+            sesionPendienteEliminar.titulo
+          }}</strong>
+          se borrará de la academia y se cancelará en Google Calendar si
+          existía evento vinculado.
+        </p>
+        <div class="mt-6 flex justify-end gap-2">
+          <Button
+            variant="outline"
+            :disabled="procesandoEliminacion"
+            @click="sesionPendienteEliminar = undefined"
+          >
+            No, volver
+          </Button>
+          <Button
+            variant="destructive"
+            :disabled="procesandoEliminacion"
+            @click="confirmarEliminarSesion"
+          >
+            {{ procesandoEliminacion ? "Eliminando…" : "Sí, eliminar" }}
+          </Button>
+        </div>
+      </article>
     </div>
   </section>
 </template>

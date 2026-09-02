@@ -51,6 +51,7 @@ export const ACCIONES_GATEWAY_SECUNDARIA = [
   "publicar-curso",
   "actualizar-estado-curso",
   "eliminar-curso",
+  "eliminar-curso-permanente",
   "matricular-curso",
   "mis-cursos",
   "contenido-curso",
@@ -60,6 +61,7 @@ export const ACCIONES_GATEWAY_SECUNDARIA = [
   "guardar-item-activo",
   "list-sesiones",
   "crear-sesion",
+  "crear-sesion-rapida",
   "actualizar-sesion",
   "eliminar-sesion",
   "actualizar-estado-sesion",
@@ -77,6 +79,7 @@ export const ACCIONES_GATEWAY_SECUNDARIA = [
   "list-certificados-pendientes-firma",
   "firmar-certificado",
   "emitir-certificado",
+  "emitir-certificado-manual",
   "list-cursos-revision",
   "revisar-contenido",
   "observar-curso",
@@ -93,6 +96,12 @@ export const ACCIONES_GATEWAY_SECUNDARIA = [
   "confirmar-pago-orden",
   "list-asistencia-sesion",
   "marcar-asistencia-sesion",
+  "abrir-pase-asistencia",
+  "cerrar-pase-asistencia",
+  "list-pases-asistencia",
+  "list-asistencia-pase",
+  "marcar-asistencia-pase",
+  "checkin-pase-asistencia",
 ] as const;
 
 export type AccionGatewaySecundaria =
@@ -174,6 +183,8 @@ export type CursoSecundaria = {
   duracionMinutosTotal?: number;
   /** Actividades activas de la versión actual. */
   totalLecciones?: number;
+  /** Si es false, no emite certificado. */
+  certificado?: boolean;
 };
 
 export type ListadoCursosSecundaria = {
@@ -256,6 +267,7 @@ export type MatriculaCursoSecundaria = {
   matriculadoEn: string;
   totalActividades?: number;
   actividadesCompletadas?: number;
+  certificado?: boolean;
 };
 
 export type ResultadoMisCursosSecundaria = {
@@ -371,6 +383,7 @@ export type EstudianteMatriculaSecundaria = {
   alumnoId: string;
   cursoId: string;
   nombre: string;
+  correo?: string | null;
   iniciales: string;
   curso: string;
   organizacion: string;
@@ -437,13 +450,24 @@ export type ResultadoCrearSesionSecundaria = {
   };
 };
 
+export type ResultadoCrearSesionRapidaSecundaria = ResultadoCrearSesionSecundaria & {
+  cursoId: string;
+  curso?: {
+    id: string;
+    titulo: string;
+    modalidad?: string;
+    portadaClave?: string | null;
+  };
+  invitados?: string[];
+};
+
 export type CertificadoEmitidoSecundaria = {
   id: string;
   codigoVerificacion?: string;
-  matriculaId: string;
-  estudianteId: string;
+  matriculaId?: string | null;
+  estudianteId?: string | null;
   nombre: string;
-  cursoId: string;
+  cursoId?: string | null;
   curso: string;
   estado: string;
   fecha: string;
@@ -456,6 +480,10 @@ export type CertificadoEmitidoSecundaria = {
   versionPrograma?: string;
   documentoId?: string | null;
   claveAlmacenamiento?: string | null;
+  origenEmision?: "CURSO" | "MANUAL" | string | null;
+  correoTitular?: string | null;
+  detalleManual?: string | null;
+  plantillaRef?: string | null;
 };
 
 export type CertificadoPendienteSecundaria = {

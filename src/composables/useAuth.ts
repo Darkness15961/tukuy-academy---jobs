@@ -161,19 +161,6 @@ export function useAuth() {
     // la selección automática de un único perfil pertenece al flujo de login.
     if (!redirigirAutomaticamente) return;
 
-    try {
-      const requiere = await onboardingAprendizajeService.requiereOnboarding();
-      if (requiere) {
-        guardarDestinoTrasOnboarding(destinoSeguro);
-        if (router.currentRoute.value.name !== "onboarding-aprendizaje") {
-          await router.push({ name: "onboarding-aprendizaje" });
-        }
-        return;
-      }
-    } catch (err) {
-      console.warn("[auth] No se pudo verificar onboarding:", err);
-    }
-
     await redirigirTrasAuth(destinoSeguro);
   }
 

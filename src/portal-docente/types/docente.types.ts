@@ -158,6 +158,9 @@ export interface CertificadoEmitidoDocente {
   revocadoEn?: string;
   /** true = emitido pero aún no publicado en índice (falta firma org). */
   requiereFirmaInstitucional?: boolean;
+  origenEmision?: "CURSO" | "MANUAL" | string;
+  detalleManual?: string;
+  plantillaRef?: string;
 }
 
 export interface CertificadoPendienteDocente {
@@ -205,6 +208,7 @@ export interface KpiAnaliticaDocente {
   id: string;
   etiqueta: string;
   valor: string;
+  /** Vacío cuando no hay serie histórica comparable. */
   variacion: string;
   tendencia: "sube" | "baja";
   detalle: string;

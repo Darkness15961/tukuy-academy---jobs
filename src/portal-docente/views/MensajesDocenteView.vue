@@ -4,13 +4,13 @@ import { computed, onMounted, ref } from "vue";
 import {
   docenteService,
   type ConversacionDocente,
-  type MensajeDocente,
 } from "@/api/services/docente.service";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import Skeleton from "primevue/skeleton";
+import { toast } from "@/lib/toast";
 
 const cargando = ref(true);
 const error = ref("");
@@ -18,8 +18,7 @@ const conversaciones = ref<ConversacionDocente[]>([]);
 const activa = ref<ConversacionDocente>();
 const texto = ref("");
 const busqueda = ref("");
-const adjunto = ref<MensajeDocente["adjunto"]>();
-const selectorArchivo = ref<HTMLInputElement | null>(null);
+const enviando = ref(false);
 const conversacionesVisibles = computed(() => {
   const termino = busqueda.value.toLowerCase().trim();
   if (!termino) return conversaciones.value;
@@ -47,20 +46,26 @@ onMounted(async () => {
 });
 
 async function enviar() {
-  if (!activa.value || (!texto.value.trim() && !adjunto.value)) return;
-  const mensaje = texto.value.trim() || `Archivo: ${adjunto.value?.nombre}`;
-  const actualizada = await docenteService.enviarMensaje(
-    activa.value.id,
-    mensaje,
-    adjunto.value,
-  );
-  const indice = conversaciones.value.findIndex(
-    (item) => item.id === actualizada.id,
-  );
-  if (indice >= 0) conversaciones.value[indice] = actualizada;
-  activa.value = actualizada;
-  texto.value = "";
-  adjunto.value = undefined;
+  if (!activa.value || !texto.value.trim() || enviando.value) return;
+  enviando.value = true;
+  try {
+    const actualizada = await docenteService.enviarMensaje(
+      activa.value.id,
+      texto.value.trim(),
+    );
+    const indice = conversaciones.value.findIndex(
+      (item) => item.id === actualizada.id,
+    );
+    if (indice >= 0) conversaciones.value[indice] = actualizada;
+    activa.value = actualizada;
+    texto.value = "";
+  } catch (causa) {
+    toast.error(
+      causa instanceof Error ? causa.message : "No se pudo enviar el mensaje.",
+    );
+  } finally {
+    enviando.value = false;
+  }
 }
 
 async function seleccionarConversacion(conversacion: ConversacionDocente) {
@@ -97,14 +102,8 @@ async function seleccionarConversacion(conversacion: ConversacionDocente) {
   }
 }
 
-function adjuntarArchivo(evento: Event) {
-  const archivo = (evento.target as HTMLInputElement).files?.[0];
-  if (!archivo) return;
-  adjunto.value = {
-    nombre: archivo.name,
-    tipo: archivo.type || "application/octet-stream",
-    tamanio: archivo.size,
-  };
+function avisarAdjuntosPendientes() {
+  toast.info("Los adjuntos estarán disponibles cuando el almacenamiento de archivos quede conectado al chat.");
 }
 </script>
 <template>
@@ -234,35 +233,13 @@ function adjuntarArchivo(evento: Event) {
             class="border-t border-border p-4"
             @submit.prevent="enviar"
           >
-            <div
-              v-if="adjunto"
-              class="mb-2 flex items-center justify-between bg-muted px-3 py-2 text-xs"
-            >
-              <span
-                ><Paperclip class="mr-1 inline h-3.5 w-3.5" />{{
-                  adjunto.nombre
-                }}</span
-              >
-              <button
-                type="button"
-                class="font-bold text-red-600"
-                @click="adjunto = undefined"
-              >
-                Quitar
-              </button>
-            </div>
             <div class="flex gap-2">
-              <input
-                ref="selectorArchivo"
-                class="hidden"
-                type="file"
-                @change="adjuntarArchivo"
-              />
               <Button
                 type="button"
                 size="icon"
                 variant="outline"
-                @click="selectorArchivo?.click()"
+                title="Adjuntos próximamente"
+                @click="avisarAdjuntosPendientes"
               >
                 <Paperclip class="h-4 w-4" />
               </Button>
@@ -270,8 +247,11 @@ function adjuntarArchivo(evento: Event) {
                 v-model="texto"
                 class="flex-1"
                 placeholder="Escribe un mensaje..."
+                :disabled="enviando"
               />
-              <Button type="submit"><Send class="h-4 w-4" /></Button>
+              <Button type="submit" :disabled="enviando || !texto.trim()">
+                <Send class="h-4 w-4" />
+              </Button>
             </div>
           </form>
         </div>

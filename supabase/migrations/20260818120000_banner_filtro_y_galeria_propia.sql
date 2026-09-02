@@ -24,15 +24,29 @@ set creado_por = substring(
 where creado_por is null
   and imagen_url ~* 'anuncios-portal/[^/]+/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/';
 
+-- Índice único legacy (instalación + url, sin dueño).
 drop index if exists public.portal_banner_imagen_instalacion_url_uq;
-drop index if exists public.portal_banner_imagen_dueno_url_uq;
 
+alter table public.portal_banner_imagen
+  drop constraint if exists portal_banner_imagen_instalacion_url_uq;
+
+-- La restricción dueno_url_uq posee el índice homónimo: drop constraint, no drop index.
 alter table public.portal_banner_imagen
   drop constraint if exists portal_banner_imagen_dueno_url_uq;
 
-alter table public.portal_banner_imagen
-  add constraint portal_banner_imagen_dueno_url_uq
-  unique (instalacion_organizacion_id, creado_por, imagen_url);
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'portal_banner_imagen_dueno_url_uq'
+      and conrelid = 'public.portal_banner_imagen'::regclass
+  ) then
+    alter table public.portal_banner_imagen
+      add constraint portal_banner_imagen_dueno_url_uq
+      unique (instalacion_organizacion_id, creado_por, imagen_url);
+  end if;
+end $$;
 
 create index if not exists portal_banner_imagen_dueno_idx
   on public.portal_banner_imagen (instalacion_organizacion_id, creado_por, creado_en desc);

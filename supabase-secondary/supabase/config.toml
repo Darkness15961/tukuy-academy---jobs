@@ -1,0 +1,12 @@
+# Proyecto Supabase SECUNDARIO (academia LMS).
+# Vincular una vez:
+#   bunx supabase link --project-ref jzkyqffnwrlkwpxmlaia --workdir supabase-secondary
+# Migraciones:
+#   bunx supabase db push --linked --yes --workdir supabase-secondary
+#
+# Estructura estándar: supabase-secondary/supabase/{config.toml,migrations/}
+
+project_id = "tukuy-academy-secondary"
+
+[db]
+major_version = 15

@@ -1,5 +1,10 @@
 import { supabasePrincipal } from "@/lib/supabase";
 
+import {
+  leerPerfilLaboralPreferencias,
+  type PerfilLaboralPreferencias,
+} from "@/lib/datos-certificado-alumno";
+
 export type NotificacionesCuenta = {
   courses: boolean;
   jobs: boolean;
@@ -10,6 +15,7 @@ export type NotificacionesCuenta = {
 export type PreferenciasCuenta = {
   notificaciones: NotificacionesCuenta;
   idioma: "es" | "en";
+  perfilLaboral?: PerfilLaboralPreferencias;
 };
 
 export type CuentaAlumno = {
@@ -40,6 +46,7 @@ function mapearPreferencias(raw: unknown): PreferenciasCuenta {
   if (!raw || typeof raw !== "object") return base;
   const obj = raw as Record<string, unknown>;
   const noti = (obj.notificaciones ?? obj) as Record<string, unknown>;
+  const perfilLaboral = leerPerfilLaboralPreferencias(obj);
   return {
     notificaciones: {
       courses: noti.courses !== false,
@@ -48,6 +55,7 @@ function mapearPreferencias(raw: unknown): PreferenciasCuenta {
       marketing: noti.marketing === true,
     },
     idioma: obj.idioma === "en" ? "en" : "es",
+    ...(Object.keys(perfilLaboral).length ? { perfilLaboral } : {}),
   };
 }
 

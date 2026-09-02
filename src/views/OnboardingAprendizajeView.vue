@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Check, ChevronLeft, ChevronRight, LoaderCircle } from "lucide-vue-next";
 import { computed, onMounted, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 
 import {
   onboardingAprendizajeService,
@@ -10,11 +11,21 @@ import {
 } from "@/api/services/onboarding-aprendizaje.service";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/composables/useAuth";
+import {
+  consumirCertificadoPendiente,
+  guardarCertificadoPendiente,
+} from "@/lib/solicitud-certificado";
 import { toast } from "@/lib/toast";
 
 type PasoOnboarding = 1 | 2 | 3 | 4 | 5;
 
 const { continuarTrasOnboarding } = useAuth();
+const route = useRoute();
+const router = useRouter();
+
+const esFlujoCertificado = computed(
+  () => route.query.motivo === "certificado" && !!route.query.cursoId,
+);
 
 const cargando = ref(true);
 const guardando = ref(false);
@@ -69,7 +80,18 @@ const panelPorPaso: Record<
   },
 };
 
-const panelActivo = computed(() => panelPorPaso[paso.value]);
+const panelActivo = computed(() => {
+  const base = panelPorPaso[paso.value];
+  if (paso.value === 1 && esFlujoCertificado.value) {
+    return {
+      etiqueta: "Tu certificado",
+      titulo: "Antes de tu certificado",
+      texto:
+        "Cuéntanos un poco sobre ti para personalizar tu experiencia y emitir tu certificado.",
+    };
+  }
+  return base;
+});
 
 const situaciones: Array<{
   value: SituacionCarrera;
@@ -104,9 +126,20 @@ watch(carreraId, (id) => {
 onMounted(async () => {
   try {
     const estado = await onboardingAprendizajeService.obtenerEstado();
+    const cursoCertificado = String(route.query.cursoId ?? "").trim();
     if (estado.completado) {
+      if (esFlujoCertificado.value && cursoCertificado) {
+        await router.replace({
+          path: "/tukuy-academy/mi-aprendizaje",
+          query: { certificado: cursoCertificado },
+        });
+        return;
+      }
       await continuarTrasOnboarding();
       return;
+    }
+    if (esFlujoCertificado.value && cursoCertificado) {
+      guardarCertificadoPendiente(cursoCertificado);
     }
     const catalogo = await onboardingAprendizajeService.listarCatalogo();
     carreras.value = catalogo.carreras;
@@ -178,7 +211,22 @@ async function finalizar() {
       situacion: situacion.value,
       interesIds: interesIds.value,
     });
-    toast.success("Bienvenido a Tukuy Academy.");
+    toast.success(
+      esFlujoCertificado.value
+        ? "Listo. Abriendo tu certificado…"
+        : "Bienvenido a Tukuy Academy.",
+    );
+    const cursoCertificado =
+      consumirCertificadoPendiente() ||
+      String(route.query.cursoId ?? "").trim() ||
+      null;
+    if (cursoCertificado) {
+      await router.push({
+        path: "/tukuy-academy/mi-aprendizaje",
+        query: { certificado: cursoCertificado },
+      });
+      return;
+    }
     await continuarTrasOnboarding();
   } catch (causa) {
     errorLocal.value =

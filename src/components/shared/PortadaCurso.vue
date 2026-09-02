@@ -95,71 +95,98 @@ watch(
         <img
           :src="slide.imagenUrl"
           :alt="slide.titulo"
-          class="absolute inset-0 h-full w-full object-cover"
+          class="absolute inset-0 h-full w-full object-cover object-center"
         />
-        <CapaFiltroBanner :estilo="slide.filtroImagen" />
+
+        <!-- Móvil: degradado suave abajo para leer sobre la imagen -->
+        <div
+          class="pointer-events-none absolute inset-0 bg-linear-to-t from-[#07152B]/92 via-[#07152B]/35 to-transparent sm:hidden"
+          aria-hidden="true"
+        />
+        <!-- Desktop: filtro configurable -->
+        <div class="max-sm:hidden absolute inset-0">
+          <CapaFiltroBanner :estilo="slide.filtroImagen" />
+        </div>
 
         <div
-          class="relative z-[1] flex h-full items-end px-5 pb-12 pt-6 sm:items-center sm:px-10 sm:pb-8 lg:px-14"
+          class="absolute inset-0 z-[1] flex items-end px-4 pb-10 pt-8 sm:items-center sm:px-10 sm:pb-8 sm:pt-6 lg:px-14"
         >
           <div class="max-w-2xl">
-            <p
-              v-if="slide.etiqueta"
-              class="text-xs font-black uppercase tracking-[.25em] text-[#F5B400]"
-            >
-              {{ slide.etiqueta }}
-            </p>
-
-            <div
-              v-if="slide.badges?.length"
-              class="mt-3 flex flex-wrap items-center gap-2"
-            >
-              <Badge
-                v-for="(badge, bi) in slide.badges"
-                :key="`${slide.id}-${bi}`"
-                class="rounded-none border-transparent text-[11px] font-black"
-                :class="
-                  bi === 0
-                    ? 'bg-[#F5B400] text-[#07152B]'
-                    : 'border border-white/25 bg-transparent text-white/85'
-                "
-              >
-                {{ badge }}
-              </Badge>
-              <span
-                class="border border-white/25 px-2.5 py-1 text-[11px] font-bold uppercase text-white/85"
-              >
-                {{ slide.tipo }}
-              </span>
-            </div>
-            <div v-else class="mt-3">
-              <span
-                class="border border-white/25 px-2.5 py-1 text-[11px] font-bold uppercase text-white/85"
-              >
-                {{ slide.tipo }}
-              </span>
+            <!-- Móvil: frase + CTA superpuestos sobre la imagen -->
+            <div class="sm:hidden">
+              <p class="text-lg font-black leading-snug text-white">
+                {{ slide.etiqueta?.trim() || slide.titulo }}
+              </p>
+              <div v-if="slide.ctaTexto?.trim()" class="mt-4">
+                <Button
+                  class="h-10 rounded-none bg-[#F5B400] px-5 text-sm font-bold text-[#07152B] shadow-lg hover:bg-amber-400"
+                  @click="emit('cta', slide)"
+                >
+                  {{ slide.ctaTexto }}
+                </Button>
+              </div>
             </div>
 
-            <h2
-              class="mt-4 text-2xl font-black leading-tight text-white sm:text-3xl lg:text-4xl"
-            >
-              {{ slide.titulo }}
-            </h2>
-
-            <p
-              v-if="slide.subtitulo"
-              class="mt-2 text-sm leading-relaxed text-white/70 sm:text-base"
-            >
-              {{ slide.subtitulo }}
-            </p>
-
-            <div v-if="slide.ctaTexto?.trim()" class="mt-5 flex flex-wrap gap-3">
-              <Button
-                class="h-11 rounded-none bg-[#F5B400] px-6 font-bold text-[#07152B] hover:bg-amber-400"
-                @click="emit('cta', slide)"
+            <!-- Desktop: contenido completo -->
+            <div class="hidden sm:block">
+              <p
+                v-if="slide.etiqueta"
+                class="text-xs font-black uppercase tracking-[.25em] text-[#F5B400]"
               >
-                {{ slide.ctaTexto }}
-              </Button>
+                {{ slide.etiqueta }}
+              </p>
+
+              <div
+                v-if="slide.badges?.length"
+                class="mt-3 flex flex-wrap items-center gap-2"
+              >
+                <Badge
+                  v-for="(badge, bi) in slide.badges"
+                  :key="`${slide.id}-${bi}`"
+                  class="rounded-none border-transparent text-[11px] font-black"
+                  :class="
+                    bi === 0
+                      ? 'bg-[#F5B400] text-[#07152B]'
+                      : 'border border-white/25 bg-transparent text-white/85'
+                  "
+                >
+                  {{ badge }}
+                </Badge>
+                <span
+                  class="border border-white/25 px-2.5 py-1 text-[11px] font-bold uppercase text-white/85"
+                >
+                  {{ slide.tipo }}
+                </span>
+              </div>
+              <div v-else class="mt-3">
+                <span
+                  class="border border-white/25 px-2.5 py-1 text-[11px] font-bold uppercase text-white/85"
+                >
+                  {{ slide.tipo }}
+                </span>
+              </div>
+
+              <h2
+                class="mt-4 text-3xl font-black leading-tight text-white lg:text-4xl"
+              >
+                {{ slide.titulo }}
+              </h2>
+
+              <p
+                v-if="slide.subtitulo"
+                class="mt-2 text-base leading-relaxed text-white/70"
+              >
+                {{ slide.subtitulo }}
+              </p>
+
+              <div v-if="slide.ctaTexto?.trim()" class="mt-5 flex flex-wrap gap-3">
+                <Button
+                  class="h-11 rounded-none bg-[#F5B400] px-6 font-bold text-[#07152B] hover:bg-amber-400"
+                  @click="emit('cta', slide)"
+                >
+                  {{ slide.ctaTexto }}
+                </Button>
+              </div>
             </div>
           </div>
         </div>
@@ -206,10 +233,12 @@ watch(
   min-height: 220px;
   max-height: min(420px, 58vh);
 }
-@media (max-width: 640px) {
+
+@media (max-width: 639px) {
   .hero-banner__viewport {
-    aspect-ratio: 4 / 3;
-    max-height: 360px;
+    aspect-ratio: 4 / 5;
+    min-height: 300px;
+    max-height: min(420px, 62vh);
   }
 }
 </style>

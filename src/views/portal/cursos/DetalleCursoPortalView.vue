@@ -25,11 +25,16 @@ import {
   formatCourseRating,
   formatReviewCount,
   enrichCourse,
+  etiquetaModalidadCurso,
 } from "@/lib/presentacion-curso";
 import { cursoEstaMatriculado, cursoEsDePago } from "@/lib/acceso-curso";
 import { toast } from "@/lib/toast";
 import { inicialesNombre, urlFotoPerfilReal } from "@/lib/foto-perfil";
 import type { DetalleCursoPublico } from "@/types/academia";
+import CompartirSesionRedes from "@/components/shared/CompartirSesionRedes.vue";
+import { urlCompartirCursoConOpenGraph } from "@/lib/compartir-sesion-en-vivo";
+import { useMetaSocial } from "@/composables/useMetaSocial";
+import { descripcionCursoParaMeta } from "@/lib/meta-social";
 import { usePortalContext } from "../composables/usePortalContext";
 
 const route = useRoute();
@@ -161,6 +166,27 @@ const fotoInstructor = computed(() =>
 const inicialesInstructor = computed(() =>
   inicialesNombre(detalle.value?.instructor.nombre, "DO"),
 );
+
+const metaCursoPortal = computed(() => {
+  const c = cursoPresentado.value;
+  if (!c) return null;
+  return {
+    title: `${c.title} · Tukuy Academy`,
+    description: descripcionCursoParaMeta({
+      title: c.title,
+      resumen: c.resumen,
+      category: c.category,
+      duration: c.duration,
+      level: c.level,
+      instructor: c.instructor ?? detalle.value?.instructor.nombre,
+    }),
+    image: c.image,
+    url: `/cursos/${c.id}`,
+    type: "article" as const,
+  };
+});
+
+useMetaSocial(metaCursoPortal);
 </script>
 
 <template>
@@ -232,8 +258,16 @@ const inicialesInstructor = computed(() =>
                 {{ cursoPresentado.level }}
               </span>
               <span class="border border-white/20 px-2.5 py-1 text-xs font-bold">
-                {{ cursoPresentado.mode }}
+                {{ cursoPresentado ? etiquetaModalidadCurso(cursoPresentado.mode) : "" }}
               </span>
+            </div>
+
+            <div class="mt-5">
+              <CompartirSesionRedes
+                :titulo="cursoPresentado.title"
+                :url="urlCompartirCursoConOpenGraph(cursoPresentado.id)"
+                etiqueta-enlace="Ver curso e inscribirte"
+              />
             </div>
 
             <div
@@ -243,6 +277,7 @@ const inicialesInstructor = computed(() =>
                 v-if="fotoInstructor"
                 :src="fotoInstructor"
                 :alt="detalle.instructor.nombre"
+                referrerpolicy="no-referrer"
                 class="h-12 w-12 object-cover"
               />
               <div
@@ -478,6 +513,7 @@ const inicialesInstructor = computed(() =>
                 v-if="fotoInstructor"
                 :src="fotoInstructor"
                 :alt="detalle.instructor.nombre"
+                referrerpolicy="no-referrer"
                 class="h-20 w-20 object-cover"
               />
               <div

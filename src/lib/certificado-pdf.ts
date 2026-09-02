@@ -24,8 +24,8 @@ export type CertificateData = {
   verificationUrl?: string;
   issuerName?: string;
   issuerLogoUrl?: string;
-  /** Nombres/cargos al emitir (opcional; si falta, usa la plantilla). */
-  firmantes?: Array<{ nombre: string; cargo?: string }>;
+  /** Nombres/cargos/imagen al emitir (opcional; si falta, usa la plantilla). */
+  firmantes?: Array<{ nombre: string; cargo?: string; imagen?: string }>;
   /** Si hay plantilla org/docente, se usa fondo + posiciones. */
   plantilla?: PlantillaCertificado | null;
 };
@@ -172,8 +172,9 @@ async function createCertificateDocumentFromPlantilla(
     maxWidthMm: campos.codigo.widthMm ?? 75,
   });
 
-  firmantesLayout.forEach((firma, indice) => {
-    if (firma.visible === false) return;
+  for (let indice = 0; indice < firmantesLayout.length; indice += 1) {
+    const firma = firmantesLayout[indice]!;
+    if (firma.visible === false) continue;
     const emitido = data.firmantes?.[indice];
     const nombre =
       emitido?.nombre?.trim() ||
@@ -194,6 +195,51 @@ async function createCertificateDocumentFromPlantilla(
       x1 = firma.xMm - anchoLinea;
       x2 = firma.xMm;
     }
+
+    const imagenFirma = String(emitido?.imagen ?? "").trim();
+    if (imagenFirma) {
+      try {
+        const imgData =
+          imagenFirma.startsWith("data:") || imagenFirma.startsWith("blob:")
+            ? imagenFirma
+            : await dataUrlMediaCacheada(imagenFirma);
+        if (imgData) {
+          const formato = imgData.includes("image/jpeg") ? "JPEG" : "PNG";
+          const ratio = await (async () => {
+            try {
+              const img = await new Promise<{ w: number; h: number }>(
+                (resolve, reject) => {
+                  const el = new Image();
+                  el.onload = () =>
+                    resolve({ w: el.naturalWidth, h: el.naturalHeight });
+                  el.onerror = () => reject(new Error("img"));
+                  el.src = imgData;
+                },
+              );
+              return img.w > 0 ? img.h / img.w : 0.35;
+            } catch {
+              return 0.35;
+            }
+          })();
+          const anchoImg = Math.min(Math.max(anchoLinea, 24), 90);
+          const altoImg = Math.min(32, Math.max(8, anchoImg * ratio));
+          let xImg = firma.xMm - anchoImg / 2;
+          if (align === "left") xImg = firma.xMm;
+          else if (align === "right") xImg = firma.xMm - anchoImg;
+          doc.addImage(
+            imgData,
+            formato,
+            xImg,
+            yLinea - altoImg - 1,
+            anchoImg,
+            altoImg,
+          );
+        }
+      } catch {
+        /* firma imagen opcional */
+      }
+    }
+
     doc.setDrawColor(navy.r, navy.g, navy.b);
     doc.setLineWidth(0.35);
     doc.line(x1, yLinea, x2, yLinea);
@@ -213,7 +259,7 @@ async function createCertificateDocumentFromPlantilla(
         { color: slate, maxWidthMm: anchoLinea + 10 },
       );
     }
-  });
+  }
 
   const logoUrl =
     plantilla.logoOverrideUrl ||

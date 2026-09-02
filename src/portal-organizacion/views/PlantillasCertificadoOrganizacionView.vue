@@ -47,6 +47,7 @@ import {
   type ConfigCertificadosOrganizacion,
   type FirmantePlantillaCertificado,
   type FondoCertificadoOrganizacion,
+  type LogoCertificadoOrganizacion,
   type PlantillaCertificado,
 } from "@/lib/plantilla-certificado";
 import { toast } from "@/lib/toast";
@@ -248,7 +249,8 @@ const PASOS: DefPaso[] = [
     id: "logo",
     numero: 10,
     titulo: "Logo",
-    ayuda: "Logo institucional sobre el certificado.",
+    ayuda:
+      "Logo de la entidad o una imagen temporal (p. ej. campaña / temporada).",
     campo: "logo",
   },
   {
@@ -309,10 +311,12 @@ const modo = ref<ModoVista>("inicio");
 const cargando = ref(true);
 const guardando = ref(false);
 const subiendoFondo = ref(false);
+const subiendoLogo = ref(false);
 const error = ref("");
 const mensaje = ref("");
 const config = ref<ConfigCertificadosOrganizacion | null>(null);
 const fondos = ref<FondoCertificadoOrganizacion[]>([]);
+const logos = ref<LogoCertificadoOrganizacion[]>([]);
 /** Lightbox para ver un fondo a tamaño grande. */
 const fondoEnVista = ref<FondoCertificadoOrganizacion | null>(null);
 /** Dialog de vista previa completa con datos simulados. */
@@ -320,6 +324,7 @@ const plantillaEnVista = ref<PlantillaCertificado | null>(null);
 /** Cantidad de firmas a simular en el dialog (modelos 1–3 guardados). */
 const firmasVistaPreviaCount = ref<1 | 2 | 3>(1);
 const eliminandoFondoId = ref("");
+const eliminandoLogoId = ref("");
 const disenoId = ref<string | null>(null);
 const borrador = ref<PlantillaCertificado | null>(null);
 const pasoIndex = ref(0);
@@ -382,15 +387,41 @@ const previewFondo = computed(() => {
 });
 
 const previewLogo = computed(() => {
-  if (!borrador.value?.usarLogoEntidad) return "";
+  if (!borrador.value) return "";
+  if (borrador.value.layout.campos.logo.visible === false) return "";
+  const override = String(borrador.value.logoOverrideUrl ?? "").trim();
   const raw =
-    borrador.value.logoOverrideUrl || logoEntidad.value || "";
+    override ||
+    (borrador.value.usarLogoEntidad ? logoEntidad.value : "") ||
+    "";
   if (!raw) return "";
-  if (raw.startsWith("data:") || raw.startsWith("blob:") || /^https?:\/\//i.test(raw)) {
+  if (
+    raw.startsWith("data:") ||
+    raw.startsWith("blob:") ||
+    /^https?:\/\//i.test(raw)
+  ) {
     return raw;
   }
   return urlsFondoListas.value[raw] || raw;
 });
+
+function urlLogoPlantilla(plantilla: PlantillaCertificado) {
+  if (plantilla.layout.campos.logo.visible === false) return "";
+  const override = String(plantilla.logoOverrideUrl ?? "").trim();
+  const raw =
+    override ||
+    (plantilla.usarLogoEntidad ? logoEntidad.value : "") ||
+    "";
+  if (!raw) return "";
+  if (
+    raw.startsWith("data:") ||
+    raw.startsWith("blob:") ||
+    /^https?:\/\//i.test(raw)
+  ) {
+    return raw;
+  }
+  return urlsFondoListas.value[raw] || raw;
+}
 
 const plantillasGuardadas = computed(() => config.value?.plantillas ?? []);
 
@@ -761,12 +792,14 @@ async function cargar() {
   cargando.value = true;
   error.value = "";
   try {
-    const [cfg, listaFondos] = await Promise.all([
+    const [cfg, listaFondos, listaLogos] = await Promise.all([
       plantillasCertificadoService.obtenerConfig(instalacionId.value),
       plantillasCertificadoService.listarFondos(instalacionId.value),
+      plantillasCertificadoService.listarLogos(instalacionId.value),
     ]);
     config.value = cfg;
     fondos.value = listaFondos;
+    logos.value = listaLogos;
     modo.value = "inicio";
     borrador.value = null;
     disenoId.value = null;
@@ -774,6 +807,9 @@ async function cargar() {
     await precargarUrlsFondos([
       ...listaFondos.map((f) => f.fondoUrl),
       ...cfg.plantillas.map((p) => p.fondoUrl),
+      ...listaLogos.map((l) => l.logoUrl),
+      ...cfg.plantillas.map((p) => p.logoOverrideUrl ?? ""),
+      logoEntidad.value,
     ]);
   } catch (causa) {
     error.value =
@@ -961,6 +997,106 @@ async function subirFondo(evento: Event) {
   } finally {
     subiendoFondo.value = false;
   }
+}
+
+async function subirLogoOverride(evento: Event) {
+  const input = evento.target as HTMLInputElement;
+  const archivo = input.files?.[0];
+  input.value = "";
+  if (!archivo || !borrador.value || !puedeEditar.value) return;
+  if (!archivo.type.startsWith("image/")) {
+    error.value = "El logo debe ser PNG, JPG o WEBP.";
+    return;
+  }
+  if (archivo.size > 4_000_000) {
+    error.value = "Máximo 4 MB para el logo.";
+    return;
+  }
+  subiendoLogo.value = true;
+  error.value = "";
+  try {
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(new Error("No se pudo leer la imagen."));
+      reader.readAsDataURL(archivo);
+    });
+
+    borrador.value.usarLogoEntidad = true;
+    borrador.value.logoOverrideUrl = dataUrl;
+    borrador.value.layout.campos.logo.visible = true;
+
+    try {
+      const subida = await storageAcademia.subirFondoCertificado(archivo);
+      const urlFinal = subida.url || `s3://${subida.objectKey}`;
+      if (borrador.value) {
+        borrador.value.logoOverrideUrl = urlFinal;
+        await resolverUrlFondo(urlFinal);
+      }
+      logos.value = await plantillasCertificadoService.registrarLogo(
+        instalacionId.value,
+        urlFinal,
+        archivo.name.replace(/\.[^.]+$/, "") || undefined,
+      );
+      toast.success(
+        "Logo temporal subido. Quedó en logos sugeridos para reutilizarlo.",
+      );
+    } catch {
+      logos.value = await plantillasCertificadoService.registrarLogo(
+        instalacionId.value,
+        dataUrl,
+        archivo.name.replace(/\.[^.]+$/, "") || undefined,
+      );
+      toast.success(
+        "Logo temporal cargado en este navegador (S3 no disponible). Quedó en sugeridos.",
+      );
+    }
+  } catch (causa) {
+    error.value =
+      causa instanceof Error ? causa.message : "No se pudo subir el logo.";
+  } finally {
+    subiendoLogo.value = false;
+  }
+}
+
+function elegirLogoGuardado(logo: LogoCertificadoOrganizacion) {
+  if (!borrador.value || !puedeEditar.value) return;
+  borrador.value.usarLogoEntidad = true;
+  borrador.value.logoOverrideUrl = logo.logoUrl;
+  borrador.value.layout.campos.logo.visible = true;
+  void resolverUrlFondo(logo.logoUrl);
+  toast.success(`Logo «${logo.nombre}» aplicado.`);
+}
+
+function elegirLogoEntidadEnPaso() {
+  if (!borrador.value || !puedeEditar.value || !logoEntidad.value.trim()) return;
+  borrador.value.usarLogoEntidad = true;
+  borrador.value.logoOverrideUrl = null;
+  borrador.value.layout.campos.logo.visible = true;
+  toast.success("Se usará el logo de la entidad.");
+}
+
+async function eliminarLogoSubido(logo: LogoCertificadoOrganizacion) {
+  if (!puedeEditar.value) return;
+  eliminandoLogoId.value = logo.id;
+  try {
+    logos.value = await plantillasCertificadoService.eliminarLogo(
+      instalacionId.value,
+      logo.id,
+    );
+    if (borrador.value?.logoOverrideUrl === logo.logoUrl) {
+      borrador.value.logoOverrideUrl = null;
+    }
+    toast.success(`Logo «${logo.nombre}» eliminado de sugeridos.`);
+  } finally {
+    eliminandoLogoId.value = "";
+  }
+}
+
+function quitarLogoOverride() {
+  if (!borrador.value || !puedeEditar.value) return;
+  borrador.value.logoOverrideUrl = null;
+  toast.success("Se usará de nuevo el logo de la entidad (si está activo).");
 }
 
 function puedeAvanzar(): boolean {
@@ -1618,8 +1754,8 @@ onUnmounted(() => {
                   class="flex h-full w-full items-center justify-center border border-dashed border-slate-400/60 bg-white/70"
                 >
                   <img
-                    v-if="plantilla.usarLogoEntidad && logoEntidad"
-                    :src="logoEntidad"
+                    v-if="urlLogoPlantilla(plantilla)"
+                    :src="urlLogoPlantilla(plantilla)"
                     alt=""
                     class="max-h-full max-w-full object-contain p-0.5"
                   />
@@ -2156,16 +2292,163 @@ onUnmounted(() => {
 
                 <div
                   v-if="pasoActual.id === 'logo'"
-                  class="flex items-center justify-between gap-3 border border-border p-3"
+                  class="grid gap-3"
                 >
-                  <div>
-                    <p class="text-sm font-bold">Usar logo de la entidad</p>
-                    <p class="text-xs text-muted-foreground">Logo institucional</p>
+                  <div
+                    class="flex items-center justify-between gap-3 border border-border p-3"
+                  >
+                    <div>
+                      <p class="text-sm font-bold">Usar logo de la entidad</p>
+                      <p class="text-xs text-muted-foreground">
+                        Logo institucional por defecto
+                      </p>
+                    </div>
+                    <ToggleSwitch
+                      v-model="borrador.usarLogoEntidad"
+                      :disabled="!puedeEditar || Boolean(borrador.logoOverrideUrl)"
+                    />
                   </div>
-                  <ToggleSwitch
-                    v-model="borrador.usarLogoEntidad"
-                    :disabled="!puedeEditar"
-                  />
+
+                  <div class="grid gap-2">
+                    <p class="text-sm font-bold">Logos sugeridos</p>
+                    <p class="text-xs text-muted-foreground">
+                      Elige uno guardado o el de la entidad. Los que subas quedan
+                      aquí para no volver a cargarlos.
+                    </p>
+                    <div class="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                      <button
+                        v-if="logoEntidad"
+                        type="button"
+                        class="overflow-hidden border border-border text-left"
+                        :class="
+                          borrador.usarLogoEntidad && !borrador.logoOverrideUrl
+                            ? 'border-primary ring-1 ring-primary'
+                            : ''
+                        "
+                        :disabled="!puedeEditar"
+                        title="Logo de la entidad"
+                        @click="elegirLogoEntidadEnPaso"
+                      >
+                        <span
+                          class="flex aspect-square items-center justify-center bg-white p-2"
+                        >
+                          <img
+                            :src="urlFondoMostrada(logoEntidad) || logoEntidad"
+                            alt="Entidad"
+                            class="max-h-full max-w-full object-contain"
+                          />
+                        </span>
+                        <span
+                          class="block truncate px-1 py-0.5 text-[9px] font-semibold"
+                          >Entidad</span
+                        >
+                      </button>
+                      <div
+                        v-for="logo in logos"
+                        :key="logo.id"
+                        class="overflow-hidden border border-border"
+                        :class="
+                          borrador.logoOverrideUrl === logo.logoUrl
+                            ? 'border-primary ring-1 ring-primary'
+                            : ''
+                        "
+                      >
+                        <button
+                          type="button"
+                          class="flex aspect-square w-full items-center justify-center bg-white p-2"
+                          :disabled="!puedeEditar"
+                          :title="logo.nombre"
+                          @click="elegirLogoGuardado(logo)"
+                        >
+                          <img
+                            :src="urlFondoMostrada(logo.logoUrl)"
+                            :alt="logo.nombre"
+                            class="max-h-full max-w-full object-contain"
+                          />
+                        </button>
+                        <div class="flex items-center gap-0.5 px-1 py-0.5">
+                          <span
+                            class="min-w-0 flex-1 truncate text-[9px] font-semibold"
+                            >{{ logo.nombre }}</span
+                          >
+                          <button
+                            type="button"
+                            class="shrink-0 p-0.5 text-muted-foreground hover:text-destructive"
+                            :disabled="
+                              !puedeEditar || eliminandoLogoId === logo.id
+                            "
+                            title="Quitar"
+                            @click="eliminarLogoSubido(logo)"
+                          >
+                            <Trash2 class="h-3 w-3" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                    <p
+                      v-if="!logoEntidad && !logos.length"
+                      class="border border-dashed border-border p-2 text-xs text-muted-foreground"
+                    >
+                      Todavía no hay logos guardados. Sube uno abajo.
+                    </p>
+                  </div>
+
+                  <div class="grid gap-2 border border-border p-3">
+                    <p class="text-sm font-bold">Logo temporal / personalizado</p>
+                    <p class="text-xs text-muted-foreground">
+                      Sube una imagen (p. ej. logo navideño o campaña). Reemplaza
+                      al logo de la entidad solo en este diseño y se guarda en
+                      sugeridos.
+                    </p>
+                    <div
+                      v-if="previewLogo && borrador.logoOverrideUrl"
+                      class="flex items-center gap-3 border border-border bg-muted/30 p-2"
+                    >
+                      <img
+                        :src="previewLogo"
+                        alt="Logo temporal"
+                        class="h-14 w-14 object-contain bg-white"
+                      />
+                      <div class="min-w-0 flex-1">
+                        <p class="text-xs font-semibold">Logo personalizado activo</p>
+                        <p class="truncate text-[11px] text-muted-foreground">
+                          Se usa en lugar del logo de la entidad
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        :disabled="!puedeEditar"
+                        @click="quitarLogoOverride"
+                      >
+                        Quitar
+                      </Button>
+                    </div>
+                    <label
+                      class="inline-flex cursor-pointer items-center justify-center gap-2 border border-dashed border-primary/40 bg-primary/5 px-3 py-3 text-sm font-semibold text-primary transition hover:bg-primary/10"
+                      :class="
+                        !puedeEditar || subiendoLogo
+                          ? 'pointer-events-none opacity-50'
+                          : ''
+                      "
+                    >
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp"
+                        class="sr-only"
+                        :disabled="!puedeEditar || subiendoLogo"
+                        @change="subirLogoOverride"
+                      />
+                      {{
+                        subiendoLogo
+                          ? "Subiendo…"
+                          : borrador.logoOverrideUrl
+                            ? "Cambiar imagen"
+                            : "Subir imagen de logo"
+                      }}
+                    </label>
+                  </div>
                 </div>
               </template>
               <p v-else class="text-sm text-muted-foreground">
@@ -2557,8 +2840,8 @@ onUnmounted(() => {
                 class="flex h-full w-full items-center justify-center border border-dashed border-slate-400/60 bg-white/70"
               >
                 <img
-                  v-if="plantillaEnVista.usarLogoEntidad && logoEntidad"
-                  :src="logoEntidad"
+                  v-if="urlLogoPlantilla(plantillaEnVista)"
+                  :src="urlLogoPlantilla(plantillaEnVista)"
                   alt=""
                   class="max-h-full max-w-full object-contain p-0.5"
                 />

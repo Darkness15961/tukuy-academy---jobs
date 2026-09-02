@@ -4,9 +4,11 @@ import {
   Building2,
   CircleUserRound,
   Clock3,
+  Link2,
   MoreHorizontal,
   Plus,
   Search,
+  Share2,
   Star,
   UsersRound,
 } from "lucide-vue-next";
@@ -23,11 +25,17 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import ImagenPortadaCurso from "@/components/shared/ImagenPortadaCurso.vue";
+import CompartirSesionRedes from "@/components/shared/CompartirSesionRedes.vue";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useContextoSesion } from "@/composables/useContextoSesion";
 import type { EstadoCursoDocente } from "@/portal-docente/types/docente.types";
 import { toast } from "@/lib/toast";
+import { urlCompartirCursoConOpenGraph, urlPublicaCurso } from "@/lib/compartir-sesion-en-vivo";
+import {
+  claseModalidadImparticion,
+  etiquetaModalidadImparticion,
+} from "@/lib/presentacion-curso";
 
 const router = useRouter();
 const route = useRoute();
@@ -38,11 +46,19 @@ const cargando = ref(true);
 const cursos = ref<CursoDocente[]>([]);
 const menuCursoId = ref<string>();
 const cursoVistaPrevia = ref<CursoDocente>();
+const cursoCompartir = ref<CursoDocente>();
 const cursoPendienteEliminar = ref<CursoDocente>();
+const cursoPendienteEliminarMaterial = ref<CursoDocente>();
 const eliminandoCurso = ref(false);
+const eliminandoMaterial = ref(false);
 const aviso = ref("");
 const esGestionOrganizacion = computed(() =>
   route.path.startsWith("/organizacion/"),
+);
+const puedeEliminarMaterial = computed(
+  () =>
+    esGestionOrganizacion.value &&
+    (tienePermiso("cursos.administrar") || tienePermiso("cursos.aprobar")),
 );
 const tituloPagina = computed(() =>
   esGestionOrganizacion.value ? "Cursos institucionales" : "Mis cursos",
@@ -66,6 +82,12 @@ const opcionesFiltro: Array<{
   { valor: "BORRADOR", etiqueta: "En elaboración" },
   { valor: "ARCHIVADO", etiqueta: "Archivado" },
 ];
+
+const opcionesFiltroVisibles = computed(() =>
+  esGestionOrganizacion.value
+    ? opcionesFiltro
+    : opcionesFiltro.filter((opcion) => opcion.valor !== "ARCHIVADO"),
+);
 
 onMounted(async () => {
   try {
@@ -154,12 +176,35 @@ function editarCurso(curso?: CursoDocente) {
   );
 }
 
+function abrirCompartirCurso(curso: CursoDocente) {
+  cursoCompartir.value = curso;
+  menuCursoId.value = undefined;
+}
+
+async function copiarEnlacePublicoCurso(curso: CursoDocente) {
+  try {
+    await navigator.clipboard.writeText(urlPublicaCurso(curso.id));
+    toast.success("Enlace público copiado");
+  } catch {
+    toast.error("No se pudo copiar el enlace");
+  }
+}
+
 const cursosFiltrados = computed(() =>
-  cursosDelContexto.value.filter(
-    (curso) =>
+  cursosDelContexto.value.filter((curso) => {
+    // Docente: "Todos" = activos; archivados solo con filtro explícito.
+    if (
+      !esGestionOrganizacion.value &&
+      filtro.value === "TODOS" &&
+      curso.estado === "ARCHIVADO"
+    ) {
+      return false;
+    }
+    return (
       (filtro.value === "TODOS" || curso.estado === filtro.value) &&
-      curso.titulo.toLowerCase().includes(busqueda.value.toLowerCase()),
-  ),
+      curso.titulo.toLowerCase().includes(busqueda.value.toLowerCase())
+    );
+  }),
 );
 
 function etiquetaEstado(estado: EstadoCursoDocente) {
@@ -199,14 +244,28 @@ function claseEstado(estado: EstadoCursoDocente) {
 }
 
 async function duplicar(curso: CursoDocente) {
-  const copia = await docenteService.duplicarCurso(curso.id);
-  cursos.value.unshift(copia);
-  menuCursoId.value = undefined;
-  aviso.value = "Se creó una copia editable del curso.";
+  try {
+    const copia = await docenteService.duplicarCurso(curso.id);
+    cursos.value.unshift(copia);
+    menuCursoId.value = undefined;
+    aviso.value = "Se creó una copia editable del curso.";
+    toast.success("Curso duplicado en borrador.");
+  } catch (causa) {
+    toast.error(
+      causa instanceof Error
+        ? causa.message
+        : "No se pudo duplicar el curso.",
+    );
+  }
 }
 
 async function archivar(curso: CursoDocente) {
   cursoPendienteEliminar.value = curso;
+  menuCursoId.value = undefined;
+}
+
+function solicitarEliminarMaterial(curso: CursoDocente) {
+  cursoPendienteEliminarMaterial.value = curso;
   menuCursoId.value = undefined;
 }
 
@@ -215,23 +274,53 @@ async function confirmarEliminarCurso() {
   if (!curso || eliminandoCurso.value) return;
   eliminandoCurso.value = true;
   try {
-    const eliminado = esGestionOrganizacion.value
-      ? await docenteService.archivarCurso(curso.id)
-      : await docenteService.eliminarCurso(curso.id);
-    const indice = cursos.value.findIndex((item) => item.id === eliminado.id);
-    if (indice >= 0) cursos.value[indice] = eliminado;
-    aviso.value =
-      "El curso quedó oculto del catálogo. Administración podrá revisarlo.";
-    toast.success("Curso eliminado del catálogo (oculto).");
+    if (esGestionOrganizacion.value) {
+      const archivado = await docenteService.archivarCurso(curso.id);
+      const indice = cursos.value.findIndex((item) => item.id === archivado.id);
+      if (indice >= 0) cursos.value[indice] = archivado;
+      aviso.value =
+        "El curso quedó archivado. Quienes ya están inscritos conservan acceso.";
+      toast.success("Curso archivado.");
+    } else {
+      await docenteService.eliminarCurso(curso.id);
+      cursos.value = cursos.value.filter((item) => item.id !== curso.id);
+      aviso.value =
+        "El curso fue eliminado de tu lista. Los alumnos ya inscritos conservan acceso.";
+      toast.success("Curso eliminado.");
+    }
     cursoPendienteEliminar.value = undefined;
   } catch (causa) {
     toast.error(
       causa instanceof Error
         ? causa.message
-        : "No se pudo eliminar el curso.",
+        : esGestionOrganizacion.value
+          ? "No se pudo archivar el curso."
+          : "No se pudo eliminar el curso.",
     );
   } finally {
     eliminandoCurso.value = false;
+  }
+}
+
+async function confirmarEliminarMaterial() {
+  const curso = cursoPendienteEliminarMaterial.value;
+  if (!curso || eliminandoMaterial.value) return;
+  eliminandoMaterial.value = true;
+  try {
+    await docenteService.eliminarCursoPermanente(curso.id);
+    cursos.value = cursos.value.filter((item) => item.id !== curso.id);
+    aviso.value =
+      "Material eliminado. Sesiones, calendario y matrículas fueron desvinculados.";
+    toast.success("Material del curso eliminado.");
+    cursoPendienteEliminarMaterial.value = undefined;
+  } catch (causa) {
+    toast.error(
+      causa instanceof Error
+        ? causa.message
+        : "No se pudo eliminar el material del curso.",
+    );
+  } finally {
+    eliminandoMaterial.value = false;
   }
 }
 </script>
@@ -246,14 +335,27 @@ async function confirmarEliminarCurso() {
           clase-titulo="text-2xl font-black"
         />
       </div>
-      <Button
+      <div
         v-if="!esGestionOrganizacion || tienePermiso('cursos.crear')"
-        class="bg-primary"
-        @click="crearCurso"
+        class="flex flex-wrap gap-2"
       >
-        <Plus class="h-4 w-4" />
-        {{ esGestionOrganizacion ? "Crear curso institucional" : "Crear curso" }}
-      </Button>
+        <Button
+          variant="outline"
+          @click="
+            router.push(
+              esGestionOrganizacion
+                ? '/organizacion/sesiones'
+                : '/docente/calendario',
+            )
+          "
+        >
+          Crear sesión en vivo
+        </Button>
+        <Button class="bg-primary" @click="crearCurso">
+          <Plus class="h-4 w-4" />
+          {{ esGestionOrganizacion ? "Crear curso institucional" : "Crear curso" }}
+        </Button>
+      </div>
     </div>
 
     <p
@@ -277,7 +379,7 @@ async function confirmarEliminarCurso() {
         </div>
         <div class="flex flex-wrap gap-2">
           <Button
-            v-for="opcion in opcionesFiltro"
+            v-for="opcion in opcionesFiltroVisibles"
             :key="opcion.valor"
             size="sm"
             :variant="filtro === opcion.valor ? 'default' : 'outline'"
@@ -297,7 +399,11 @@ async function confirmarEliminarCurso() {
       <Card
         v-for="curso in cursosFiltrados"
         :key="curso.id"
-        class="group overflow-visible border-border bg-card"
+        class="group cursor-pointer overflow-visible border-border bg-card"
+        @click="
+          cursoVistaPrevia = curso;
+          menuCursoId = undefined;
+        "
       >
         <div class="relative aspect-video w-full overflow-hidden">
           <ImagenPortadaCurso
@@ -334,12 +440,18 @@ async function confirmarEliminarCurso() {
           >
             <button
               class="px-3 py-2 text-left hover:bg-muted"
-              @click="
+              @click.stop="
                 cursoVistaPrevia = curso;
                 menuCursoId = undefined;
               "
             >
               Vista previa
+            </button>
+            <button
+              class="px-3 py-2 text-left hover:bg-muted"
+              @click.stop="abrirCompartirCurso(curso)"
+            >
+              Compartir curso
             </button>
             <button
               class="px-3 py-2 text-left hover:bg-muted"
@@ -352,7 +464,16 @@ async function confirmarEliminarCurso() {
               class="px-3 py-2 text-left text-red-600 hover:bg-red-500/10"
               @click="archivar(curso)"
             >
-              Eliminar
+              {{
+                esGestionOrganizacion ? "Archivar curso" : "Eliminar curso"
+              }}
+            </button>
+            <button
+              v-if="puedeEliminarMaterial"
+              class="px-3 py-2 text-left text-red-700 hover:bg-red-500/10"
+              @click="solicitarEliminarMaterial(curso)"
+            >
+              Eliminar material
             </button>
           </div>
         </div>
@@ -373,14 +494,15 @@ async function confirmarEliminarCurso() {
             }}
             <Badge
               variant="outline"
-              class="border-border text-[9px] text-muted-foreground"
+              class="text-[9px]"
+              :class="
+                claseModalidadImparticion(curso.modalidadImparticion ?? 'VIRTUAL')
+              "
             >
               {{
-                curso.modalidadImparticion === "EN_VIVO"
-                  ? "En vivo"
-                  : curso.modalidadImparticion === "HIBRIDA"
-                    ? "Híbrida"
-                    : "Virtual"
+                etiquetaModalidadImparticion(
+                  curso.modalidadImparticion ?? "VIRTUAL",
+                )
               }}
             </Badge>
           </div>
@@ -413,14 +535,23 @@ async function confirmarEliminarCurso() {
               {{ curso.valoracion }}
             </span>
           </div>
-          <div class="mt-5 flex gap-2">
+            <div class="mt-5 flex gap-2">
             <Button
               class="flex-1"
               variant="outline"
-              @click="editarCurso(curso)"
+              @click.stop="editarCurso(curso)"
             >
               <BookOpen class="h-4 w-4" />
               Editar contenido
+            </Button>
+            <Button
+              size="icon"
+              variant="outline"
+              aria-label="Compartir curso"
+              title="Compartir curso"
+              @click.stop="abrirCompartirCurso(curso)"
+            >
+              <Share2 class="h-4 w-4" />
             </Button>
           </div>
         </CardContent>
@@ -472,13 +603,76 @@ async function confirmarEliminarCurso() {
             </p>
           </div>
         </div>
-        <div class="flex justify-end gap-2 p-4">
+        <div class="space-y-4 p-4">
+          <div class="rounded-lg border border-border bg-muted/30 p-3">
+            <p class="text-sm font-semibold text-foreground">
+              Comparte en redes
+            </p>
+            <p class="mt-1 text-xs text-muted-foreground">
+              Enlace público de la ficha del curso (WhatsApp, Facebook, X,
+              Instagram).
+            </p>
+            <CompartirSesionRedes
+              etiqueta="Compartir curso"
+              :titulo="cursoVistaPrevia.titulo"
+              :url="urlCompartirCursoConOpenGraph(cursoVistaPrevia.id)"
+              etiqueta-enlace="Ver curso e inscribirte"
+            />
+          </div>
+          <div class="flex justify-end gap-2">
           <Button variant="outline" @click="cursoVistaPrevia = undefined">
             Cerrar
           </Button>
           <Button @click="editarCurso(cursoVistaPrevia)"
             >Editar contenido</Button
           >
+          </div>
+        </div>
+      </article>
+    </div>
+
+    <div
+      v-if="cursoCompartir"
+      class="fixed inset-0 z-50 grid place-items-center bg-slate-950/70 p-4"
+      @click.self="cursoCompartir = undefined"
+    >
+      <article class="w-full max-w-md border border-border bg-card p-6 shadow-2xl">
+        <div class="flex items-start gap-3">
+          <div
+            class="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-primary/10 text-primary"
+          >
+            <Share2 class="h-5 w-5" />
+          </div>
+          <div>
+            <h2 class="text-lg font-black text-foreground">Compartir curso</h2>
+            <p class="mt-1 text-sm text-muted-foreground">
+              {{ cursoCompartir.titulo }}
+            </p>
+          </div>
+        </div>
+        <p class="mt-4 text-sm text-muted-foreground">
+          Copia un mensaje listo para pegar en WhatsApp, Facebook, X o Instagram.
+          Quien abra el enlace verá la ficha pública del curso.
+        </p>
+        <CompartirSesionRedes
+          class="mt-4"
+          etiqueta="Redes"
+          :titulo="cursoCompartir.titulo"
+          :url="urlCompartirCursoConOpenGraph(cursoCompartir.id)"
+          etiqueta-enlace="Ver curso e inscribirte"
+        />
+        <Button
+          variant="outline"
+          class="mt-4 w-full"
+          @click="copiarEnlacePublicoCurso(cursoCompartir)"
+        >
+          <Link2 class="h-4 w-4" />
+          Copiar enlace público
+        </Button>
+        <div class="mt-5 flex justify-end">
+          <Button variant="outline" @click="cursoCompartir = undefined">
+            Cerrar
+          </Button>
         </div>
       </article>
     </div>
@@ -489,12 +683,24 @@ async function confirmarEliminarCurso() {
       @click.self="cursoPendienteEliminar = undefined"
     >
       <article class="w-full max-w-lg border border-border bg-card p-6 shadow-2xl">
-        <h2 class="text-lg font-black">¿Eliminar este curso?</h2>
+        <h2 class="text-lg font-black">
+          {{
+            esGestionOrganizacion
+              ? "¿Archivar este curso?"
+              : "¿Eliminar este curso?"
+          }}
+        </h2>
         <p class="mt-2 text-sm text-muted-foreground">
           <strong class="text-foreground">{{ cursoPendienteEliminar.titulo }}</strong>
-          dejará de mostrarse a nuevos alumnos (se oculta del catálogo). Quienes ya
-          están inscritos conservan acceso. Administración podrá revisarlo y
-          eliminar el material si corresponde.
+          {{
+            esGestionOrganizacion
+              ? "dejará de mostrarse a nuevos alumnos. Quienes ya están inscritos conservan acceso."
+              : "dejará de aparecer en tu lista y no se mostrará a nuevos alumnos. Quienes ya están inscritos conservan acceso."
+          }}
+          <template v-if="esGestionOrganizacion">
+            Para borrar sesiones, calendario y matrículas usa
+            «Eliminar material».
+          </template>
         </p>
         <div class="mt-6 flex justify-end gap-2">
           <Button
@@ -509,7 +715,47 @@ async function confirmarEliminarCurso() {
             :disabled="eliminandoCurso"
             @click="confirmarEliminarCurso"
           >
-            {{ eliminandoCurso ? "Eliminando…" : "Sí, eliminar" }}
+            {{
+              eliminandoCurso
+                ? "Procesando…"
+                : esGestionOrganizacion
+                  ? "Sí, archivar"
+                  : "Sí, eliminar"
+            }}
+          </Button>
+        </div>
+      </article>
+    </div>
+
+    <div
+      v-if="cursoPendienteEliminarMaterial"
+      class="fixed inset-0 z-50 grid place-items-center bg-slate-950/70 p-4"
+      @click.self="cursoPendienteEliminarMaterial = undefined"
+    >
+      <article class="w-full max-w-lg border border-border bg-card p-6 shadow-2xl">
+        <h2 class="text-lg font-black">¿Eliminar el material del curso?</h2>
+        <p class="mt-2 text-sm text-muted-foreground">
+          <strong class="text-foreground">{{
+            cursoPendienteEliminarMaterial.titulo
+          }}</strong>
+          se retirará del catálogo, se cancelarán las sesiones en Google
+          Calendar, se borrarán las sesiones en vivo y se desvincularán las
+          matrículas. Esta acción no se puede deshacer.
+        </p>
+        <div class="mt-6 flex justify-end gap-2">
+          <Button
+            variant="outline"
+            :disabled="eliminandoMaterial"
+            @click="cursoPendienteEliminarMaterial = undefined"
+          >
+            Cancelar
+          </Button>
+          <Button
+            variant="destructive"
+            :disabled="eliminandoMaterial"
+            @click="confirmarEliminarMaterial"
+          >
+            {{ eliminandoMaterial ? "Eliminando…" : "Sí, eliminar material" }}
           </Button>
         </div>
       </article>

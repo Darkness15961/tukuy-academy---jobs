@@ -1,14 +1,20 @@
 <script setup lang="ts">
-import { Check, Heart, Loader2, ShoppingCart, Star } from "lucide-vue-next";
+import { Check, Heart, Loader2, ShoppingCart, Star, Video } from "lucide-vue-next";
 import { computed, ref } from "vue";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import ImagenPortadaCurso from "@/components/shared/ImagenPortadaCurso.vue";
 import { cursoEstaMatriculado, cursoEsDePago } from "@/lib/acceso-curso";
+import {
+  cursoEstaCompletado,
+  cursoOfreceCertificado,
+} from "@/lib/curso-certificado";
 import { cn } from "@/lib/utils";
 import {
   enrichCourse,
+  etiquetaModalidadCurso,
+  claseModalidadCurso,
   formatCoursePrice,
   formatCourseRating,
   formatReviewCount,
@@ -26,6 +32,8 @@ const props = withDefaults(
     fluid?: boolean;
     /** En Mi aprendizaje: avance y metadatos en lugar de precio. */
     modoAprendizaje?: boolean;
+    /** Landing / catálogo público: sin matrícula ni botones de inscripción. */
+    modoCatalogoPublico?: boolean;
     inscribiendo?: boolean;
   }>(),
   {
@@ -36,6 +44,7 @@ const props = withDefaults(
     showDetail: true,
     fluid: false,
     modoAprendizaje: false,
+    modoCatalogoPublico: false,
     inscribiendo: false,
   },
 );
@@ -45,12 +54,20 @@ const emit = defineEmits<{
   addToCart: [];
   continueCourse: [];
   select: [];
+  solicitarCertificado: [];
 }>();
 
-const displayCourse = computed(() => enrichCourse(props.course));
+const displayCourse = computed(() =>
+  enrichCourse(props.course),
+);
+
+const esClaseEnVivo = computed(
+  () => displayCourse.value.mode === "Presencial",
+);
 
 const cursoPropio = computed(
   () =>
+    !props.modoCatalogoPublico &&
     !props.inscribiendo &&
     (props.modoAprendizaje || cursoEstaMatriculado(displayCourse.value)),
 );
@@ -68,12 +85,21 @@ const etiquetaProgreso = computed(() => {
 });
 
 const metaAprendizaje = computed(() =>
-  [displayCourse.value.duration, displayCourse.value.level, displayCourse.value.mode]
+  [
+    displayCourse.value.duration,
+    displayCourse.value.level,
+    etiquetaModalidadCurso(displayCourse.value.mode),
+  ]
     .filter(Boolean)
     .join(" · "),
 );
 
 const statusBadge = computed(() => {
+  if (props.modoCatalogoPublico) {
+    if (displayCourse.value.bestseller) return "Lo más vendido";
+    if (displayCourse.value.pricing === "free") return "Gratis";
+    return null;
+  }
   if (displayCourse.value.status === "Completado" || progreso.value >= 100) {
     return "Completado";
   }
@@ -87,12 +113,25 @@ const statusBadge = computed(() => {
   return null;
 });
 
+const etiquetaModalidad = computed(() =>
+  etiquetaModalidadCurso(displayCourse.value.mode),
+);
+
+const claseModalidad = computed(() =>
+  claseModalidadCurso(displayCourse.value.mode),
+);
+
 const puedeContinuar = computed(() => cursoPropio.value);
 
 const etiquetaContinuar = computed(() =>
-  displayCourse.value.status === "Completado" || progreso.value >= 100
-    ? "Revisar"
-    : "Continuar",
+  cursoEstaCompletado(displayCourse.value) ? "Revisar" : "Continuar",
+);
+
+const muestraCertificado = computed(
+  () =>
+    props.modoAprendizaje &&
+    cursoEstaCompletado(displayCourse.value) &&
+    cursoOfreceCertificado(displayCourse.value),
 );
 
 const etiquetaAccionDetalle = computed(() => {
@@ -143,9 +182,11 @@ const statusBadgeClass = computed(() => {
 });
 
 const marcoCursoPropio = computed(() =>
-  displayCourse.value.status === "Completado" || progreso.value >= 100
-    ? "border-emerald-500/45 bg-emerald-500/[0.06] shadow-[inset_0_0_0_1px_rgba(16,185,129,0.18)]"
-    : "border-primary/45 bg-primary/[0.06] shadow-[inset_0_0_0_1px_rgba(77,127,194,0.22)]",
+  props.modoCatalogoPublico
+    ? ""
+    : displayCourse.value.status === "Completado" || progreso.value >= 100
+      ? "border-emerald-500/45 bg-emerald-500/[0.06] shadow-[inset_0_0_0_1px_rgba(16,185,129,0.18)]"
+      : "border-primary/45 bg-primary/[0.06] shadow-[inset_0_0_0_1px_rgba(77,127,194,0.22)]",
 );
 
 const detailBullets = computed(() => [
@@ -276,6 +317,18 @@ function calculatePanelPosition() {
           :class="isFavorite ? 'fill-red-500 text-red-500' : 'text-muted-foreground'"
         />
       </Button>
+
+      <Badge
+        class="absolute left-3 top-3 inline-flex items-center gap-1 rounded-none px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide shadow-sm backdrop-blur-sm"
+        :class="claseModalidad"
+        variant="outline"
+      >
+        <Video
+          v-if="esClaseEnVivo"
+          class="h-3 w-3"
+        />
+        {{ etiquetaModalidad }}
+      </Badge>
     </div>
 
     <div class="flex flex-1 flex-col gap-2 px-4 pb-4 pt-3">
@@ -402,21 +455,33 @@ function calculatePanelPosition() {
               :style="{ width: `${progreso}%` }"
             />
           </div>
-          <div class="flex items-center justify-between gap-2">
+          <div class="flex flex-wrap items-center justify-between gap-2">
             <span
               class="text-xs"
               :class="isDark ? 'text-white/55' : 'text-muted-foreground'"
             >
               {{ etiquetaProgreso }}
             </span>
-            <Button
+            <div
               v-if="showActions"
-              size="sm"
-              class="shrink-0"
-              @click.stop="emit('continueCourse')"
+              class="flex shrink-0 flex-wrap items-center justify-end gap-2"
             >
-              {{ etiquetaContinuar }}
-            </Button>
+              <Button
+                v-if="muestraCertificado"
+                size="sm"
+                class="bg-primary text-primary-foreground hover:bg-primary/90"
+                @click.stop="emit('solicitarCertificado')"
+              >
+                Descargar certificado
+              </Button>
+              <Button
+                size="sm"
+                :variant="muestraCertificado ? 'outline' : 'default'"
+                @click.stop="emit('continueCourse')"
+              >
+                {{ etiquetaContinuar }}
+              </Button>
+            </div>
           </div>
         </div>
       </template>
@@ -431,7 +496,7 @@ function calculatePanelPosition() {
             :class="isDark ? 'text-accent' : 'text-primary'"
           >
             {{
-              displayCourse.status === "Completado" || progreso >= 100
+              cursoEstaCompletado(displayCourse)
                 ? "Completado"
                 : "Ya lo tienes"
             }}
@@ -443,14 +508,26 @@ function calculatePanelPosition() {
             {{ progreso }}% de avance
           </p>
         </div>
-        <Button
+        <div
           v-if="showActions"
-          size="sm"
-          class="shrink-0"
-          @click.stop="emit('continueCourse')"
+          class="flex shrink-0 flex-wrap items-center justify-end gap-2"
         >
-          {{ etiquetaContinuar }}
-        </Button>
+          <Button
+            v-if="muestraCertificado"
+            size="sm"
+            class="bg-primary text-primary-foreground hover:bg-primary/90"
+            @click.stop="emit('solicitarCertificado')"
+          >
+            Descargar certificado
+          </Button>
+          <Button
+            size="sm"
+            :variant="muestraCertificado ? 'outline' : 'default'"
+            @click.stop="emit('continueCourse')"
+          >
+            {{ etiquetaContinuar }}
+          </Button>
+        </div>
       </div>
 
       <div
@@ -525,6 +602,21 @@ function calculatePanelPosition() {
 
         <div class="mt-3 flex flex-wrap items-center gap-2">
           <Badge
+            :class="
+              cn(
+                'inline-flex items-center gap-1 rounded-none px-2.5 py-0.5 text-[11px] font-semibold leading-5 shadow-none',
+                claseModalidad,
+              )
+            "
+            variant="outline"
+          >
+            <Video
+              v-if="esClaseEnVivo"
+              class="h-3 w-3"
+            />
+            {{ etiquetaModalidad }}
+          </Badge>
+          <Badge
             v-if="statusBadge"
             :class="
               cn(
@@ -544,7 +636,7 @@ function calculatePanelPosition() {
         </div>
 
         <p class="mt-3 text-xs text-muted-foreground">
-          {{ displayCourse.duration }} en total · {{ displayCourse.mode }} ·
+          {{ displayCourse.duration }} en total · {{ etiquetaModalidad }} ·
           {{ displayCourse.category }}
         </p>
 

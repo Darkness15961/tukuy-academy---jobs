@@ -91,7 +91,25 @@ export const cursosService = {
         ).length,
       };
 
-      return [...desdeCatalogo, ...soloMatricula];
+      const fusionados = [...desdeCatalogo, ...soloMatricula];
+      try {
+        const sesiones = await secundariaGatewayService.listarSesiones();
+        const conSesion = new Set(
+          (sesiones?.sesiones ?? [])
+            .map((s) => String(s.cursoId ?? "").trim())
+            .filter(Boolean),
+        );
+        return fusionados.map((curso) => {
+          if (!conSesion.has(curso.id)) return curso;
+          if (curso.mode === "Mixto" || curso.mode === "Presencial") {
+            return curso;
+          }
+          // VIRTUAL con sesiones reales: curso en vivo mal etiquetado.
+          return { ...curso, mode: "Presencial" as const };
+        });
+      } catch {
+        return fusionados;
+      }
     }
 
     metaCatalogoAlumno = null;

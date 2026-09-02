@@ -39,6 +39,11 @@ import { computed, nextTick, onMounted, reactive, ref, toRaw, watch } from "vue"
 import { useRoute, useRouter } from "vue-router";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import CompartirSesionRedes from "@/components/shared/CompartirSesionRedes.vue";
+import {
+  urlCompartirCursoConOpenGraph,
+  urlPublicaCurso,
+} from "@/lib/compartir-sesion-en-vivo";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import Skeleton from "primevue/skeleton";
@@ -99,11 +104,8 @@ import {
   sumarMinutosPrograma,
 } from "@/lib/duracion-curso";
 import {
-  OPCIONES_FUENTE_VIDEO,
   ayudaUrlVideo,
-  detectarFuenteVideo,
   placeholderUrlVideo,
-  type FuenteVideoCurso,
 } from "@/lib/video-curso";
 
 const router = useRouter();
@@ -169,11 +171,18 @@ const modalCategorias = ref(false);
 const nuevaCategoria = ref("");
 const categoriaPendienteEliminar = ref("");
 const categoriasCurso = ref([
-  "Gestión de obras",
-  "Seguridad",
+  "Gestión de obra",
+  "Construcción civil",
+  "BIM / Modelado",
+  "Costos y presupuestos",
+  "Seguridad en obra",
+  "Calidad",
+  "Tecnología / digital",
+  "Gestión y liderazgo",
+  "Estructuras",
   "Logística",
   "Certificación profesional",
-  "Especialización técnica",
+  "Empleabilidad",
 ]);
 const esGestionOrganizacion = computed(() =>
   route.path.startsWith("/organizacion/"),
@@ -409,10 +418,8 @@ function alCambiarTipo(item: ItemSeccion) {
 }
 
 function alCambiarUrlVideo(item: ItemSeccion) {
-  const detectada = detectarFuenteVideo(item.urlYoutube);
-  if (detectada) item.fuenteVideo = detectada;
+  item.fuenteVideo = "youtube";
   if (
-    detectada &&
     String(item.urlYoutube ?? "").trim() &&
     !String(item.titulo ?? "").trim()
   ) {
@@ -505,15 +512,8 @@ async function corroborarUrlVideo(item: ItemSeccion) {
     toast.error("Pega primero el enlace del video.");
     return;
   }
-  const fuente = item.fuenteVideo ?? detectarFuenteVideo(url) ?? "youtube";
+  const fuente = "youtube";
   item.fuenteVideo = fuente;
-  if (fuente !== "youtube") {
-    const meta = metaVideo(item);
-    meta.estado = "error";
-    meta.error =
-      "La corroboración de duración con YouTube Data API solo aplica a enlaces de YouTube.";
-    return;
-  }
   if (!idVideoYoutube(url)) {
     const meta = metaVideo(item);
     meta.estado = "error";
@@ -531,8 +531,8 @@ async function esperarDuracionesVideoPendientes() {
       const url = String(item.urlYoutube ?? "").trim();
       if (
         item.tipo === "video" &&
-        (item.fuenteVideo ?? detectarFuenteVideo(url)) === "youtube" &&
         url &&
+        idVideoYoutube(url) &&
         !item.duracionMinutos
       ) {
         pendientes.push(
@@ -544,8 +544,8 @@ async function esperarDuracionesVideoPendientes() {
   if (pendientes.length) await Promise.allSettled(pendientes);
 }
 
-function fuenteVideoItem(item: ItemSeccion): FuenteVideoCurso {
-  return item.fuenteVideo ?? "youtube";
+function fuenteVideoItem(_item: ItemSeccion): "youtube" {
+  return "youtube";
 }
 
 const duracionTotalMinutos = computed(() =>
@@ -1272,10 +1272,8 @@ function construirBorrador(): BorradorCursoDocente {
       const url = String(item.urlYoutube ?? "").trim();
       item.urlYoutube = url;
       if (!url) continue;
-      item.fuenteVideo =
-        detectarFuenteVideo(url) ?? item.fuenteVideo ?? "youtube";
-      // La secundaria descarta ítems sin título; el enlace de Drive/TikTok
-      // no puede perderse por dejar el título vacío.
+      item.fuenteVideo = "youtube";
+      // La secundaria descarta ítems sin título.
       if (!String(item.titulo ?? "").trim()) {
         item.titulo = "Clase en video";
       }
@@ -1909,6 +1907,16 @@ function anterior() {
   if (pasoAnterior) paso.value = pasoAnterior.pasoOriginal;
 }
 
+async function copiarEnlacePublicoCurso() {
+  if (!cursoPersistido.value) return;
+  try {
+    await navigator.clipboard.writeText(urlPublicaCurso(cursoId.value));
+    toast.success("Enlace público copiado");
+  } catch {
+    toast.error("No se pudo copiar el enlace");
+  }
+}
+
 async function procesarArchivoPortada(archivo: File) {
   errorImagen.value = "";
   if (!archivo.type.startsWith("image/")) {
@@ -1992,10 +2000,11 @@ async function confirmarEliminarCurso() {
   try {
     if (esGestionOrganizacion.value) {
       await docenteService.archivarCurso(cursoId.value);
+      toast.success("Curso archivado.");
     } else {
       await docenteService.eliminarCurso(cursoId.value);
+      toast.success("Curso eliminado.");
     }
-    toast.success("Curso oculto del catálogo.");
     void router.push(rutaRegreso.value);
   } catch (causa) {
     toast.error(
@@ -2058,7 +2067,9 @@ async function confirmarEliminarCurso() {
               variant="outline"
               class="border-destructive/40 text-destructive hover:bg-destructive/10"
               @click="modalEliminarCurso = true"
-              ><Trash2 class="h-4 w-4" />Ocultar curso</Button
+              ><Trash2 class="h-4 w-4" />{{
+                esGestionOrganizacion ? "Archivar curso" : "Eliminar curso"
+              }}</Button
             >
           </div>
         </div>
@@ -2441,38 +2452,13 @@ async function confirmarEliminarCurso() {
                     >
                       <label
                         class="text-xs font-bold uppercase tracking-wide text-muted-foreground"
-                        >Origen del video</label
-                      >
-                      <Select
-                        :model-value="fuenteVideoItem(item)"
-                        :options="OPCIONES_FUENTE_VIDEO"
-                        option-label="label"
-                        option-value="value"
-                        class="filtro-control w-full"
-                        :panel-class="PANEL_COMBO"
-                        @update:model-value="
-                          (valor: FuenteVideoCurso) =>
-                            (item.fuenteVideo = valor)
-                        "
-                      />
-                      <label
-                        class="text-xs font-bold uppercase tracking-wide text-muted-foreground"
-                        >Enlace de
-                        {{
-                          fuenteVideoItem(item) === "tiktok"
-                            ? "TikTok"
-                            : fuenteVideoItem(item) === "drive"
-                              ? "Google Drive"
-                              : "YouTube"
-                        }}</label
+                        >Enlace de YouTube</label
                       >
                       <div class="flex flex-wrap items-stretch gap-2">
                         <Input
                           v-model="item.urlYoutube"
                           class="min-w-0 flex-1"
-                          :placeholder="
-                            placeholderUrlVideo(fuenteVideoItem(item))
-                          "
+                          :placeholder="placeholderUrlVideo('youtube')"
                           @update:model-value="alCambiarUrlVideo(item)"
                         />
                         <Button
@@ -2498,7 +2484,7 @@ async function confirmarEliminarCurso() {
                         </Button>
                       </div>
                       <p class="text-xs text-muted-foreground">
-                        {{ ayudaUrlVideo(fuenteVideoItem(item)) }}
+                        {{ ayudaUrlVideo("youtube") }}
                       </p>
                       <p
                         v-if="metaVideo(item).estado === 'error'"
@@ -3409,12 +3395,39 @@ async function confirmarEliminarCurso() {
                       : "El equipo Tukuy evaluará el contenido y te notificará sus observaciones."
                   }}
                 </p>
+                <div
+                  v-if="cursoPersistido"
+                  class="mx-auto mt-6 max-w-md rounded-lg border border-border bg-card p-4 text-left shadow-sm"
+                >
+                  <p class="text-sm font-semibold text-foreground">
+                    Comparte el curso en redes
+                  </p>
+                  <p class="mt-1 text-xs text-muted-foreground">
+                    Copia un mensaje listo para WhatsApp, Facebook, X o Instagram.
+                    El enlace abre la ficha pública del curso.
+                  </p>
+                  <CompartirSesionRedes
+                    class="mt-3"
+                    etiqueta="Compartir curso"
+                    :titulo="curso.titulo.trim() || 'Curso'"
+                    :url="urlCompartirCursoConOpenGraph(cursoId)"
+                    etiqueta-enlace="Ver curso e inscribirte"
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    class="mt-3 w-full"
+                    @click="copiarEnlacePublicoCurso"
+                  >
+                    <Link2 class="h-4 w-4" />
+                    Copiar enlace público
+                  </Button>
+                </div>
                 <Button
-                  v-if="esGestionOrganizacion"
                   class="mt-5"
                   @click="router.push(rutaRegreso)"
                 >
-                  Volver al catálogo
+                  {{ esGestionOrganizacion ? "Volver al catálogo" : "Volver a mis cursos" }}
                 </Button>
               </div>
               <template v-else
@@ -3641,13 +3654,19 @@ async function confirmarEliminarCurso() {
     <Dialog
       v-model:visible="modalEliminarCurso"
       modal
-      header="Ocultar curso del catálogo"
+      :header="
+        esGestionOrganizacion
+          ? 'Archivar curso institucional'
+          : 'Eliminar curso'
+      "
       :style="{ width: 'min(32rem, calc(100vw - 2rem))' }"
     >
       <p class="text-sm text-muted-foreground">
-        El curso dejará de mostrarse en el catálogo para nuevos alumnos. Quienes ya
-        están inscritos conservan acceso, progreso y certificados. No se borran
-        materiales ni matrículas.
+        {{
+          esGestionOrganizacion
+            ? "El curso dejará de mostrarse en el catálogo para nuevos alumnos. Quienes ya están inscritos conservan acceso, progreso y certificados."
+            : "El curso dejará de aparecer en tu lista y no se mostrará a nuevos alumnos. Quienes ya están inscritos conservan acceso, progreso y certificados."
+        }}
       </p>
       <template #footer>
         <Button variant="outline" @click="modalEliminarCurso = false">
@@ -3658,7 +3677,13 @@ async function confirmarEliminarCurso() {
           :disabled="eliminandoCurso"
           @click="confirmarEliminarCurso"
         >
-          {{ eliminandoCurso ? "Ocultando…" : "Sí, ocultar" }}
+          {{
+            eliminandoCurso
+              ? "Procesando…"
+              : esGestionOrganizacion
+                ? "Sí, archivar"
+                : "Sí, eliminar"
+          }}
         </Button>
       </template>
     </Dialog>

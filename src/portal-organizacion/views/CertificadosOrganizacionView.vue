@@ -10,6 +10,7 @@ import {
   Send,
   ShieldCheck,
   SlidersHorizontal,
+  X,
 } from "lucide-vue-next";
 import Column from "primevue/column";
 import DataTable from "primevue/datatable";
@@ -17,7 +18,7 @@ import InputText from "primevue/inputtext";
 import Select from "primevue/select";
 import Skeleton from "primevue/skeleton";
 import Tag from "primevue/tag";
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 
 import { organizacionService } from "@/api/services/organizacion.service";
@@ -40,6 +41,16 @@ const logoEntidad = computed(
     funcionesEntidadActiva.value.find((item) => item.organizacion?.logo)
       ?.organizacion?.logo,
 );
+
+const instalacionId = computed(
+  () =>
+    String(contextoActivo.value?.organizacionId ?? "").trim() ||
+    String(funcionesEntidadActiva.value[0]?.organizacion?.id ?? "").trim(),
+);
+
+const emitidoReciente = ref<CertificadoEmitidoDocente | null>(null);
+const previewPdfUrl = ref<string | null>(null);
+const cargandoPreview = ref(false);
 
 const cargando = ref(true);
 const descargandoId = ref("");
@@ -217,12 +228,7 @@ async function emitir(pendienteId: string) {
     if (apiConfig.secundariaCursos) {
       pendientesFirma.value = await organizacionService.listarPendientesFirma();
     }
-    const requiereFirma = emitido.requiereFirmaInstitucional === true;
-    toast.success(requiereFirma
-      ? "Certificado preparado. Falta la firma institucional para publicarlo."
-      : "Certificado emitido y enviado al estudiante.");
-    setTimeout(() => {
-          }, 3500);
+    await abrirExitoEmision(emitido);
   } catch (causa) {
     error.value =
       causa instanceof Error
@@ -232,6 +238,85 @@ async function emitir(pendienteId: string) {
     emitiendoId.value = "";
   }
 }
+
+function irEmisionManual() {
+  router.push({ name: "emision-manual-certificado-organizacion" });
+}
+
+function liberarPreviewPdf() {
+  if (previewPdfUrl.value) {
+    URL.revokeObjectURL(previewPdfUrl.value);
+    previewPdfUrl.value = null;
+  }
+}
+
+async function abrirExitoEmision(emitido: CertificadoEmitidoDocente) {
+  emitidoReciente.value = emitido;
+  liberarPreviewPdf();
+  cargandoPreview.value = true;
+  try {
+    await asegurarIndicePublicoManual(emitido);
+    const clave = clavePdfReal(emitido);
+    if (clave) {
+      const { storageAcademia } = await import("@/lib/storage-academia");
+      previewPdfUrl.value = await storageAcademia.urlDescargaCertificado(clave);
+    } else {
+      const { blobCertificatePdf } = await import("@/lib/certificado-pdf");
+      const blob = await blobCertificatePdf(await datosCertificado(emitido));
+      previewPdfUrl.value = URL.createObjectURL(blob);
+    }
+    const requiereFirma = emitido.requiereFirmaInstitucional === true;
+    toast.success(
+      requiereFirma
+        ? "Certificado preparado. Falta la firma institucional para publicarlo."
+        : "Certificado emitido correctamente.",
+    );
+  } catch {
+    // Igual mostramos el diálogo; Ver/Descargar pueden regenerar.
+    toast.success("Certificado emitido. Usa Ver o Descargar en el diálogo.");
+  } finally {
+    cargandoPreview.value = false;
+  }
+}
+
+function cerrarExitoEmision() {
+  emitidoReciente.value = null;
+  liberarPreviewPdf();
+}
+
+/** Emisiones MANUAL deben aparecer en /certificados/verificar/:codigo */
+async function asegurarIndicePublicoManual(
+  certificado: CertificadoEmitidoDocente,
+) {
+  const codigo = String(certificado.codigoVerificacion ?? "").trim();
+  const origen = String(certificado.origenEmision ?? "").toUpperCase();
+  const id =
+    String(certificado.certificadoId ?? "").trim() ||
+    (/^[0-9a-f-]{36}$/i.test(certificado.id) ? certificado.id : "");
+  if (!id) return;
+  if (origen !== "MANUAL" && !codigo.startsWith("TA-M-")) return;
+  try {
+    await organizacionService.publicarIndiceCertificado(id);
+  } catch {
+    /* no bloquea la vista previa */
+  }
+}
+
+function puedeVerCertificado(certificado: CertificadoEmitidoDocente) {
+  if (certificado.estado === "REVOCADO" || certificado.revocadoEn) return true;
+  if (String(certificado.origenEmision ?? "").toUpperCase() === "MANUAL") {
+    return true;
+  }
+  return Boolean(
+    certificado.horasCertificadas ||
+      certificado.codigoVerificacion ||
+      certificado.claveAlmacenamiento,
+  );
+}
+
+onBeforeUnmount(() => {
+  liberarPreviewPdf();
+});
 
 async function firmar(item: {
   firmaId: string;
@@ -366,17 +451,33 @@ async function datosCertificado(certificado: CertificadoEmitidoDocente) {
     "@/api/services/plantillas-certificado.service"
   );
   const { INSTALACION_TUKUY_ACADEMY_ID } = await import("@/lib/constants");
-  const instalacionId =
-    contextoActivo.value?.organizacionId?.trim() || INSTALACION_TUKUY_ACADEMY_ID;
+  const orgId =
+    contextoActivo.value?.organizacionId?.trim() ||
+    instalacionId.value ||
+    INSTALACION_TUKUY_ACADEMY_ID;
+  const config = await plantillasCertificadoService.obtenerConfig(orgId);
+  const plantillaId = String(certificado.plantillaRef ?? "").trim();
   const plantilla =
-    await plantillasCertificadoService.obtenerDefault(instalacionId);
+    (plantillaId
+      ? config.plantillas.find((p) => p.id === plantillaId)
+      : null) ??
+    config.plantillas.find((p) => p.esDefault) ??
+    (await plantillasCertificadoService.obtenerDefault(orgId));
+  const esManual =
+    String(certificado.origenEmision ?? "").toUpperCase() === "MANUAL";
   return {
     holderName: certificado.nombre,
     courseTitle: certificado.curso,
-    category: "Formación especializada",
-    duration: certificado.horasCertificadas
-      ? `${certificado.horasCertificadas} horas certificadas`
-      : "Duración certificada",
+    category: esManual
+      ? "Certificación institucional"
+      : "Formación especializada",
+    duration: certificado.detalleManual?.trim()
+      ? certificado.detalleManual.trim()
+      : certificado.horasCertificadas
+        ? `${certificado.horasCertificadas} horas certificadas`
+        : esManual
+          ? "Certificación institucional"
+          : "Duración certificada",
     level: "Aprobado",
     mode: "Virtual",
     issuedAt: certificado.fecha,
@@ -402,10 +503,15 @@ function clavePdfReal(certificado: CertificadoEmitidoDocente) {
 async function verCertificado(certificado: CertificadoEmitidoDocente) {
   if (certificado.estado === "REVOCADO" || certificado.revocadoEn) {
     error.value = "Este certificado está revocado.";
-  } else if (certificado.requiereFirmaInstitucional) {
+  } else if (
+    certificado.requiereFirmaInstitucional &&
+    String(certificado.origenEmision ?? "").toUpperCase() !== "MANUAL" &&
+    !String(certificado.codigoVerificacion ?? "").startsWith("TA-M-")
+  ) {
     error.value =
       "Este certificado aún no está publicado: falta la firma institucional. El QR no verificará hasta firmarlo.";
   }
+  await asegurarIndicePublicoManual(certificado);
   const clave = clavePdfReal(certificado);
   if (clave) {
     try {
@@ -425,10 +531,14 @@ async function descargarCertificado(certificado: CertificadoEmitidoDocente) {
   descargandoId.value = certificado.id;
   error.value = "";
   try {
-    if (certificado.requiereFirmaInstitucional) {
+    const esManual =
+      String(certificado.origenEmision ?? "").toUpperCase() === "MANUAL" ||
+      String(certificado.codigoVerificacion ?? "").startsWith("TA-M-");
+    if (certificado.requiereFirmaInstitucional && !esManual) {
       error.value =
         "Descarga generada, pero el certificado aún no verifica en público (falta firma institucional).";
     }
+    await asegurarIndicePublicoManual(certificado);
     const clave = clavePdfReal(certificado);
     if (clave) {
       const { storageAcademia } = await import("@/lib/storage-academia");
@@ -456,10 +566,17 @@ async function descargarCertificado(certificado: CertificadoEmitidoDocente) {
     <header class="flex flex-wrap items-start justify-between gap-4">
       <TituloConAyuda
         titulo="Certificados institucionales"
-        ayuda="Emite, consulta y verifica los certificados otorgados por la entidad a los alumnos que cumplen los requisitos académicos."
+        ayuda="Emite certificados de cursos (con requisitos académicos) o de forma manual (reconocimientos, trabajos, etc.) usando las plantillas de la entidad."
         clase-titulo="text-2xl font-black"
       />
       <div class="flex flex-wrap gap-2">
+        <Button
+          v-if="tienePermiso('certificados.emitir')"
+          @click="irEmisionManual"
+        >
+          <Award class="h-4 w-4" />
+          Emitir manual
+        </Button>
         <Button
           variant="outline"
           @click="router.push('/organizacion/certificados/diseno')"
@@ -473,6 +590,99 @@ async function descargarCertificado(certificado: CertificadoEmitidoDocente) {
         </Button>
       </div>
     </header>
+
+    <div
+      v-if="emitidoReciente"
+      class="fixed inset-0 z-50 grid place-items-center bg-black/55 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="titulo-cert-emitido"
+      @click.self="cerrarExitoEmision"
+    >
+      <div
+        class="flex max-h-[92vh] w-full max-w-4xl flex-col overflow-hidden border border-border bg-card shadow-2xl"
+      >
+        <header
+          class="flex items-start justify-between gap-3 border-b border-border px-5 py-4"
+        >
+          <div>
+            <p
+              class="text-xs font-black uppercase tracking-[.2em] text-primary"
+            >
+              Certificado listo
+            </p>
+            <h2 id="titulo-cert-emitido" class="mt-1 text-xl font-black">
+              Vista previa
+            </h2>
+            <p class="mt-1 text-sm text-muted-foreground">
+              {{ emitidoReciente.nombre }} · {{ emitidoReciente.curso }}
+            </p>
+            <p class="mt-1 font-mono text-xs text-muted-foreground">
+              {{ codigoCertificado(emitidoReciente) }}
+            </p>
+            <p
+              v-if="emitidoReciente.requiereFirmaInstitucional"
+              class="mt-2 text-sm text-amber-700 dark:text-amber-400"
+            >
+              Falta la firma institucional para publicarlo en el verificador.
+            </p>
+          </div>
+          <button
+            type="button"
+            class="grid h-9 w-9 place-items-center text-muted-foreground hover:bg-muted"
+            aria-label="Cerrar"
+            @click="cerrarExitoEmision"
+          >
+            <X class="h-4 w-4" />
+          </button>
+        </header>
+
+        <div class="min-h-0 flex-1 bg-muted/40 p-3">
+          <div
+            v-if="cargandoPreview"
+            class="grid h-[55vh] place-items-center text-sm text-muted-foreground"
+          >
+            Generando vista previa…
+          </div>
+          <iframe
+            v-else-if="previewPdfUrl"
+            :src="previewPdfUrl"
+            title="Vista previa del certificado"
+            class="h-[55vh] w-full border border-border bg-white"
+          />
+          <div
+            v-else
+            class="grid h-[55vh] place-items-center gap-3 text-center text-sm text-muted-foreground"
+          >
+            <p>No se pudo incrustar la vista previa.</p>
+            <Button variant="outline" @click="verCertificado(emitidoReciente)">
+              <Eye class="h-4 w-4" />
+              Abrir PDF
+            </Button>
+          </div>
+        </div>
+
+        <footer
+          class="flex flex-wrap items-center justify-end gap-2 border-t border-border px-5 py-4"
+        >
+          <Button variant="outline" @click="cerrarExitoEmision">Cerrar</Button>
+          <Button
+            variant="outline"
+            @click="verCertificado(emitidoReciente)"
+          >
+            <Eye class="h-4 w-4" />
+            Abrir
+          </Button>
+          <Button
+            :disabled="descargandoId === emitidoReciente.id"
+            @click="descargarCertificado(emitidoReciente)"
+          >
+            <FileDown class="h-4 w-4" />
+            Descargar PDF
+          </Button>
+        </footer>
+      </div>
+    </div>
 
     <div
       v-if="mensaje"
@@ -917,9 +1127,11 @@ async function descargarCertificado(certificado: CertificadoEmitidoDocente) {
               :value="
                 data.estado === 'REVOCADO' || data.revocadoEn
                   ? 'Revocado'
-                  : data.horasCertificadas
-                    ? 'Verificado'
-                    : 'Registro anterior'
+                  : String(data.origenEmision ?? '').toUpperCase() === 'MANUAL'
+                    ? 'Manual'
+                    : data.horasCertificadas
+                      ? 'Verificado'
+                      : 'Registro anterior'
               "
             />
           </template>
@@ -932,9 +1144,9 @@ async function descargarCertificado(certificado: CertificadoEmitidoDocente) {
                 variant="ghost"
                 size="icon"
                 aria-label="Ver certificado"
-                :disabled="!data.horasCertificadas"
+                :disabled="!puedeVerCertificado(data)"
                 :title="
-                  data.horasCertificadas
+                  puedeVerCertificado(data)
                     ? 'Ver certificado'
                     : 'Registro anterior sin evidencias migradas'
                 "

@@ -24,6 +24,12 @@ declare module "npm:@aws-sdk/client-s3@3.787.0" {
   export class GetObjectCommand {
     constructor(input: Record<string, unknown>);
   }
+  export class ListObjectsV2Command {
+    constructor(input: Record<string, unknown>);
+  }
+  export class HeadObjectCommand {
+    constructor(input: Record<string, unknown>);
+  }
 }
 
 declare module "npm:@aws-sdk/s3-request-presigner@3.787.0" {
@@ -32,4 +38,13 @@ declare module "npm:@aws-sdk/s3-request-presigner@3.787.0" {
     command: unknown,
     options?: { expiresIn?: number },
   ): Promise<string>;
+}
+
+declare module "npm:nodemailer@6.10.1" {
+  const nodemailer: {
+    createTransport(options: Record<string, unknown>): {
+      sendMail(options: Record<string, unknown>): Promise<{ messageId?: string }>;
+    };
+  };
+  export default nodemailer;
 }

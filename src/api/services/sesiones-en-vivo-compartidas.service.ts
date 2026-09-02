@@ -12,11 +12,13 @@ import {
 import { matriculasOrganizacion } from "@/portal-organizacion/data/organizacion.mock";
 import type {
   InvitadoSesionEnVivo,
+  CrearSesionEnVivoRapidaInput,
   ProgramarSesionEnVivoInput,
   SesionEnVivoOrganizacion,
 } from "@/portal-organizacion/types/sesiones-en-vivo.types";
 import { cursoAdmiteSesionesEnVivo } from "@/portal-organizacion/types/sesiones-en-vivo.types";
 import { meetUrlEsSimulado } from "@/lib/meet-sesion";
+import { urlPortalLoginClaseEnVivo } from "@/lib/ruta-consumo-curso";
 import type { ContextoSesion } from "@/types/membresia.types";
 import type { Course } from "@/types/academia";
 import type { SesionDocente } from "@/portal-docente/types/docente.types";
@@ -411,12 +413,63 @@ async function listarPorOrganizacion(organizacionId: string) {
     );
 }
 
+async function correosInvitadosProgramacion(
+  input: ProgramarSesionEnVivoInput,
+): Promise<{ correos: string[]; invitados: InvitadoSesionEnVivo[] }> {
+  const invitarMatriculados = input.invitarMatriculados !== false;
+  const vistos = new Set<string>();
+  const invitados: InvitadoSesionEnVivo[] = [];
+
+  function agregar(email: string, extra?: Partial<InvitadoSesionEnVivo>) {
+    const normalizado = email.trim().toLowerCase();
+    if (!normalizado.includes("@") || vistos.has(normalizado)) return;
+    vistos.add(normalizado);
+    invitados.push({
+      email: normalizado,
+      estado: "PENDIENTE",
+      ...extra,
+    });
+  }
+
+  agregar(input.docenteEmail);
+
+  if (invitarMatriculados) {
+    try {
+      const listado = await secundariaGatewayService.listarEstudiantes(
+        input.cursoId,
+      );
+      for (const est of listado.estudiantes ?? []) {
+        const correo = String(est.correo ?? "").trim();
+        if (correo.includes("@")) {
+          agregar(correo, {
+            nombre: est.nombre,
+            alumnoId: est.alumnoId,
+          });
+          continue;
+        }
+        if (est.nombre.includes("@")) {
+          agregar(est.nombre, { alumnoId: est.alumnoId });
+        }
+      }
+    } catch {
+      // El gateway también resuelve matriculados al crear la sesión.
+    }
+  }
+
+  for (const email of input.emailsInvitados ?? []) {
+    agregar(email);
+  }
+
+  return { correos: invitados.map((item) => item.email), invitados };
+}
+
 async function programar(input: ProgramarSesionEnVivoInput) {
   if (apiConfig.secundariaCursos) {
     const inicio = new Date(input.fechaHoraInicio);
     const fin = new Date(
       inicio.getTime() + input.duracionMinutos * 60_000,
     );
+    const { correos, invitados } = await correosInvitadosProgramacion(input);
     const creada = await secundariaGatewayService.crearSesion({
       cursoId: input.cursoId,
       titulo: input.titulo.trim(),
@@ -424,12 +477,18 @@ async function programar(input: ProgramarSesionEnVivoInput) {
       terminaEn: fin.toISOString(),
       // El gateway crea Meet real (o simulado) y rellena url_acceso.
       urlAcceso: null,
-      attendees: input.emailsInvitados,
+      attendees: correos,
+      invitarMatriculados: input.invitarMatriculados !== false,
     });
     const mapeada = mapearSesionSecundariaAOrg(
       creada.sesion,
       input.organizacionId,
     );
+    mapeada.invitados = invitados;
+    mapeada.inscritos = invitados.length;
+    mapeada.docenteNombre = input.docenteNombre;
+    mapeada.docenteEmail = input.docenteEmail.trim().toLowerCase();
+    mapeada.creadoPor = input.creadoPor;
     if (creada.googleMeet) {
       mapeada.meetSimulado = creada.googleMeet.simulado;
       mapeada.meetAviso = creada.googleMeet.simulado
@@ -442,6 +501,34 @@ async function programar(input: ProgramarSesionEnVivoInput) {
       if (creada.googleMeet.calendarEventId) {
         mapeada.calendarEventId = creada.googleMeet.calendarEventId;
       }
+    }
+    const correosInvitados = [
+      ...new Set(
+        correos
+          .map((email) => email.trim().toLowerCase())
+          .filter((email) => email.includes("@")),
+      ),
+    ];
+    if (correosInvitados.length) {
+      const { notificacionesCorreoService } = await import(
+        "@/api/services/notificaciones-correo.service"
+      );
+      const { correoEnSegundoPlano } = await import(
+        "@/lib/correo-en-segundo-plano"
+      );
+      correoEnSegundoPlano(
+        notificacionesCorreoService.enviarClaseProgramadaMasivo({
+          correos: correosInvitados,
+          datosBase: {
+            tituloClase: mapeada.titulo,
+            nombreCurso: mapeada.cursoTitulo || input.cursoTitulo,
+            fechaHora: mapeada.fechaHoraInicio,
+            urlMeet: mapeada.meetUrl || undefined,
+            urlCurso: urlPortalLoginClaseEnVivo(mapeada.cursoId),
+          },
+        }),
+        "clase_programada",
+      );
     }
     emitirCambio(input.organizacionId);
     return mapeada;
@@ -503,6 +590,108 @@ async function programar(input: ProgramarSesionEnVivoInput) {
   const creada = await repo(input.organizacionId).crear(sesion);
   emitirCambio(input.organizacionId);
   return creada;
+}
+
+/** Crea curso mínimo EN_VIVO + sesión + Meet (flujo corto). */
+async function programarRapida(
+  input: CrearSesionEnVivoRapidaInput,
+): Promise<SesionEnVivoOrganizacion> {
+  if (apiConfig.secundariaCursos) {
+    const creada = await secundariaGatewayService.crearSesionRapida({
+      tituloCurso: input.tituloCurso.trim(),
+      descripcion: input.descripcion?.trim() || "",
+      tituloSesion: (input.tituloSesion ?? input.tituloCurso).trim(),
+      iniciaEn: new Date(input.fechaHoraInicio).toISOString(),
+      duracionMinutos: input.duracionMinutos,
+      alcance: input.alcance ?? "PUBLICO",
+      portadaUrl: input.portadaUrl ?? null,
+      attendees: input.emailsInvitados ?? [],
+      invitarMatriculados: input.invitarMatriculados !== false,
+      certificado: input.certificado === true,
+      exigirAsistencia: input.exigirAsistencia !== false,
+      porcentajeMinimoAsistencia: input.porcentajeMinimoAsistencia ?? 50,
+      exigirNota: input.exigirNota === true,
+      notaMinima: input.notaMinima ?? 14,
+    });
+    const mapeada = mapearSesionSecundariaAOrg(
+      creada.sesion,
+      input.organizacionId,
+    );
+    mapeada.cursoTitulo = input.tituloCurso.trim();
+    mapeada.docenteNombre = input.docenteNombre;
+    mapeada.docenteEmail = input.docenteEmail.trim().toLowerCase();
+    mapeada.creadoPor = input.creadoPor;
+    mapeada.invitados = (creada.invitados ?? []).map((email) => ({
+      email,
+      estado: "PENDIENTE" as const,
+    }));
+    mapeada.inscritos = mapeada.invitados.length;
+    if (creada.googleMeet) {
+      mapeada.meetSimulado = creada.googleMeet.simulado;
+      mapeada.meetAviso = creada.googleMeet.simulado
+        ? creada.googleMeet.motivo ||
+          "Google Calendar no configurado o falló; Meet simulado."
+        : undefined;
+      if (creada.googleMeet.meetUrl) {
+        mapeada.meetUrl = creada.googleMeet.meetUrl;
+      }
+      if (creada.googleMeet.calendarEventId) {
+        mapeada.calendarEventId = creada.googleMeet.calendarEventId;
+      }
+    }
+
+    const correosInvitados = [
+      ...new Set(
+        [
+          input.docenteEmail,
+          ...(input.emailsInvitados ?? []),
+          ...(creada.invitados ?? []),
+        ]
+          .map((email) => email.trim().toLowerCase())
+          .filter((email) => email.includes("@")),
+      ),
+    ];
+    if (correosInvitados.length) {
+      const { notificacionesCorreoService } = await import(
+        "@/api/services/notificaciones-correo.service"
+      );
+      const { correoEnSegundoPlano } = await import(
+        "@/lib/correo-en-segundo-plano"
+      );
+      correoEnSegundoPlano(
+        notificacionesCorreoService.enviarClaseProgramadaMasivo({
+          correos: correosInvitados,
+          datosBase: {
+            tituloClase: mapeada.titulo,
+            nombreCurso: mapeada.cursoTitulo,
+            fechaHora: mapeada.fechaHoraInicio,
+            urlMeet: mapeada.meetUrl || undefined,
+            urlCurso: urlPortalLoginClaseEnVivo(mapeada.cursoId),
+          },
+        }),
+        "clase_programada",
+      );
+    }
+
+    emitirCambio(input.organizacionId);
+    return mapeada;
+  }
+
+  // Mock: crea sesión local con curso sintético.
+  return programar({
+    organizacionId: input.organizacionId,
+    titulo: (input.tituloSesion ?? input.tituloCurso).trim(),
+    cursoId: `curso-vivo-${Date.now()}`,
+    cursoTitulo: input.tituloCurso.trim(),
+    docenteNombre: input.docenteNombre,
+    docenteEmail: input.docenteEmail,
+    fechaHoraInicio: input.fechaHoraInicio,
+    duracionMinutos: input.duracionMinutos,
+    emailsInvitados: input.emailsInvitados ?? [],
+    invitarMatriculados: input.invitarMatriculados,
+    notas: input.descripcion,
+    creadoPor: input.creadoPor,
+  });
 }
 
 async function actualizar(
@@ -583,12 +772,50 @@ async function cancelar(organizacionId: string, id: string) {
   return actualizar(organizacionId, id, { estado: "CANCELADA" });
 }
 
+async function eliminar(organizacionId: string, id: string) {
+  if (apiConfig.secundariaCursos) {
+    await secundariaGatewayService.eliminarSesion(id);
+    emitirCambio(organizacionId);
+    return;
+  }
+  if (!apiConfig.useMock) {
+    await api.delete(API.organizacion.sesionEnVivoPorId(id));
+    emitirCambio(organizacionId);
+    return;
+  }
+  await repo(organizacionId).eliminar(id);
+  emitirCambio(organizacionId);
+}
+
 async function reenviarInvitaciones(organizacionId: string, id: string) {
   if (apiConfig.secundariaCursos) {
-    // Sin proveedor de correo aún: devolver sesión vigente (no-op real).
     const lista = await listarPorOrganizacion(organizacionId);
     const actual = lista.find((item) => item.id === id);
     if (!actual) throw new Error("Sesión no encontrada");
+    const correos = actual.invitados
+      .map((invitado) => invitado.email.trim().toLowerCase())
+      .filter((email) => email.includes("@"));
+    if (correos.length) {
+      const { notificacionesCorreoService } = await import(
+        "@/api/services/notificaciones-correo.service"
+      );
+      const { correoEnSegundoPlano } = await import(
+        "@/lib/correo-en-segundo-plano"
+      );
+      correoEnSegundoPlano(
+        notificacionesCorreoService.enviarRecordatorioClaseMasivo({
+          correos,
+          datosBase: {
+            tituloClase: actual.titulo,
+            nombreCurso: actual.cursoTitulo,
+            fechaHora: actual.fechaHoraInicio,
+            urlMeet: actual.meetUrl || undefined,
+            urlCurso: urlPortalLoginClaseEnVivo(actual.cursoId),
+          },
+        }),
+        "recordatorio_clase",
+      );
+    }
     return actual;
   }
   if (!apiConfig.useMock) {
@@ -828,10 +1055,12 @@ export const sesionesEnVivoCompartidas = {
   cursoCatalogoAdmiteCalendario,
   claveSesionesContexto,
   programar,
+  programarRapida,
   iniciar,
   cancelar,
   reenviarInvitaciones,
   actualizar,
+  eliminar,
   aSesionDocente,
   emailAlumnoDemo,
   cursosAlumnoDemoOrg,

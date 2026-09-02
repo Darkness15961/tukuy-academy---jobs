@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {
   Bell,
+  CalendarDays,
   Eye,
   EyeOff,
   KeyRound,
@@ -11,6 +12,7 @@ import {
   UserRound,
 } from "lucide-vue-next";
 import { computed, onMounted, ref } from "vue";
+import { useRoute } from "vue-router";
 
 import { authService } from "@/api/services/auth.service";
 import {
@@ -18,6 +20,10 @@ import {
   preferenciasPorDefecto,
   type PreferenciasCuenta,
 } from "@/api/services/cuenta-alumno.service";
+import {
+  googleCalendarService,
+  type EstadoGoogleCalendar,
+} from "@/api/services/google-calendar.service";
 import PortalSection from "@/components/shared/PortalSection.vue";
 import SelectorTema from "@/components/shared/SelectorTema.vue";
 import { Badge } from "@/components/ui/badge";
@@ -29,6 +35,7 @@ import { usePortalContext } from "../composables/usePortalContext";
 import EditorNombreCuenta from "@/components/shared/EditorNombreCuenta.vue";
 
 const portal = usePortalContext();
+const route = useRoute();
 
 const email = ref(portal.user.value?.email || "");
 const phone = ref(portal.user.value?.phone || "");
@@ -43,6 +50,10 @@ const newPassword = ref("");
 const confirmPassword = ref("");
 const showCurrentPassword = ref(false);
 const showNewPassword = ref(false);
+
+const googleCalendar = ref<EstadoGoogleCalendar>({ conectado: false });
+const googleCalendarCargando = ref(false);
+const googleCalendarAccion = ref("");
 
 const cuentaGoogle = computed(
   () =>
@@ -209,8 +220,63 @@ async function guardarNotificacion(
   }
 }
 
+async function cargarGoogleCalendar() {
+  googleCalendarCargando.value = true;
+  try {
+    googleCalendar.value = await googleCalendarService.estado();
+  } catch {
+    googleCalendar.value = { conectado: false };
+  } finally {
+    googleCalendarCargando.value = false;
+  }
+}
+
+async function conectarGoogleCalendar() {
+  googleCalendarAccion.value = "conectar";
+  try {
+    await googleCalendarService.iniciarConexion("/tukuy-academy/configuracion");
+  } catch (causa) {
+    toast.error(
+      causa instanceof Error
+        ? causa.message
+        : "No se pudo conectar Google Calendar.",
+    );
+    googleCalendarAccion.value = "";
+  }
+}
+
+async function desconectarGoogleCalendar() {
+  googleCalendarAccion.value = "desconectar";
+  try {
+    await googleCalendarService.desconectar();
+    googleCalendar.value = { conectado: false };
+    toast.success("Google Calendar desconectado.");
+  } catch (causa) {
+    toast.error(
+      causa instanceof Error
+        ? causa.message
+        : "No se pudo desconectar Google Calendar.",
+    );
+  } finally {
+    googleCalendarAccion.value = "";
+  }
+}
+
 onMounted(() => {
   void cargarCuenta();
+  void cargarGoogleCalendar();
+
+  const resultado = route.query.googleCalendar;
+  if (resultado === "ok") {
+    toast.success("Google Calendar conectado. Las clases en vivo se guardarán en tu agenda.");
+    void cargarGoogleCalendar();
+  } else if (typeof resultado === "string" && resultado !== "ok") {
+    const detalle =
+      typeof route.query.googleCalendarMsg === "string"
+        ? route.query.googleCalendarMsg
+        : "No se pudo completar la autorización.";
+    toast.error(`Google Calendar: ${detalle}`);
+  }
 });
 
 function alGuardarNombre(nombre: string) {
@@ -514,6 +580,75 @@ function alGuardarNombre(nombre: string) {
                   }}
                 </Button>
               </div>
+            </CardContent>
+          </Card>
+
+          <Card class="shadow-sm">
+            <CardHeader>
+              <CardTitle class="flex items-center gap-2 text-lg">
+                <CalendarDays class="h-5 w-5 text-primary" />
+                Google Calendar
+              </CardTitle>
+            </CardHeader>
+            <CardContent class="grid gap-4">
+              <p class="text-sm text-muted-foreground">
+                Conecta tu agenda de Google para que las clases en vivo queden
+                guardadas automáticamente (fecha, hora y enlace Meet).
+                {{ cuentaGoogle ? "Recomendado si entras con Google." : "" }}
+              </p>
+
+              <div
+                v-if="googleCalendarCargando"
+                class="text-sm text-muted-foreground"
+              >
+                Consultando estado de Google Calendar…
+              </div>
+
+              <template v-else-if="googleCalendar.conectado">
+                <div class="flex flex-wrap items-center gap-2">
+                  <Badge variant="secondary">Conectado</Badge>
+                  <span
+                    v-if="googleCalendar.googleEmail"
+                    class="text-sm text-foreground"
+                  >
+                    {{ googleCalendar.googleEmail }}
+                  </span>
+                </div>
+                <div class="flex justify-end">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    :disabled="googleCalendarAccion === 'desconectar'"
+                    @click="desconectarGoogleCalendar"
+                  >
+                    {{
+                      googleCalendarAccion === "desconectar"
+                        ? "Desconectando…"
+                        : "Desconectar"
+                    }}
+                  </Button>
+                </div>
+              </template>
+
+              <template v-else>
+                <p class="text-sm text-muted-foreground">
+                  Sin permiso de Calendar aún. Al conectar, Google te pedirá
+                  autorizar que Tukuy agregue tus sesiones.
+                </p>
+                <div class="flex justify-end">
+                  <Button
+                    size="sm"
+                    :disabled="googleCalendarAccion === 'conectar'"
+                    @click="conectarGoogleCalendar"
+                  >
+                    {{
+                      googleCalendarAccion === "conectar"
+                        ? "Redirigiendo…"
+                        : "Conectar Google Calendar"
+                    }}
+                  </Button>
+                </div>
+              </template>
             </CardContent>
           </Card>
 

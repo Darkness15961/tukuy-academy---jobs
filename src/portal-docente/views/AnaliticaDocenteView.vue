@@ -25,14 +25,25 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import Skeleton from "primevue/skeleton";
 import { docenteService, type AnaliticaDocente } from "@/api/services/docente.service";
-import { analiticaDocente } from "../data/docente.mock";
+
+const analiticaVacia = (): AnaliticaDocente => ({
+  periodo: "Últimos 30 días",
+  kpis: [],
+  actividadSemanal: [],
+  tendenciaMensual: [],
+  embudoAprendizaje: [],
+  rendimientoCursos: [],
+  distribucionEstados: [],
+  organizaciones: [],
+  estudiantesEnRiesgo: [],
+  modulosDestacados: [],
+  horasPico: [],
+});
 
 const router = useRouter();
 const periodo = ref("30d");
 const cargando = ref(true);
-const analitica = reactive<AnaliticaDocente>(
-  JSON.parse(JSON.stringify(analiticaDocente)) as AnaliticaDocente,
-);
+const analitica = reactive<AnaliticaDocente>(analiticaVacia());
 
 onMounted(async () => {
   try {
@@ -75,15 +86,27 @@ const fondosKpi: Record<string, string> = {
   riesgo: "bg-red-500/10 text-red-700 dark:text-red-400",
 };
 
-const maxActividad = computed(() =>
-  Math.max(...analitica.actividadSemanal.map((d) => d.activos)),
+const tieneActividadSemanal = computed(
+  () => analitica.actividadSemanal.length > 0,
 );
+const tieneTendenciaMensual = computed(
+  () => analitica.tendenciaMensual.length >= 2,
+);
+
+const maxActividad = computed(() => {
+  if (!tieneActividadSemanal.value) return 1;
+  return Math.max(
+    1,
+    ...analitica.actividadSemanal.map((d) => d.activos),
+  );
+});
 
 const totalEstados = computed(() =>
   analitica.distribucionEstados.reduce((t, e) => t + e.cantidad, 0),
 );
 
 const conicGradient = computed(() => {
+  if (!totalEstados.value) return "conic-gradient(#E2E8F0 0% 100%)";
   let acumulado = 0;
   const segmentos = analitica.distribucionEstados.map((item) => {
     const inicio = acumulado;
@@ -96,12 +119,23 @@ const conicGradient = computed(() => {
 
 const puntosTendencia = computed(() => {
   const datos = analitica.tendenciaMensual;
-  const max = Math.max(
-    ...datos.flatMap((d) => [d.inscripciones, d.finalizaciones]),
-  );
   const ancho = 520;
   const alto = 180;
   const padding = 24;
+  if (datos.length < 2) {
+    return {
+      inscripciones: "",
+      finalizaciones: "",
+      ancho,
+      alto,
+      datos,
+      max: 1,
+    };
+  }
+  const max = Math.max(
+    1,
+    ...datos.flatMap((d) => [d.inscripciones, d.finalizaciones]),
+  );
   const paso = (ancho - padding * 2) / (datos.length - 1);
 
   const inscripciones = datos
@@ -130,8 +164,8 @@ function formatoEstado(estado: string) {
 
 function exportarReporte() {
   const filas = [
-    ["Indicador", "Valor", "Variación"],
-    ...analitica.kpis.map((k) => [k.etiqueta, k.valor, k.variacion]),
+    ["Indicador", "Valor", "Detalle"],
+    ...analitica.kpis.map((k) => [k.etiqueta, k.valor, k.detalle]),
   ];
   const csv = filas.map((f) => f.join(",")).join("\n");
   const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
@@ -162,7 +196,7 @@ function exportarReporte() {
             titulo="Analítica académica"
             clase-titulo="text-2xl font-black sm:text-3xl"
             variante="claro"
-            ayuda="Monitorea participación, finalización, certificación y estudiantes que necesitan seguimiento."
+            ayuda="Indicadores calculados desde tus cursos, estudiantes y certificados. Los gráficos de tendencia diaria/mensual aparecerán cuando haya historial suficiente."
           />
         </div>
         <div class="flex flex-wrap gap-2">
@@ -209,7 +243,13 @@ function exportarReporte() {
                 <component :is="iconosKpi[kpi.id]" class="h-5 w-5" />
               </span>
               <span
-                class="inline-flex items-center gap-0.5 text-xs font-bold text-emerald-600"
+                v-if="kpi.variacion"
+                class="inline-flex items-center gap-0.5 text-xs font-bold"
+                :class="
+                  kpi.tendencia === 'sube'
+                    ? 'text-emerald-600'
+                    : 'text-red-600'
+                "
               >
                 <ArrowUpRight
                   v-if="kpi.tendencia === 'sube'"
@@ -218,6 +258,13 @@ function exportarReporte() {
                 <ArrowDownRight v-else class="h-3.5 w-3.5" />
                 {{ kpi.variacion }}
               </span>
+              <Badge
+                v-else-if="kpi.id === 'horas'"
+                variant="outline"
+                class="rounded-none border-border text-[10px] font-bold text-muted-foreground"
+              >
+                Estimado
+              </Badge>
             </div>
             <strong class="mt-4 block text-2xl font-black text-foreground">
               {{ kpi.valor }}
@@ -251,36 +298,54 @@ function exportarReporte() {
             </div>
 
             <div class="mt-8 flex h-56 items-end gap-2 sm:gap-3">
-              <div
-                v-for="dia in analitica.actividadSemanal"
-                :key="dia.dia"
-                class="group flex flex-1 flex-col items-center"
-              >
-                <span class="mb-2 text-[10px] font-bold text-primary">
-                  {{ dia.activos }}%
-                </span>
-                <div class="relative flex h-40 w-full items-end justify-center">
-                  <div
-                    class="w-full max-w-10 bg-border transition-all group-hover:opacity-80"
-                    :style="{ height: `${(dia.sesiones / 30) * 100}%` }"
-                  />
-                  <div
-                    class="absolute bottom-0 w-full max-w-10 bg-linear-to-t from-primary to-blue-500"
-                    :style="{
-                      height: `${(dia.activos / maxActividad) * 100}%`,
-                    }"
-                  />
+              <template v-if="tieneActividadSemanal">
+                <div
+                  v-for="dia in analitica.actividadSemanal"
+                  :key="dia.dia"
+                  class="group flex flex-1 flex-col items-center"
+                >
+                  <span class="mb-2 text-[10px] font-bold text-primary">
+                    {{ dia.activos }}
+                  </span>
+                  <div class="relative flex h-40 w-full items-end justify-center">
+                    <div
+                      class="w-full max-w-10 bg-border transition-all group-hover:opacity-80"
+                      :style="{
+                        height: `${Math.min(100, (dia.sesiones / Math.max(1, maxActividad)) * 100)}%`,
+                      }"
+                    />
+                    <div
+                      class="absolute bottom-0 w-full max-w-10 bg-linear-to-t from-primary to-blue-500"
+                      :style="{
+                        height: `${(dia.activos / maxActividad) * 100}%`,
+                      }"
+                    />
+                  </div>
+                  <span class="mt-2 text-xs font-bold text-muted-foreground">
+                    {{ dia.dia }}
+                  </span>
+                  <span class="text-[10px] text-muted-foreground">
+                    {{ dia.sesiones }} ses.
+                  </span>
                 </div>
-                <span class="mt-2 text-xs font-bold text-muted-foreground">
-                  {{ dia.dia }}
-                </span>
-                <span class="text-[10px] text-muted-foreground">
-                  {{ dia.sesiones }} ses.
-                </span>
+              </template>
+              <div
+                v-else
+                class="flex h-full w-full flex-col items-center justify-center gap-2 border border-dashed border-border bg-muted/30 px-6 text-center"
+              >
+                <BarChart3 class="h-8 w-8 text-muted-foreground/50" />
+                <p class="text-sm font-bold text-foreground">
+                  Sin historial diario aún
+                </p>
+                <p class="max-w-sm text-xs text-muted-foreground">
+                  Este gráfico se llenará cuando exista actividad diaria
+                  registrada (accesos y sesiones).
+                </p>
               </div>
             </div>
 
             <div
+              v-if="tieneActividadSemanal"
               class="mt-5 flex flex-wrap gap-4 border-t border-border pt-4 text-xs"
             >
               <span class="flex items-center gap-2">
@@ -307,7 +372,10 @@ function exportarReporte() {
               <BarChart3 class="h-5 w-5 text-primary" />
             </div>
 
-            <div class="mt-4 overflow-x-auto">
+            <div
+              v-if="tieneTendenciaMensual"
+              class="mt-4 overflow-x-auto"
+            >
               <svg
                 :viewBox="`0 0 ${puntosTendencia.ancho} ${puntosTendencia.alto}`"
                 class="w-full min-w-[320px]"
@@ -340,8 +408,22 @@ function exportarReporte() {
                 />
               </svg>
             </div>
+            <div
+              v-else
+              class="mt-4 flex h-44 flex-col items-center justify-center gap-2 border border-dashed border-border bg-muted/30 px-6 text-center"
+            >
+              <TrendingUp class="h-8 w-8 text-muted-foreground/50" />
+              <p class="text-sm font-bold text-foreground">
+                Sin serie mensual aún
+              </p>
+              <p class="max-w-sm text-xs text-muted-foreground">
+                Cuando haya inscripciones y finalizaciones a lo largo del
+                tiempo, verás la tendencia aquí.
+              </p>
+            </div>
 
             <div
+              v-if="tieneTendenciaMensual"
               class="mt-2 flex justify-between gap-2 px-1 text-[10px] font-bold text-muted-foreground"
             >
               <span
@@ -354,6 +436,7 @@ function exportarReporte() {
             </div>
 
             <div
+              v-if="tieneTendenciaMensual"
               class="mt-4 flex flex-wrap gap-4 border-t border-border pt-4 text-xs"
             >
               <span class="flex items-center gap-2">
@@ -593,7 +676,10 @@ function exportarReporte() {
             <p class="mt-1 text-xs text-muted-foreground">
               Desempeño por empresa o institución
             </p>
-            <div class="mt-5 grid gap-4">
+            <div
+              v-if="analitica.organizaciones.length"
+              class="mt-5 grid gap-4"
+            >
               <div
                 v-for="org in analitica.organizaciones"
                 :key="org.nombre"
@@ -616,6 +702,13 @@ function exportarReporte() {
                 </div>
               </div>
             </div>
+            <p
+              v-else
+              class="mt-5 border border-dashed border-border bg-muted/30 px-4 py-8 text-center text-xs text-muted-foreground"
+            >
+              Sin desglose por organización: disponible cuando impartas en
+              varias entidades.
+            </p>
           </CardContent>
         </Card>
 
@@ -625,7 +718,7 @@ function exportarReporte() {
             <p class="mt-1 text-xs text-muted-foreground">
               Franjas con mayor actividad de aprendizaje
             </p>
-            <div class="mt-6 grid gap-3">
+            <div v-if="analitica.horasPico.length" class="mt-6 grid gap-3">
               <div
                 v-for="franja in analitica.horasPico"
                 :key="franja.franja"
@@ -648,6 +741,13 @@ function exportarReporte() {
                 >
               </div>
             </div>
+            <p
+              v-else
+              class="mt-5 border border-dashed border-border bg-muted/30 px-4 py-8 text-center text-xs text-muted-foreground"
+            >
+              Requiere telemetría de accesos por franja horaria (aún no
+              disponible).
+            </p>
           </CardContent>
         </Card>
 
@@ -657,7 +757,10 @@ function exportarReporte() {
             <p class="mt-1 text-xs text-muted-foreground">
               Completitud y tiempo medio por módulo
             </p>
-            <div class="mt-5 grid gap-4">
+            <div
+              v-if="analitica.modulosDestacados.length"
+              class="mt-5 grid gap-4"
+            >
               <div
                 v-for="modulo in analitica.modulosDestacados"
                 :key="modulo.modulo"
@@ -681,6 +784,12 @@ function exportarReporte() {
                 </p>
               </div>
             </div>
+            <p
+              v-else
+              class="mt-5 border border-dashed border-border bg-muted/30 px-4 py-8 text-center text-xs text-muted-foreground"
+            >
+              Aparecerá cuando haya progreso por módulo en la academia.
+            </p>
           </CardContent>
         </Card>
       </div>

@@ -5,10 +5,12 @@ import {
   Check,
   CircleUserRound,
   Clock3,
+  Link2,
   MessageSquareWarning,
   MoreHorizontal,
   Plus,
   Search,
+  Share2,
   Star,
   Trash2,
   UsersRound,
@@ -39,12 +41,17 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import ImagenPortadaCurso from "@/components/shared/ImagenPortadaCurso.vue";
+import CompartirSesionRedes from "@/components/shared/CompartirSesionRedes.vue";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useContextoSesion } from "@/composables/useContextoSesion";
 import type { EstadoCursoDocente } from "@/portal-docente/types/docente.types";
 import { toast } from "@/lib/toast";
+import {
+  urlCompartirCursoConOpenGraph,
+  urlPublicaCurso,
+} from "@/lib/compartir-sesion-en-vivo";
 
 type Pestaña = "REVISION" | "CATALOGO" | "CONTENIDO";
 type ModoModal = "APROBAR" | "REASIGNAR";
@@ -69,6 +76,7 @@ const contenidos = ref<CursoDocente[]>([]);
 const asignaciones = ref<AsignacionOrganizacion[]>([]);
 const menuCursoId = ref<string>();
 const cursoVistaPrevia = ref<CursoDocente>();
+const cursoCompartir = ref<CursoDocente>();
 const cursoPendienteOcultar = ref<CursoDocente>();
 const cursoPendienteEliminar = ref<PropuestaCursoOrganizacion | CursoDocente>();
 const ocultandoCurso = ref(false);
@@ -219,11 +227,34 @@ function editarContenido(curso?: CursoDocente) {
   void router.push(`/organizacion/cursos/${curso.id}/constructor`);
 }
 
-async function duplicarContenido(curso: CursoDocente) {
-  const copia = await docenteService.duplicarCurso(curso.id);
-  contenidos.value.unshift(copia);
+function abrirCompartirCurso(curso: CursoDocente) {
+  cursoCompartir.value = curso;
   menuCursoId.value = undefined;
-  avisoContenido.value = "Se creó una copia editable del curso.";
+}
+
+async function copiarEnlacePublicoCurso(curso: CursoDocente) {
+  try {
+    await navigator.clipboard.writeText(urlPublicaCurso(curso.id));
+    toast.success("Enlace público copiado");
+  } catch {
+    toast.error("No se pudo copiar el enlace");
+  }
+}
+
+async function duplicarContenido(curso: CursoDocente) {
+  try {
+    const copia = await docenteService.duplicarCurso(curso.id);
+    contenidos.value.unshift(copia);
+    menuCursoId.value = undefined;
+    avisoContenido.value = "Se creó una copia editable del curso.";
+    toast.success("Curso duplicado en borrador.");
+  } catch (causa) {
+    toast.error(
+      causa instanceof Error
+        ? causa.message
+        : "No se pudo duplicar el curso.",
+    );
+  }
 }
 
 function solicitarOcultarContenido(curso: CursoDocente) {
@@ -660,6 +691,13 @@ async function quitarAsignacion(titulo: string) {
         >
           {{ pendientesPrecio }} pendientes de precio
         </Badge>
+        <Button
+          v-if="tienePermiso('sesiones.gestionar') || tienePermiso('cursos.crear')"
+          variant="outline"
+          @click="router.push('/organizacion/sesiones')"
+        >
+          Crear sesión en vivo
+        </Button>
         <Button v-if="tienePermiso('cursos.crear')" @click="crearCursoInstitucional">
           <Plus class="h-4 w-4" />Crear curso
         </Button>
@@ -786,6 +824,12 @@ async function quitarAsignacion(titulo: string) {
               </button>
               <button
                 class="px-3 py-2 text-left hover:bg-muted"
+                @click="abrirCompartirCurso(curso)"
+              >
+                Compartir curso
+              </button>
+              <button
+                class="px-3 py-2 text-left hover:bg-muted"
                 @click="duplicarContenido(curso)"
               >
                 Duplicar curso
@@ -836,6 +880,15 @@ async function quitarAsignacion(titulo: string) {
                 <BookOpen class="h-4 w-4" />
                 Editar contenido
               </Button>
+              <Button
+                size="icon"
+                variant="outline"
+                aria-label="Compartir curso"
+                title="Compartir curso"
+                @click="abrirCompartirCurso(curso)"
+              >
+                <Share2 class="h-4 w-4" />
+              </Button>
             </div>
           </CardContent>
         </Card>
@@ -862,9 +915,70 @@ async function quitarAsignacion(titulo: string) {
               <h2 class="mt-3 text-3xl font-black">{{ cursoVistaPrevia.titulo }}</h2>
             </div>
           </div>
-          <div class="flex justify-end gap-2 p-4">
-            <Button variant="outline" @click="cursoVistaPrevia = undefined">Cerrar</Button>
-            <Button @click="editarContenido(cursoVistaPrevia)">Editar contenido</Button>
+          <div class="space-y-4 p-4">
+            <div class="rounded-lg border border-border bg-muted/30 p-3">
+              <p class="text-sm font-semibold text-foreground">
+                Comparte en redes
+              </p>
+              <p class="mt-1 text-xs text-muted-foreground">
+                Enlace público de la ficha del curso.
+              </p>
+              <CompartirSesionRedes
+                etiqueta="Compartir curso"
+                :titulo="cursoVistaPrevia.titulo"
+                :url="urlCompartirCursoConOpenGraph(cursoVistaPrevia.id)"
+                etiqueta-enlace="Ver curso e inscribirte"
+              />
+            </div>
+            <div class="flex justify-end gap-2">
+              <Button variant="outline" @click="cursoVistaPrevia = undefined">Cerrar</Button>
+              <Button @click="editarContenido(cursoVistaPrevia)">Editar contenido</Button>
+            </div>
+          </div>
+        </article>
+      </div>
+
+      <div
+        v-if="cursoCompartir"
+        class="fixed inset-0 z-50 grid place-items-center bg-slate-950/70 p-4"
+        @click.self="cursoCompartir = undefined"
+      >
+        <article class="w-full max-w-md border border-border bg-card p-6 shadow-2xl">
+          <div class="flex items-start gap-3">
+            <div
+              class="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-primary/10 text-primary"
+            >
+              <Share2 class="h-5 w-5" />
+            </div>
+            <div>
+              <h2 class="text-lg font-black text-foreground">Compartir curso</h2>
+              <p class="mt-1 text-sm text-muted-foreground">
+                {{ cursoCompartir.titulo }}
+              </p>
+            </div>
+          </div>
+          <p class="mt-4 text-sm text-muted-foreground">
+            Copia un mensaje listo para WhatsApp, Facebook, X o Instagram.
+          </p>
+          <CompartirSesionRedes
+            class="mt-4"
+            etiqueta="Redes"
+            :titulo="cursoCompartir.titulo"
+            :url="urlCompartirCursoConOpenGraph(cursoCompartir.id)"
+            etiqueta-enlace="Ver curso e inscribirte"
+          />
+          <Button
+            variant="outline"
+            class="mt-4 w-full"
+            @click="copiarEnlacePublicoCurso(cursoCompartir)"
+          >
+            <Link2 class="h-4 w-4" />
+            Copiar enlace público
+          </Button>
+          <div class="mt-5 flex justify-end">
+            <Button variant="outline" @click="cursoCompartir = undefined">
+              Cerrar
+            </Button>
           </div>
         </article>
       </div>

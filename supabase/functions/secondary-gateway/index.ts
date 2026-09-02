@@ -1,5 +1,12 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import {
+  eliminarSesionDeCalendariosUsuarios,
+  resolverCorreosAlumnoCalendar,
+  sincronizarAlumnoCalendarioCompleto,
+  sincronizarSesionEnCalendariosUsuarios,
+} from "../_shared/sincronizar-calendario-usuario.ts";
+import {
+  agregarAsistentesEventoCalendar,
   cancelarEventoCalendar,
   crearEventoCalendarMeet,
   googleCalendarConfigurado,
@@ -7,7 +14,362 @@ import {
 
 const INSTALACION_TUKUY = "30000000-0000-4000-8000-000000000001";
 
+const ESTADOS_CATALOGO_PUBLICO = new Set([
+  "PUBLICADO",
+  "PUBLICADA",
+  "ACTIVO",
+  "ACTIVA",
+  "APROBADO",
+  "APROBADA",
+]);
+
+const ALCANCES_LANDING_PUBLICO = new Set(["PUBLICO", "TODOS"]);
+
+function resolverConfigPublicacionEfectiva(
+  datos: Record<string, unknown> | null | undefined,
+): Record<string, unknown> | null {
+  const outer = datos?.configuracionPublicacion;
+  if (!outer || typeof outer !== "object") return null;
+  const config = outer as Record<string, unknown>;
+  const inner = config.configuracionPublicacion;
+  if (inner && typeof inner === "object") {
+    const nested = inner as Record<string, unknown>;
+    return {
+      ...config,
+      ...nested,
+      alcance: nested.alcance ?? config.alcance,
+      visibleParaExternos:
+        nested.visibleParaExternos ?? config.visibleParaExternos,
+    };
+  }
+  return config;
+}
+
+/** Catálogo landing: principal PUBLICADO + secundaria no archivada/oculta + alcance público. */
+function visibleEnCatalogoPublico(
+  ref: Record<string, unknown>,
+  sec?: Record<string, unknown>,
+): boolean {
+  const estadoCat = String(ref.estadoPublicacion ?? "").trim().toUpperCase();
+  if (estadoCat !== "PUBLICADO") return false;
+
+  const datos = ref.datosHistoricos;
+  let landingPorConfig = false;
+  if (datos && typeof datos === "object") {
+    const hist = datos as Record<string, unknown>;
+    if (hist.eliminadoPermanente === true) return false;
+    if (hist.oculto === true) return false;
+
+    const config = resolverConfigPublicacionEfectiva(hist);
+    if (config) {
+      const alcance = String(config.alcance ?? "").trim().toUpperCase();
+      if (alcance === "INTERNO") return false;
+      if (alcance && !ALCANCES_LANDING_PUBLICO.has(alcance)) return false;
+      if (config.visibleParaExternos === false) return false;
+      landingPorConfig = true;
+    }
+  }
+
+  const visibilidad = String(sec?.visibilidad ?? "").trim().toUpperCase();
+  if (visibilidad === "PRIVADO") return false;
+
+  const alcanceDirigido = String(sec?.alcanceDirigido ?? "").trim().toUpperCase();
+  if (alcanceDirigido === "TODOS") {
+    landingPorConfig = true;
+  }
+
+  if (!landingPorConfig && visibilidad === "ORGANIZACION") {
+    return false;
+  }
+
+  if (!sec) return false;
+
+  const estadoSec = String(sec.estado ?? "").trim().toUpperCase();
+  return ESTADOS_CATALOGO_PUBLICO.has(estadoSec);
+}
+
+/** Secundaria PUBLICADO + visibilidad abierta (landing). */
+function cursoSecundarioEsPublicoLanding(sec: Record<string, unknown>) {
+  const estado = String(sec.estado ?? "").trim().toUpperCase();
+  if (!ESTADOS_CATALOGO_PUBLICO.has(estado)) return false;
+  const alcanceDirigido = String(sec.alcanceDirigido ?? "").trim().toUpperCase();
+  if (alcanceDirigido === "TODOS") return true;
+  const vis = String(sec.visibilidad ?? "PUBLICO").trim().toUpperCase();
+  if (vis === "PRIVADO" || vis === "ORGANIZACION") return false;
+  return true;
+}
+
+/** Índice en catálogo principal cuando el curso existe en secundaria pero no se indexó. */
+function refCatalogoDesdeSecundaria(
+  sec: Record<string, unknown>,
+  instalacionId: string,
+): Record<string, unknown> {
+  const id = String(sec.id ?? "").trim();
+  return {
+    cursoSecundarioRef: id,
+    instalacionId,
+    codigo: sec.codigo ?? "",
+    titulo: sec.titulo ?? "Curso",
+    resumen: sec.resumen ?? "",
+    modalidad: sec.modalidad ?? "VIRTUAL",
+    categoria: sec.categoria ?? "",
+    imagenPublicaRef: sec.portadaClave ?? null,
+    duracionMinutos: sec.duracionMinutosTotal ?? null,
+    estadoPublicacion: "PUBLICADO",
+    datosHistoricos: {
+      origen: "sync_secundaria_landing",
+      configuracionPublicacion: {
+        alcance: "TODOS",
+        visibleParaExternos: true,
+      },
+    },
+  };
+}
+
+function enriquecerRefsCatalogoConSecundaria(
+  refs: Record<string, unknown>[],
+  secundariaCursos: Record<string, unknown>[],
+  instalacionId: string,
+) {
+  const vistos = new Set(
+    refs
+      .map((ref) => String(ref.cursoSecundarioRef ?? "").trim())
+      .filter(Boolean),
+  );
+  for (const sec of secundariaCursos) {
+    const id = String(sec.id ?? "").trim();
+    if (!id || vistos.has(id)) continue;
+    if (!cursoSecundarioEsPublicoLanding(sec)) continue;
+    refs.push(refCatalogoDesdeSecundaria(sec, instalacionId));
+    vistos.add(id);
+  }
+}
+
+function modalidadEfectivaCursoSecundaria(curso: Record<string, unknown>) {
+  const modalidad = String(curso.modalidad ?? "").trim().toUpperCase();
+  if (
+    modalidad === "EN_VIVO" ||
+    modalidad === "PRESENCIAL" ||
+    modalidad === "HIBRIDA" ||
+    modalidad === "HIBRIDO" ||
+    modalidad === "MIXTO"
+  ) {
+    return modalidad === "HIBRIDO" ? "HIBRIDA" : modalidad;
+  }
+  const categoria = String(curso.categoria ?? "").toLowerCase();
+  if (/clase(s)?\s+en\s+vivo/.test(categoria)) return "EN_VIVO";
+  return modalidad || "VIRTUAL";
+}
+
+async function asegurarModalidadEnVivoCurso(
+  secundaria: SupabaseClient,
+  cursoId: string,
+) {
+  const id = cursoId.trim();
+  if (!id) return;
+  const { error } = await secundaria
+    .from("curso")
+    .update({ modalidad: "EN_VIVO" })
+    .eq("id", id);
+  if (error) {
+    const retry = await secundaria
+      .from("curso")
+      .update({ modalidad: "PRESENCIAL" })
+      .eq("id", id);
+    if (retry.error) {
+      console.warn("asegurarModalidadEnVivoCurso:", retry.error.message);
+    }
+  }
+}
+
+function normalizarCorreosInvitacion(emails: unknown[]): string[] {
+  const vistos = new Set<string>();
+  const resultado: string[] = [];
+  for (const crudo of emails) {
+    const email = String(crudo ?? "").trim().toLowerCase();
+    if (!email.includes("@") || vistos.has(email)) continue;
+    vistos.add(email);
+    resultado.push(email);
+  }
+  return resultado;
+}
+
+function correoDocenteSesion(usuario: { email?: string | null }): string {
+  return String(usuario.email ?? "").trim().toLowerCase();
+}
+
+function invitadosCalendarSesion(
+  usuario: { email?: string | null },
+  extras: unknown[],
+  matriculados: string[],
+): { attendees: string[]; anfitriones: string[] } {
+  const docente = correoDocenteSesion(usuario);
+  const attendees = normalizarCorreosInvitacion([
+    docente,
+    ...extras,
+    ...matriculados,
+  ]);
+  const anfitriones = docente.includes("@") ? [docente] : [];
+  return { attendees, anfitriones };
+}
+
+async function correosMatriculadosCurso(
+  secundaria: SupabaseClient,
+  cursoId: string,
+): Promise<string[]> {
+  const listado = await secundaria.rpc("servicio_listar_estudiantes_matriculas", {
+    p_curso_id: cursoId,
+  });
+  if (listado.error || !listado.data?.estudiantes) return [];
+  const estudiantes = listado.data.estudiantes as Record<string, unknown>[];
+  return normalizarCorreosInvitacion(
+    estudiantes.flatMap((est) => {
+      const correo = String(est.correo ?? "").trim();
+      if (correo.includes("@")) return [correo];
+      const nombre = String(est.nombre ?? "").trim();
+      return nombre.includes("@") ? [nombre] : [];
+    }),
+  );
+}
+
+async function invitarAlumnoSesionesFuturasCurso(
+  principalAdmin: SupabaseClient | null,
+  secundaria: SupabaseClient,
+  cursoId: string,
+  authUsuarioRef: string,
+  correoAuth?: string | null,
+) {
+  if (!principalAdmin) return;
+  const correos = await resolverCorreosAlumnoCalendar(
+    principalAdmin,
+    authUsuarioRef,
+    correoAuth,
+  );
+  if (!correos.length) return;
+  await sincronizarAlumnoCalendarioCompleto(
+    principalAdmin,
+    secundaria,
+    cursoId,
+    correos,
+  );
+}
+
 const CANTIDAD_FIRMAS_CERT_MAX = 5;
+
+function certificadoDesdeDocumentoBorrador(
+  documento: Record<string, unknown> | null | undefined,
+): boolean {
+  if (!documento) return true;
+  return documento.certificado !== false;
+}
+
+async function enriquecerModalidadListadoCursos(
+  secundaria: SupabaseClient,
+  payload: Record<string, unknown>,
+) {
+  const cursos = Array.isArray(payload.cursos)
+    ? (payload.cursos as Record<string, unknown>[])
+    : [];
+  if (!cursos.length) return;
+
+  const idsConSesion = new Set<string>();
+  const sesiones = await secundaria.rpc("servicio_listar_sesiones_en_vivo", {
+    p_curso_id: null,
+    p_limite: 500,
+  });
+  if (!sesiones.error && Array.isArray(sesiones.data?.sesiones)) {
+    for (const ses of sesiones.data.sesiones as Record<string, unknown>[]) {
+      const cursoId = String(ses.cursoId ?? "").trim();
+      if (cursoId) idsConSesion.add(cursoId);
+    }
+  }
+
+  for (const curso of cursos) {
+    const id = String(curso.id ?? curso.cursoId ?? "").trim();
+    let efectiva = modalidadEfectivaCursoSecundaria(curso);
+    if (
+      (efectiva === "VIRTUAL" || efectiva === "ASINCRONO" || !efectiva) &&
+      id &&
+      idsConSesion.has(id)
+    ) {
+      efectiva = "EN_VIVO";
+    }
+    curso.modalidad = efectiva;
+  }
+}
+
+async function enriquecerCertificadoEnItems(
+  secundaria: SupabaseClient,
+  items: Record<string, unknown>[],
+  idKey: "id" | "cursoId",
+): Promise<void> {
+  const pendientes = items.filter(
+    (item) => typeof item.certificado !== "boolean",
+  );
+  if (!pendientes.length) return;
+
+  const ids = [
+    ...new Set(
+      pendientes
+        .map((item) => String(item[idKey] ?? "").trim())
+        .filter(Boolean),
+    ),
+  ];
+  if (!ids.length) return;
+
+  const { data, error } = await secundaria
+    .from("documento_borrador_curso")
+    .select("curso_id, documento")
+    .in("curso_id", ids);
+
+  if (error || !data?.length) return;
+
+  const porCurso = new Map<string, boolean>();
+  for (const row of data) {
+    const doc =
+      row.documento && typeof row.documento === "object"
+        ? (row.documento as Record<string, unknown>)
+        : null;
+    porCurso.set(String(row.curso_id), certificadoDesdeDocumentoBorrador(doc));
+  }
+
+  for (const item of pendientes) {
+    const id = String(item[idKey] ?? "").trim();
+    if (porCurso.has(id)) {
+      item.certificado = porCurso.get(id);
+    }
+  }
+}
+
+async function enriquecerCertificadoListadoCursos(
+  secundaria: SupabaseClient,
+  payload: unknown,
+): Promise<void> {
+  if (!payload || typeof payload !== "object") return;
+  const raiz = payload as Record<string, unknown>;
+  if (Array.isArray(raiz.cursos)) {
+    await enriquecerCertificadoEnItems(
+      secundaria,
+      raiz.cursos as Record<string, unknown>[],
+      "id",
+    );
+  }
+}
+
+async function enriquecerCertificadoMisCursos(
+  secundaria: SupabaseClient,
+  payload: unknown,
+): Promise<void> {
+  if (!payload || typeof payload !== "object") return;
+  const raiz = payload as Record<string, unknown>;
+  if (Array.isArray(raiz.cursos)) {
+    await enriquecerCertificadoEnItems(
+      secundaria,
+      raiz.cursos as Record<string, unknown>[],
+      "cursoId",
+    );
+  }
+}
 
 /** Minutos reales del curso tipado (suma de actividades); fallback a horas de versión. */
 function duracionMinutosDesdeCursoSec(
@@ -22,6 +384,40 @@ function duracionMinutosDesdeCursoSec(
     return Math.max(1, Math.round(horas * 60));
   }
   return 1;
+}
+
+/** Cancela eventos de Google Calendar vinculados a sesiones del curso. */
+async function cancelarEventosCalendarCurso(
+  secundaria: SupabaseClient,
+  cursoId: string,
+): Promise<void> {
+  const listado = await secundaria.rpc("servicio_listar_sesiones_en_vivo", {
+    p_curso_id: cursoId,
+    p_limite: 500,
+  });
+  if (listado.error) {
+    console.warn(
+      "cancelarEventosCalendarCurso listar:",
+      listado.error.message,
+    );
+    return;
+  }
+  const payload = listado.data as Record<string, unknown> | null;
+  const sesiones = Array.isArray(payload?.sesiones)
+    ? (payload.sesiones as Array<Record<string, unknown>>)
+    : [];
+  for (const sesion of sesiones) {
+    const eventId =
+      typeof sesion.calendarEventId === "string"
+        ? sesion.calendarEventId.trim()
+        : "";
+    if (!eventId) continue;
+    try {
+      await cancelarEventoCalendar(eventId);
+    } catch (causa) {
+      console.warn("cancelarEventoCalendar:", eventId, causa);
+    }
+  }
 }
 
 async function sincronizarCatalogoRetirado(entrada: {
@@ -262,6 +658,11 @@ async function postProcesarCertificadoEmitido(entrada: {
   emisorId: string;
   emisorNombre: string | null;
   cert: Record<string, unknown> | null | undefined;
+  /**
+   * Emisión manual (firma embebida): publica en índice aunque falte
+   * firma institucional pendiente del flujo org.
+   */
+  publicarIndiceSiempre?: boolean;
 }) {
   const cert = entrada.cert;
   const certificadoId =
@@ -301,7 +702,10 @@ async function postProcesarCertificadoEmitido(entrada: {
       : typeof cert?.codigo === "string"
         ? cert.codigo
         : "";
-  if (listoParaIndice && codigo) {
+  const debePublicar =
+    Boolean(codigo) &&
+    (entrada.publicarIndiceSiempre === true || listoParaIndice);
+  if (debePublicar) {
     const indice = await entrada.principal.rpc(
       "admin_upsert_indice_certificado_publico",
       {
@@ -331,6 +735,9 @@ async function postProcesarCertificadoEmitido(entrada: {
         `Certificado emitido en secundaria, pero falta índice en principal: ${indice.error.message}`;
     } else {
       indicePublico = indice.data;
+      if (entrada.publicarIndiceSiempre) {
+        listoParaIndice = true;
+      }
     }
   }
 
@@ -344,6 +751,108 @@ async function postProcesarCertificadoEmitido(entrada: {
     certificadoId,
     documentoId,
   };
+}
+
+/** Publica certificados MANUAL (TA-M-…) en el índice de verificación pública. */
+async function republicarIndiceCertificadoManual(entrada: {
+  secundaria: SupabaseClient;
+  principal: SupabaseClient;
+  instalacionId: string;
+  certificadoId: string;
+  documentoId?: string;
+  huellaDocumento?: string;
+}): Promise<{ indicePublico: unknown; advertenciaIndice: string | null }> {
+  try {
+    const { data: certRow } = await entrada.secundaria
+      .from("certificado_curso")
+      .select(
+        "id, codigo_verificacion, titular_nombre, motivo_titulo, origen_emision, emitido_en, preparado_en",
+      )
+      .eq("id", entrada.certificadoId)
+      .maybeSingle();
+
+    const codigo =
+      typeof certRow?.codigo_verificacion === "string"
+        ? certRow.codigo_verificacion.trim()
+        : "";
+    const origen = String(certRow?.origen_emision ?? "").toUpperCase();
+    if (!codigo || (origen !== "MANUAL" && !codigo.startsWith("TA-M-"))) {
+      return { indicePublico: null, advertenciaIndice: null };
+    }
+
+    let documentoId = String(entrada.documentoId ?? "").trim();
+    let huella = String(entrada.huellaDocumento ?? "").trim();
+    if (!documentoId) {
+      const { data: docRow } = await entrada.secundaria
+        .from("certificado_documento")
+        .select("id, huella_documento")
+        .eq("certificado_curso_id", entrada.certificadoId)
+        .order("version", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      documentoId = typeof docRow?.id === "string" ? docRow.id : "";
+      if (!huella && typeof docRow?.huella_documento === "string") {
+        huella = docRow.huella_documento;
+      }
+    }
+    if (!documentoId) {
+      return {
+        indicePublico: null,
+        advertenciaIndice: "Documento del certificado no encontrado",
+      };
+    }
+
+    let organizacionHistorica = "Tukuy Academy";
+    try {
+      const { data: ctx } = await entrada.secundaria
+        .from("contexto_instalacion")
+        .select("nombre_organizacion")
+        .eq("id", true)
+        .maybeSingle();
+      if (
+        typeof ctx?.nombre_organizacion === "string" &&
+        ctx.nombre_organizacion.trim()
+      ) {
+        organizacionHistorica = ctx.nombre_organizacion.trim();
+      }
+    } catch {
+      /* fallback */
+    }
+
+    const indice = await entrada.principal.rpc(
+      "admin_upsert_indice_certificado_publico",
+      {
+        p_instalacion_id: entrada.instalacionId,
+        p_codigo_verificacion: codigo,
+        p_certificado_secundario_ref: entrada.certificadoId,
+        p_documento_secundario_ref: documentoId,
+        p_huella_documento: huella,
+        p_titular_historico:
+          String(certRow?.titular_nombre ?? "").trim() || "Titular",
+        p_curso_historico:
+          String(certRow?.motivo_titulo ?? "").trim() || "Certificación",
+        p_organizacion_historica: organizacionHistorica,
+        p_emitido_en:
+          certRow?.emitido_en ??
+          certRow?.preparado_en ??
+          new Date().toISOString(),
+        p_estado_publico: "VIGENTE",
+      },
+    );
+    if (indice.error) {
+      return {
+        indicePublico: null,
+        advertenciaIndice: indice.error.message,
+      };
+    }
+    return { indicePublico: indice.data, advertenciaIndice: null };
+  } catch (err) {
+    return {
+      indicePublico: null,
+      advertenciaIndice:
+        err instanceof Error ? err.message : "No se pudo publicar el índice",
+    };
+  }
 }
 
 type Contexto = Record<string, unknown>;
@@ -509,6 +1018,264 @@ Deno.serve(async (req) => {
     const principalAnon = Deno.env.get("SUPABASE_ANON_KEY")!;
     const principalServiceRole = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
+    const entrada = await req.json().catch(() => ({}));
+
+    const UUID_RE =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const instalacionId =
+      typeof entrada.instalacionId === "string" &&
+        UUID_RE.test(entrada.instalacionId.trim())
+        ? entrada.instalacionId.trim()
+        : INSTALACION_TUKUY;
+
+    if (entrada.action === "list-cursos-publicos") {
+      if (!principalServiceRole) {
+        return json(
+          { ok: false, error: "Service role no configurado en el gateway" },
+          503,
+          corsHeaders,
+        );
+      }
+
+      const principalAdmin = createClient(principalUrl, principalServiceRole, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+      const conexion = await resolverConexionSecundaria(
+        instalacionId,
+        principalUrl,
+        principalServiceRole,
+      );
+      if ("error" in conexion) {
+        return json({ ok: false, error: conexion.error }, 503, corsHeaders);
+      }
+      const secundaria = createClient(conexion.url, conexion.key, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+
+      const catalogo = await principalAdmin.rpc("public_listar_cursos_catalogo", {
+        p_instalacion_id: instalacionId,
+      });
+      if (catalogo.error) {
+        return json(
+          {
+            ok: false,
+            error:
+              "Falta ejecutar en la principal 20260831160000_public_listar_cursos_catalogo.sql",
+            details: catalogo.error.message,
+          },
+          200,
+          corsHeaders,
+        );
+      }
+
+      const refs = Array.isArray(catalogo.data?.cursos)
+        ? (catalogo.data.cursos as Record<string, unknown>[])
+        : [];
+      const tipados = await secundaria.rpc("servicio_listar_cursos_tipados", {
+        p_limite: 500,
+      });
+      const payloadTipados = tipados.data as Record<string, unknown> | null;
+      if (!tipados.error && payloadTipados) {
+        await enriquecerCertificadoListadoCursos(secundaria, payloadTipados);
+      }
+      const porId = new Map<string, Record<string, unknown>>();
+      if (Array.isArray(payloadTipados?.cursos)) {
+        for (const curso of payloadTipados.cursos as Record<string, unknown>[]) {
+          const id = String(curso.id ?? "").trim();
+          if (id) porId.set(id, curso);
+        }
+      } else if (tipados.error) {
+        console.warn(
+          "list-cursos-publicos tipados:",
+          tipados.error.message,
+        );
+      }
+
+      enriquecerRefsCatalogoConSecundaria(
+        refs,
+        Array.isArray(payloadTipados?.cursos)
+          ? (payloadTipados.cursos as Record<string, unknown>[])
+          : [],
+        instalacionId,
+      );
+
+      // Reparar desincronización: secundaria ARCHIVADO pero principal aún PUBLICADO.
+      for (const ref of refs) {
+        const refId = String(ref.cursoSecundarioRef ?? "").trim();
+        if (!refId) continue;
+        const sec = porId.get(refId);
+        const estadoSec = String(sec?.estado ?? "").trim().toUpperCase();
+        const estadoCat = String(ref.estadoPublicacion ?? "").trim().toUpperCase();
+        if (estadoSec !== "ARCHIVADO" || estadoCat !== "PUBLICADO") continue;
+        const reparado = await principalAdmin.rpc(
+          "service_retirar_curso_catalogo_oculto",
+          {
+            p_instalacion_id: instalacionId,
+            p_curso_secundario_ref: refId,
+            p_datos_historicos: {
+              origen: "sync_secundaria_archivado",
+              titulo: sec?.titulo ?? ref.titulo ?? null,
+            },
+          },
+        );
+        if (reparado.error) {
+          console.warn(
+            "service_retirar_curso_catalogo_oculto:",
+            reparado.error.message,
+          );
+        } else if (reparado.data?.retirado === true) {
+          ref.estadoPublicacion = "RETIRADO";
+          const datos = ref.datosHistoricos;
+          if (datos && typeof datos === "object") {
+            (datos as Record<string, unknown>).oculto = true;
+          } else {
+            ref.datosHistoricos = { oculto: true };
+          }
+        }
+      }
+
+      const cursos = refs
+        .map((ref) => {
+          const refId = String(ref.cursoSecundarioRef ?? "").trim();
+          const sec = refId ? porId.get(refId) : undefined;
+          const versionActual =
+            (sec?.versionActual as Record<string, unknown> | null) ?? null;
+          return {
+            ...ref,
+            resumen: sec?.resumen ?? ref.resumen ?? null,
+            estadoSecundaria: sec?.estado ?? null,
+            visibilidad: sec?.visibilidad ?? null,
+            alcanceDirigido: sec?.alcanceDirigido ?? null,
+            portadaClave: sec?.portadaClave ?? ref.imagenPublicaRef ?? null,
+            imagenPosicion: sec?.imagenPosicion ?? null,
+            precio: sec?.precio ?? null,
+            gratuito: sec?.gratuito ?? null,
+            categoriaSecundaria: sec?.categoria ?? null,
+            modalidad: sec?.modalidad ?? ref.modalidad ?? null,
+            duracionMinutosTotal: sec?.duracionMinutosTotal ?? ref.duracionMinutos,
+            horasVersion: versionActual?.horas ?? null,
+          };
+        })
+        .filter((item) => {
+          const refId = String(item.cursoSecundarioRef ?? "").trim();
+          const sec = refId ? porId.get(refId) : undefined;
+          return visibleEnCatalogoPublico(item, sec);
+        });
+
+      return json(
+        { ok: true, total: cursos.length, cursos },
+        200,
+        corsHeaders,
+      );
+    }
+
+    // Ficha pública /cursos/:id — sin JWT de usuario.
+    if (entrada.action === "get-detalle-curso-publico") {
+      if (!principalServiceRole) {
+        return json(
+          { ok: false, error: "Service role no configurado en el gateway" },
+          503,
+          corsHeaders,
+        );
+      }
+      const cursoId =
+        typeof entrada.cursoId === "string" ? entrada.cursoId.trim() : "";
+      if (!cursoId || !UUID_RE.test(cursoId)) {
+        return json({ ok: false, error: "cursoId requerido" }, 400, corsHeaders);
+      }
+
+      const principalAdmin = createClient(principalUrl, principalServiceRole, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+      const conexion = await resolverConexionSecundaria(
+        instalacionId,
+        principalUrl,
+        principalServiceRole,
+      );
+      if ("error" in conexion) {
+        return json({ ok: false, error: conexion.error }, 503, corsHeaders);
+      }
+      const secundaria = createClient(conexion.url, conexion.key, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+
+      const catalogo = await principalAdmin.rpc("public_listar_cursos_catalogo", {
+        p_instalacion_id: instalacionId,
+      });
+      if (catalogo.error) {
+        return json(
+          {
+            ok: false,
+            error:
+              "Falta ejecutar en la principal 20260831160000_public_listar_cursos_catalogo.sql",
+            details: catalogo.error.message,
+          },
+          200,
+          corsHeaders,
+        );
+      }
+      const refs = Array.isArray(catalogo.data?.cursos)
+        ? (catalogo.data.cursos as Record<string, unknown>[])
+        : [];
+      const ref = refs.find(
+        (item) => String(item.cursoSecundarioRef ?? "").trim() === cursoId,
+      );
+
+      const detalle = await secundaria.rpc("servicio_obtener_curso_tipado", {
+        p_curso_id: cursoId,
+      });
+      if (detalle.error || !detalle.data?.ok || !detalle.data?.curso) {
+        return json(
+          {
+            ok: false,
+            error: detalle.data?.error || "Curso no encontrado",
+          },
+          404,
+          corsHeaders,
+        );
+      }
+      const cursoGet = detalle.data.curso as Record<string, unknown>;
+      const modalidadEfectiva = modalidadEfectivaCursoSecundaria(cursoGet);
+      cursoGet.modalidad = modalidadEfectiva;
+
+      const permitidoPorCatalogo = ref
+        ? visibleEnCatalogoPublico(ref, cursoGet)
+        : cursoSecundarioEsPublicoLanding(cursoGet);
+      if (!permitidoPorCatalogo) {
+        return json(
+          { ok: false, error: "Curso no disponible públicamente" },
+          404,
+          corsHeaders,
+        );
+      }
+
+      const [modulosRes, sesionesRes] = await Promise.all([
+        secundaria.rpc("servicio_listar_modulos_curso", {
+          p_curso_id: cursoId,
+        }),
+        secundaria.rpc("servicio_listar_sesiones_en_vivo", {
+          p_curso_id: cursoId,
+          p_limite: 100,
+        }),
+      ]);
+
+      return json(
+        {
+          ok: true,
+          curso: cursoGet,
+          modulos: Array.isArray(modulosRes.data?.modulos)
+            ? modulosRes.data.modulos
+            : [],
+          sesiones: Array.isArray(sesionesRes.data?.sesiones)
+            ? sesionesRes.data.sesiones
+            : [],
+          autorIdentidadRef: cursoGet.autorIdentidadRef ?? null,
+        },
+        200,
+        corsHeaders,
+      );
+    }
+
     const authorization = req.headers.get("authorization") ?? "";
     const token = authorization.replace(/^Bearer\s+/i, "");
     if (!token) return json({ error: "Sesion requerida" }, 401, corsHeaders);
@@ -524,16 +1291,6 @@ Deno.serve(async (req) => {
       return json({ error: "Sesion invalida" }, 401, corsHeaders);
     }
 
-    const entrada = await req.json().catch(() => ({}));
-
-    const UUID_RE =
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    const instalacionId =
-      typeof entrada.instalacionId === "string" &&
-        UUID_RE.test(entrada.instalacionId.trim())
-        ? entrada.instalacionId.trim()
-        : INSTALACION_TUKUY;
-
     const conexion = await resolverConexionSecundaria(
       instalacionId,
       principalUrl,
@@ -545,6 +1302,11 @@ Deno.serve(async (req) => {
     const secundaria = createClient(conexion.url, conexion.key, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
+    const principalAdmin = principalServiceRole
+      ? createClient(principalUrl, principalServiceRole, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      })
+      : null;
 
     const resolverContextosSincronizables = async () => {
       const { data: contextos, error: errorContextos } = await principal.rpc(
@@ -858,7 +1620,19 @@ Deno.serve(async (req) => {
             corsHeaders,
           );
         }
-        return json({ ok: true, curso: detalle.data.curso }, 200, corsHeaders);
+        const cursoGet = detalle.data.curso as Record<string, unknown>;
+        const modalidadEfectiva = modalidadEfectivaCursoSecundaria(cursoGet);
+        if (
+          modalidadEfectiva === "EN_VIVO" &&
+          String(cursoGet.modalidad ?? "").toUpperCase() !== "EN_VIVO" &&
+          String(cursoGet.modalidad ?? "").toUpperCase() !== "PRESENCIAL"
+        ) {
+          await asegurarModalidadEnVivoCurso(secundaria, cursoId);
+          cursoGet.modalidad = "EN_VIVO";
+        } else {
+          cursoGet.modalidad = modalidadEfectiva;
+        }
+        return json({ ok: true, curso: cursoGet }, 200, corsHeaders);
       }
 
       if (entrada.action === "get-borrador") {
@@ -1132,6 +1906,8 @@ Deno.serve(async (req) => {
             }
           }
         }
+        await cancelarEventosCalendarCurso(secundaria, cursoId);
+
         const eliminado = await secundaria.rpc(
           "servicio_eliminar_curso_permanente",
           { p_curso_id: cursoId },
@@ -1178,7 +1954,10 @@ Deno.serve(async (req) => {
           corsHeaders,
         );
       }
-      return json({ ok: true, cursos: cursos.data }, 200, corsHeaders);
+      const payloadCursos = cursos.data as Record<string, unknown>;
+      await enriquecerCertificadoListadoCursos(secundaria, payloadCursos);
+      await enriquecerModalidadListadoCursos(secundaria, payloadCursos);
+      return json({ ok: true, cursos: payloadCursos }, 200, corsHeaders);
     }
 
     if (entrada.action === "publicar-curso") {
@@ -1289,6 +2068,11 @@ Deno.serve(async (req) => {
           "admin_upsert_curso_catalogo_secundaria",
           payloadCatalogo,
         )
+        : principalAdmin
+        ? await principalAdmin.rpc(
+          "service_upsert_curso_catalogo_publico",
+          payloadCatalogo,
+        )
         : await principal.rpc("org_upsert_curso_catalogo", payloadCatalogo);
       if (catalogo.error) {
         return json(
@@ -1352,7 +2136,10 @@ Deno.serve(async (req) => {
             corsHeaders,
           );
         }
-        return json({ ok: true, ...mis.data }, 200, corsHeaders);
+        const payloadMis = mis.data as Record<string, unknown>;
+        await enriquecerCertificadoMisCursos(secundaria, payloadMis);
+        await enriquecerModalidadListadoCursos(secundaria, payloadMis);
+        return json({ ok: true, ...payloadMis }, 200, corsHeaders);
       }
 
       if (entrada.action === "matricular-curso") {
@@ -1448,6 +2235,15 @@ Deno.serve(async (req) => {
             corsHeaders,
           );
         }
+
+        await invitarAlumnoSesionesFuturasCurso(
+          principalAdmin,
+          secundaria,
+          cursoId,
+          estudianteId,
+          usuario.user.email,
+        );
+
         return json({ ok: true, ...mat.data }, 200, corsHeaders);
       }
 
@@ -1489,7 +2285,16 @@ Deno.serve(async (req) => {
             corsHeaders,
           );
         }
-        return json({ ok: true, ...contenido.data }, 200, corsHeaders);
+        const payloadContenido = contenido.data as Record<string, unknown>;
+        const cursoContenido = payloadContenido.curso;
+        if (cursoContenido && typeof cursoContenido === "object") {
+          await enriquecerCertificadoEnItems(
+            secundaria,
+            [cursoContenido as Record<string, unknown>],
+            "id",
+          );
+        }
+        return json({ ok: true, ...payloadContenido }, 200, corsHeaders);
       }
 
       if (entrada.action === "guardar-apuntes") {
@@ -1698,6 +2503,7 @@ Deno.serve(async (req) => {
     if (
       entrada.action === "list-sesiones" ||
       entrada.action === "crear-sesion" ||
+      entrada.action === "crear-sesion-rapida" ||
       entrada.action === "actualizar-sesion" ||
       entrada.action === "eliminar-sesion" ||
       entrada.action === "actualizar-estado-sesion" ||
@@ -1775,6 +2581,32 @@ Deno.serve(async (req) => {
             corsHeaders,
           );
         }
+
+        if (principalAdmin) {
+          const ses = actualizada.data?.sesion as Record<string, unknown> | undefined;
+          const cursoId = String(ses?.cursoId ?? "").trim();
+          const correos = cursoId
+            ? await correosMatriculadosCurso(secundaria, cursoId)
+            : [];
+          const docente = correoDocenteSesion(usuario.user);
+          if (docente.includes("@")) correos.push(docente);
+          if (ses?.id) {
+            await sincronizarSesionEnCalendariosUsuarios(
+              principalAdmin,
+              secundaria,
+              {
+                id: String(ses.id),
+                titulo: String(ses.titulo ?? "Clase en vivo"),
+                cursoTitulo: String(ses.cursoTitulo ?? ""),
+                iniciaEn: String(ses.iniciaEn ?? ""),
+                terminaEn: String(ses.terminaEn ?? ses.iniciaEn ?? ""),
+                meetUrl: String(ses.urlAcceso ?? "").trim() || undefined,
+              },
+              correos,
+            );
+          }
+        }
+
         return json({ ok: true, ...actualizada.data }, 200, corsHeaders);
       }
 
@@ -1794,6 +2626,9 @@ Deno.serve(async (req) => {
             ? fila.calendar_event_id
             : "";
         if (eventId) await cancelarEventoCalendar(eventId);
+        if (principalAdmin) {
+          await eliminarSesionDeCalendariosUsuarios(principalAdmin, secundaria, sesionId);
+        }
 
         const eliminada = await secundaria.rpc(
           "servicio_eliminar_sesion_en_vivo",
@@ -1838,6 +2673,13 @@ Deno.serve(async (req) => {
               ? fila.calendar_event_id
               : "";
           if (eventId) await cancelarEventoCalendar(eventId);
+          if (principalAdmin) {
+            await eliminarSesionDeCalendariosUsuarios(
+              principalAdmin,
+              secundaria,
+              sesionId,
+            );
+          }
         }
 
         const actualizada = await secundaria.rpc(
@@ -1974,6 +2816,342 @@ Deno.serve(async (req) => {
         return json({ ok: true, ...actualizado.data }, 200, corsHeaders);
       }
 
+      if (entrada.action === "crear-sesion-rapida") {
+        const tituloCurso = String(entrada.tituloCurso ?? "").trim();
+        const descripcion = String(entrada.descripcion ?? "").trim();
+        const tituloSesion = String(
+          entrada.tituloSesion ?? entrada.titulo ?? tituloCurso,
+        ).trim();
+        const iniciaEn =
+          typeof entrada.iniciaEn === "string" ? entrada.iniciaEn : "";
+        const duracionMinutos = Math.max(
+          15,
+          Math.min(480, Number(entrada.duracionMinutos ?? 60) || 60),
+        );
+        const alcance = String(entrada.alcance ?? "PUBLICO")
+          .trim()
+          .toUpperCase() === "INTERNO"
+          ? "INTERNO"
+          : "PUBLICO";
+        const portadaUrl = String(entrada.portadaUrl ?? "").trim();
+        const invitarMatriculados = entrada.invitarMatriculados !== false;
+        const extras = Array.isArray(entrada.attendees)
+          ? entrada.attendees.filter((e: unknown) => typeof e === "string")
+          : [];
+        const certificadoActivo = entrada.certificado === true;
+        const exigirAsistencia =
+          certificadoActivo && entrada.exigirAsistencia !== false;
+        const porcentajeMinimoAsistencia = Math.max(
+          1,
+          Math.min(
+            100,
+            Number(entrada.porcentajeMinimoAsistencia ?? 50) || 50,
+          ),
+        );
+        const exigirNota = certificadoActivo && entrada.exigirNota === true;
+        const notaMinimaCert = Math.max(
+          0,
+          Math.min(20, Number(entrada.notaMinima ?? 14) || 14),
+        );
+
+        if (!tituloCurso || !iniciaEn) {
+          return json(
+            { error: "tituloCurso e iniciaEn son requeridos" },
+            400,
+            corsHeaders,
+          );
+        }
+
+        const inicio = new Date(iniciaEn);
+        if (Number.isNaN(inicio.getTime())) {
+          return json({ error: "iniciaEn invalido" }, 400, corsHeaders);
+        }
+        const fin = new Date(inicio.getTime() + duracionMinutos * 60_000);
+
+        const borrador = {
+          titulo: tituloCurso,
+          subtitulo: "",
+          descripcion,
+          publico: "",
+          objetivos: [],
+          requisitos: [],
+          categoria: "Clase en vivo",
+          nivel: "Intermedio",
+          imagen: portadaUrl || "",
+          imagenPosicion: "50% 50%",
+          ambito: "ORGANIZACION",
+          organizacionId: null,
+          acceso: "GRATUITO",
+          precio: 0,
+          visibilidad: alcance === "INTERNO" ? "ORGANIZACION" : "PUBLICO",
+          permiteEmpresas: false,
+          certificado: certificadoActivo,
+          nombreCertificado: certificadoActivo ? tituloCurso : "",
+          notaMinima: notaMinimaCert,
+          vigenciaMeses: 0,
+          modalidad: "EN_VIVO",
+          origenCarga: "ADMINISTRACION",
+          criteriosCertificado: {
+            exigirAsistencia,
+            porcentajeMinimoAsistencia,
+            exigirNota,
+            notaMinima: notaMinimaCert,
+          },
+          secciones: [
+            {
+              titulo: "Sesión en vivo",
+              clases: ["Clase en vivo"],
+              items: [
+                {
+                  titulo: "Clase en vivo",
+                  tipo: "lectura",
+                },
+              ],
+            },
+          ],
+        };
+
+        const guardado = await secundaria.rpc("servicio_guardar_curso_borrador", {
+          p_autor_identidad_ref: usuario.user.id,
+          p_curso_id: null,
+          p_documento: borrador,
+          p_estado: "PUBLICADO",
+        });
+        if (guardado.error || !guardado.data?.ok || !guardado.data?.curso) {
+          return json(
+            {
+              ok: false,
+              error: "No se pudo crear el curso mínimo de la sesión",
+              details: guardado.error?.message ?? guardado.data,
+            },
+            200,
+            corsHeaders,
+          );
+        }
+
+        const cursoGuardado = guardado.data.curso as Record<string, unknown>;
+        const cursoId = String(cursoGuardado.id ?? "").trim();
+        if (!cursoId) {
+          return json(
+            { ok: false, error: "Curso creado sin id" },
+            502,
+            corsHeaders,
+          );
+        }
+
+        // El guardado tipado aún puede forzar VIRTUAL: fijamos EN_VIVO.
+        await asegurarModalidadEnVivoCurso(secundaria, cursoId);
+        {
+          const { error: errorMeta } = await secundaria
+            .from("curso")
+            .update({
+              portada_clave_almacenamiento: portadaUrl || null,
+              resumen: descripcion || null,
+            })
+            .eq("id", cursoId);
+          if (errorMeta) {
+            console.warn("crear-sesion-rapida meta:", errorMeta.message);
+          }
+        }
+
+        const marcado = await secundaria.rpc("servicio_marcar_curso_publicado", {
+          p_curso_id: cursoId,
+          p_estado: "PUBLICADO",
+        });
+        if (marcado.error) {
+          return json(
+            {
+              ok: false,
+              error: "Curso creado, pero no se pudo marcar PUBLICADO",
+              details: marcado.error.message,
+            },
+            200,
+            corsHeaders,
+          );
+        }
+
+        const configPublicacion = {
+          alcance,
+          visibleParaExternos: alcance === "PUBLICO",
+          modalidadMatricula: "LIBRE",
+          precio: {
+            modalidad: "GRATUITO",
+            moneda: "PEN",
+            precioCompleto: 0,
+            modulos: [],
+          },
+          certificacion: {
+            habilitada: certificadoActivo,
+            incluidaConCurso: certificadoActivo,
+            compraOpcional: false,
+            precio: 0,
+            moneda: "PEN",
+            notaMinima: notaMinimaCert,
+            porcentajeMinimoAvance: 0,
+            requiereCompletarActividades: false,
+            exigirAsistencia,
+            porcentajeMinimoAsistencia,
+            exigirNota,
+          },
+          politicaDescuentos: "SOLO_MEJOR",
+          descuentos: [],
+          obligatorio: false,
+          nodoIds: [],
+          incluirDescendientes: true,
+          categoriaPrincipalId: "",
+          categoriaSecundariaIds: [],
+          recomendarPorIntereses: false,
+        };
+
+        const payloadCatalogo = {
+          p_instalacion_id: instalacionId,
+          p_curso_secundario_ref: cursoId,
+          p_codigo: String(cursoGuardado.codigo ?? ""),
+          p_titulo: tituloCurso,
+          p_resumen: descripcion || null,
+          p_modalidad: "EN_VIVO",
+          p_duracion_minutos: duracionMinutos,
+          p_imagen_publica_ref: portadaUrl || null,
+          p_version_publicada: 1,
+          p_estado_publicacion: "PUBLICADO",
+          p_datos_historicos: {
+            origen: "sesion_rapida",
+            gratuito: true,
+            precio: 0,
+            publicar: true,
+            workflowEstado: "PUBLICADO",
+            publicadoPor: usuario.user.id,
+            publicadoEnGateway: new Date().toISOString(),
+            certificado: certificadoActivo,
+            criteriosCertificado: {
+              exigirAsistencia,
+              porcentajeMinimoAsistencia,
+              exigirNota,
+              notaMinima: notaMinimaCert,
+            },
+            configuracionPublicacion: {
+              alcance: alcance === "PUBLICO" ? "TODOS" : "INTERNO",
+              publicar: true,
+              moneda: "PEN",
+              precio: 0,
+              configuracionPublicacion: configPublicacion,
+            },
+          },
+        };
+
+        const { data: esAdminPub } = await principal.rpc("es_super_admin_actual");
+        const catalogo = esAdminPub === true
+          ? await principalAdmin.rpc(
+            "admin_upsert_curso_catalogo_secundaria",
+            payloadCatalogo,
+          )
+          : await principalAdmin.rpc(
+            "service_upsert_curso_catalogo_publico",
+            payloadCatalogo,
+          );
+        if (catalogo.error) {
+          console.warn("crear-sesion-rapida catalogo:", catalogo.error.message);
+        }
+
+        const creada = await secundaria.rpc("servicio_crear_sesion_en_vivo", {
+          p_curso_id: cursoId,
+          p_titulo: tituloSesion || tituloCurso,
+          p_inicia_en: inicio.toISOString(),
+          p_termina_en: fin.toISOString(),
+          p_url_acceso: null,
+          p_docente_identidad_ref: usuario.user.id,
+        });
+        if (creada.error) {
+          return json(
+            {
+              ok: false,
+              error: "Curso publicado, pero falló al crear la sesión",
+              details: creada.error.message,
+              cursoId,
+            },
+            200,
+            corsHeaders,
+          );
+        }
+
+        const sesionCreada = creada.data?.sesion ?? null;
+        const sesionId =
+          typeof sesionCreada?.id === "string" ? sesionCreada.id : "";
+        const matriculados = invitarMatriculados
+          ? await correosMatriculadosCurso(secundaria, cursoId)
+          : [];
+        const { attendees, anfitriones } = invitadosCalendarSesion(
+          usuario.user,
+          extras,
+          matriculados,
+        );
+
+        const meet = await crearEventoCalendarMeet({
+          titulo: tituloSesion || tituloCurso,
+          descripcion: `${tituloCurso}${descripcion ? `\n\n${descripcion}` : ""}`,
+          iniciaEn: inicio.toISOString(),
+          terminaEn: fin.toISOString(),
+          attendees,
+          anfitriones,
+        });
+
+        if (sesionId && meet.meetUrl) {
+          const patch: Record<string, unknown> = {
+            url_acceso: meet.meetUrl,
+          };
+          if (!meet.simulado) {
+            patch.calendar_event_id = meet.calendarEventId;
+          }
+          const { error: patchError } = await secundaria
+            .from("sesion_en_vivo")
+            .update(patch)
+            .eq("id", sesionId);
+          if (!patchError && sesionCreada) {
+            sesionCreada.urlAcceso = meet.meetUrl;
+            sesionCreada.calendarEventId = meet.calendarEventId;
+          }
+        }
+
+        if (principalAdmin && sesionId) {
+          await sincronizarSesionEnCalendariosUsuarios(
+            principalAdmin,
+            secundaria,
+            {
+              id: sesionId,
+              titulo: tituloSesion || tituloCurso,
+              cursoTitulo: tituloCurso,
+              iniciaEn: inicio.toISOString(),
+              terminaEn: fin.toISOString(),
+              meetUrl: meet.meetUrl,
+            },
+            attendees,
+          );
+        }
+
+        return json(
+          {
+            ok: true,
+            cursoId,
+            curso: {
+              id: cursoId,
+              titulo: tituloCurso,
+              modalidad: "EN_VIVO",
+              portadaClave: portadaUrl || null,
+            },
+            sesion: sesionCreada ?? creada.data?.sesion,
+            invitados: attendees,
+            googleMeet: {
+              simulado: meet.simulado,
+              meetUrl: meet.meetUrl,
+              calendarEventId: meet.calendarEventId,
+              motivo: "motivo" in meet ? meet.motivo : undefined,
+            },
+          },
+          200,
+          corsHeaders,
+        );
+      }
+
       const cursoId =
         typeof entrada.cursoId === "string" ? entrada.cursoId.trim() : "";
       const titulo =
@@ -2015,9 +3193,18 @@ Deno.serve(async (req) => {
       const sesionId =
         typeof sesionCreada?.id === "string" ? sesionCreada.id : "";
 
-      const attendees = Array.isArray(entrada.attendees)
+      const invitarMatriculados = entrada.invitarMatriculados !== false;
+      const extras = Array.isArray(entrada.attendees)
         ? entrada.attendees.filter((e: unknown) => typeof e === "string")
         : [];
+      const matriculados = invitarMatriculados
+        ? await correosMatriculadosCurso(secundaria, cursoId)
+        : [];
+      const { attendees, anfitriones } = invitadosCalendarSesion(
+        usuario.user,
+        extras,
+        matriculados,
+      );
 
       const meet = await crearEventoCalendarMeet({
         titulo,
@@ -2025,40 +3212,57 @@ Deno.serve(async (req) => {
         iniciaEn,
         terminaEn,
         attendees,
+        anfitriones,
       });
 
-      if (sesionId && meet.meetUrl) {
-        const patch: Record<string, unknown> = {
-          url_acceso: meet.meetUrl,
-        };
-        if (!meet.simulado) {
-          patch.calendar_event_id = meet.calendarEventId;
+        if (sesionId && meet.meetUrl) {
+          const patch: Record<string, unknown> = {
+            url_acceso: meet.meetUrl,
+          };
+          if (!meet.simulado) {
+            patch.calendar_event_id = meet.calendarEventId;
+          }
+          const { error: patchError } = await secundaria
+            .from("sesion_en_vivo")
+            .update(patch)
+            .eq("id", sesionId);
+          if (!patchError && sesionCreada) {
+            sesionCreada.urlAcceso = meet.meetUrl;
+            sesionCreada.calendarEventId = meet.calendarEventId;
+          }
         }
-        const { error: patchError } = await secundaria
-          .from("sesion_en_vivo")
-          .update(patch)
-          .eq("id", sesionId);
-        if (!patchError && sesionCreada) {
-          sesionCreada.urlAcceso = meet.meetUrl;
-          sesionCreada.calendarEventId = meet.calendarEventId;
-        }
-      }
 
-      return json(
-        {
-          ok: true,
-          ...creada.data,
-          sesion: sesionCreada ?? creada.data?.sesion,
-          googleMeet: {
-            simulado: meet.simulado,
-            meetUrl: meet.meetUrl,
-            calendarEventId: meet.calendarEventId,
-            motivo: "motivo" in meet ? meet.motivo : undefined,
+        if (principalAdmin && sesionId) {
+          await sincronizarSesionEnCalendariosUsuarios(
+            principalAdmin,
+            secundaria,
+            {
+              id: sesionId,
+              titulo,
+              cursoTitulo: String(sesionCreada?.cursoTitulo ?? ""),
+              iniciaEn,
+              terminaEn,
+              meetUrl: meet.meetUrl,
+            },
+            attendees,
+          );
+        }
+
+        return json(
+          {
+            ok: true,
+            ...creada.data,
+            sesion: sesionCreada ?? creada.data?.sesion,
+            googleMeet: {
+              simulado: meet.simulado,
+              meetUrl: meet.meetUrl,
+              calendarEventId: meet.calendarEventId,
+              motivo: "motivo" in meet ? meet.motivo : undefined,
+            },
           },
-        },
-        200,
-        corsHeaders,
-      );
+          200,
+          corsHeaders,
+        );
     }
 
     if (
@@ -2153,14 +3357,214 @@ Deno.serve(async (req) => {
     }
 
     if (
+      entrada.action === "abrir-pase-asistencia" ||
+      entrada.action === "cerrar-pase-asistencia" ||
+      entrada.action === "list-pases-asistencia" ||
+      entrada.action === "list-asistencia-pase" ||
+      entrada.action === "marcar-asistencia-pase" ||
+      entrada.action === "checkin-pase-asistencia"
+    ) {
+      const resolucion = await resolverContextosSincronizables();
+      const { data: esAdmin } = await principal.rpc("es_super_admin_actual");
+      if (esAdmin !== true && (resolucion.error || !resolucion.propios.length)) {
+        return json(
+          { error: "El usuario no pertenece a esta organizacion" },
+          403,
+          corsHeaders,
+        );
+      }
+
+      const msgFaltaPases =
+        "Falta ejecutar en la secundaria 20260831220000_pases_asistencia_cert_criterios.sql";
+
+      const respuestaFaltaFn = (msg: string) =>
+        json(
+          {
+            ok: false,
+            error: /function|does not exist|schema cache/i.test(msg)
+              ? msgFaltaPases
+              : msg,
+            details: msg,
+          },
+          200,
+          corsHeaders,
+        );
+
+      if (entrada.action === "list-pases-asistencia") {
+        const sesionId =
+          typeof entrada.sesionId === "string" ? entrada.sesionId.trim() : "";
+        if (!sesionId || !UUID_RE.test(sesionId)) {
+          return json({ error: "sesionId (uuid) requerido" }, 400, corsHeaders);
+        }
+        const listado = await secundaria.rpc("servicio_listar_pases_asistencia", {
+          p_sesion_id: sesionId,
+        });
+        if (listado.error) return respuestaFaltaFn(listado.error.message ?? "");
+        if (!listado.data?.ok) {
+          return json(
+            {
+              ok: false,
+              error: listado.data?.error ?? "Sesion no encontrada",
+            },
+            404,
+            corsHeaders,
+          );
+        }
+        return json({ ok: true, ...listado.data }, 200, corsHeaders);
+      }
+
+      if (entrada.action === "abrir-pase-asistencia") {
+        const sesionId =
+          typeof entrada.sesionId === "string" ? entrada.sesionId.trim() : "";
+        if (!sesionId || !UUID_RE.test(sesionId)) {
+          return json({ error: "sesionId (uuid) requerido" }, 400, corsHeaders);
+        }
+        const titulo =
+          typeof entrada.titulo === "string" ? entrada.titulo.trim() : null;
+        const abierto = await secundaria.rpc("servicio_abrir_pase_asistencia", {
+          p_sesion_id: sesionId,
+          p_abierto_por: usuario.user.id,
+          p_titulo: titulo || null,
+        });
+        if (abierto.error) return respuestaFaltaFn(abierto.error.message ?? "");
+        if (!abierto.data?.ok) {
+          return json(
+            {
+              ok: false,
+              error: abierto.data?.error ?? "No se pudo abrir el pase",
+            },
+            200,
+            corsHeaders,
+          );
+        }
+        return json({ ok: true, ...abierto.data }, 200, corsHeaders);
+      }
+
+      if (entrada.action === "cerrar-pase-asistencia") {
+        const paseId =
+          typeof entrada.paseId === "string" ? entrada.paseId.trim() : "";
+        if (!paseId || !UUID_RE.test(paseId)) {
+          return json({ error: "paseId (uuid) requerido" }, 400, corsHeaders);
+        }
+        const cerrado = await secundaria.rpc("servicio_cerrar_pase_asistencia", {
+          p_pase_id: paseId,
+        });
+        if (cerrado.error) return respuestaFaltaFn(cerrado.error.message ?? "");
+        if (!cerrado.data?.ok) {
+          return json(
+            {
+              ok: false,
+              error: cerrado.data?.error ?? "No se pudo cerrar el pase",
+            },
+            200,
+            corsHeaders,
+          );
+        }
+        return json({ ok: true, ...cerrado.data }, 200, corsHeaders);
+      }
+
+      if (entrada.action === "list-asistencia-pase") {
+        const paseId =
+          typeof entrada.paseId === "string" ? entrada.paseId.trim() : "";
+        if (!paseId || !UUID_RE.test(paseId)) {
+          return json({ error: "paseId (uuid) requerido" }, 400, corsHeaders);
+        }
+        const listado = await secundaria.rpc("servicio_listar_asistencia_pase", {
+          p_pase_id: paseId,
+        });
+        if (listado.error) return respuestaFaltaFn(listado.error.message ?? "");
+        if (!listado.data?.ok) {
+          return json(
+            {
+              ok: false,
+              error: listado.data?.error ?? "Pase no encontrado",
+            },
+            404,
+            corsHeaders,
+          );
+        }
+        return json({ ok: true, ...listado.data }, 200, corsHeaders);
+      }
+
+      if (entrada.action === "marcar-asistencia-pase") {
+        const paseId =
+          typeof entrada.paseId === "string" ? entrada.paseId.trim() : "";
+        const items = Array.isArray(entrada.items) ? entrada.items : [];
+        if (!paseId || !UUID_RE.test(paseId)) {
+          return json({ error: "paseId (uuid) requerido" }, 400, corsHeaders);
+        }
+        if (!items.length) {
+          return json(
+            { error: "items de asistencia requeridos" },
+            400,
+            corsHeaders,
+          );
+        }
+        const marcado = await secundaria.rpc("servicio_marcar_asistencia_pase", {
+          p_pase_id: paseId,
+          p_marcador_identidad_ref: usuario.user.id,
+          p_items: items,
+        });
+        if (marcado.error) return respuestaFaltaFn(marcado.error.message ?? "");
+        if (!marcado.data?.ok) {
+          return json(
+            {
+              ok: false,
+              error: marcado.data?.error ?? "No se pudo marcar la asistencia",
+            },
+            200,
+            corsHeaders,
+          );
+        }
+        return json({ ok: true, ...marcado.data }, 200, corsHeaders);
+      }
+
+      // checkin-pase-asistencia
+      {
+        const sesionId =
+          typeof entrada.sesionId === "string" ? entrada.sesionId.trim() : "";
+        const codigo =
+          typeof entrada.codigo === "string" ? entrada.codigo.trim() : "";
+        if (!sesionId || !UUID_RE.test(sesionId)) {
+          return json({ error: "sesionId (uuid) requerido" }, 400, corsHeaders);
+        }
+        if (!codigo) {
+          return json({ error: "codigo requerido" }, 400, corsHeaders);
+        }
+        const checkin = await secundaria.rpc(
+          "servicio_checkin_pase_por_codigo",
+          {
+            p_sesion_id: sesionId,
+            p_codigo: codigo,
+            p_estudiante_identidad_ref: usuario.user.id,
+          },
+        );
+        if (checkin.error) return respuestaFaltaFn(checkin.error.message ?? "");
+        if (!checkin.data?.ok) {
+          return json(
+            {
+              ok: false,
+              error: checkin.data?.error ?? "No se pudo registrar el check-in",
+            },
+            200,
+            corsHeaders,
+          );
+        }
+        return json({ ok: true, ...checkin.data }, 200, corsHeaders);
+      }
+    }
+
+    if (
       entrada.action === "list-certificados" ||
       entrada.action === "list-certificados-pendientes" ||
       entrada.action === "list-mis-certificados" ||
       entrada.action === "list-certificados-pendientes-firma" ||
       entrada.action === "firmar-certificado" ||
       entrada.action === "emitir-certificado" ||
+      entrada.action === "emitir-certificado-manual" ||
       entrada.action === "revocar-certificado" ||
-      entrada.action === "actualizar-documento-certificado"
+      entrada.action === "actualizar-documento-certificado" ||
+      entrada.action === "publicar-indice-certificado"
     ) {
       const resolucion = await resolverContextosSincronizables();
       const { data: esAdmin } = await principal.rpc("es_super_admin_actual");
@@ -2315,7 +3719,84 @@ Deno.serve(async (req) => {
             corsHeaders,
           );
         }
-        return json({ ok: true, ...actualizado.data }, 200, corsHeaders);
+
+        const republicado = await republicarIndiceCertificadoManual({
+          secundaria,
+          principal,
+          instalacionId,
+          certificadoId,
+          documentoId:
+            typeof actualizado.data?.documentoId === "string"
+              ? actualizado.data.documentoId
+              : "",
+          huellaDocumento:
+            typeof actualizado.data?.huellaDocumento === "string"
+              ? actualizado.data.huellaDocumento
+              : "",
+        });
+
+        return json(
+          {
+            ok: true,
+            ...actualizado.data,
+            indicePublico: republicado.indicePublico,
+            advertenciaIndice: republicado.advertenciaIndice,
+          },
+          200,
+          corsHeaders,
+        );
+      }
+
+      if (entrada.action === "publicar-indice-certificado") {
+        const certificadoId =
+          typeof entrada.certificadoId === "string"
+            ? entrada.certificadoId.trim()
+            : "";
+        if (!certificadoId || !UUID_RE.test(certificadoId)) {
+          return json(
+            { error: "certificadoId (uuid) requerido" },
+            400,
+            corsHeaders,
+          );
+        }
+        const { data: docRow } = await secundaria
+          .from("certificado_documento")
+          .select("id, huella_documento")
+          .eq("certificado_curso_id", certificadoId)
+          .order("version", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        const republicado = await republicarIndiceCertificadoManual({
+          secundaria,
+          principal,
+          instalacionId,
+          certificadoId,
+          documentoId: typeof docRow?.id === "string" ? docRow.id : "",
+          huellaDocumento:
+            typeof docRow?.huella_documento === "string"
+              ? docRow.huella_documento
+              : "",
+        });
+        if (!republicado.indicePublico && republicado.advertenciaIndice) {
+          return json(
+            {
+              ok: false,
+              error: republicado.advertenciaIndice,
+            },
+            200,
+            corsHeaders,
+          );
+        }
+        return json(
+          {
+            ok: true,
+            certificadoId,
+            indicePublico: republicado.indicePublico,
+            advertenciaIndice: republicado.advertenciaIndice,
+          },
+          200,
+          corsHeaders,
+        );
       }
 
       if (entrada.action === "revocar-certificado") {
@@ -2464,6 +3945,120 @@ Deno.serve(async (req) => {
             ...firmado.data,
             indicePublico,
             advertenciaIndice,
+          },
+          200,
+          corsHeaders,
+        );
+      }
+
+      if (entrada.action === "emitir-certificado-manual") {
+        const titularNombre =
+          typeof entrada.titularNombre === "string"
+            ? entrada.titularNombre.trim()
+            : "";
+        const motivoTitulo =
+          typeof entrada.motivoTitulo === "string"
+            ? entrada.motivoTitulo.trim()
+            : "";
+        if (!titularNombre || !motivoTitulo) {
+          return json(
+            {
+              error:
+                "titularNombre y motivoTitulo son requeridos para emisión manual",
+            },
+            400,
+            corsHeaders,
+          );
+        }
+        const correoTitular =
+          typeof entrada.correoTitular === "string"
+            ? entrada.correoTitular.trim()
+            : null;
+        const detalle =
+          typeof entrada.detalle === "string" ? entrada.detalle.trim() : null;
+        const titularIdentidadRef =
+          typeof entrada.titularIdentidadRef === "string" &&
+            UUID_RE.test(entrada.titularIdentidadRef.trim())
+            ? entrada.titularIdentidadRef.trim()
+            : null;
+        const plantillaId =
+          typeof entrada.plantillaId === "string"
+            ? entrada.plantillaId.trim()
+            : null;
+
+        const emitido = await secundaria.rpc(
+          "servicio_emitir_certificado_manual",
+          {
+            p_emisor_identidad_ref: usuario.user.id,
+            p_titular_nombre: titularNombre,
+            p_motivo_titulo: motivoTitulo,
+            p_correo_titular: correoTitular,
+            p_detalle: detalle,
+            p_titular_identidad_ref: titularIdentidadRef,
+            p_plantilla_ref: plantillaId,
+          },
+        );
+        if (emitido.error) {
+          return json(
+            {
+              ok: false,
+              error:
+                "Falta ejecutar en la secundaria 20260902120000_certificado_emision_manual.sql",
+              details: emitido.error.message,
+            },
+            200,
+            corsHeaders,
+          );
+        }
+        if (!emitido.data?.ok) {
+          return json(
+            {
+              ok: false,
+              error:
+                emitido.data?.error ?? "No se pudo emitir el certificado manual",
+            },
+            200,
+            corsHeaders,
+          );
+        }
+
+        let firmasManual: unknown = null;
+        let advertenciaFirmasManual: string | null = null;
+        let listoParaIndiceManual = true;
+        let indicePublicoManual: unknown = null;
+        let advertenciaIndiceManual: string | null = null;
+        if (emitido.data?.certificadoId && emitido.data?.documentoId) {
+          const post = await postProcesarCertificadoEmitido({
+            secundaria,
+            principal,
+            instalacionId,
+            emisorId: usuario.user.id,
+            emisorNombre:
+              typeof usuario.user.user_metadata?.full_name === "string"
+                ? usuario.user.user_metadata.full_name
+                : usuario.user.email ?? null,
+            cert: emitido.data as Record<string, unknown>,
+            // Firma embebida en PDF: el QR debe verificar de inmediato.
+            publicarIndiceSiempre: true,
+          });
+          if (post) {
+            firmasManual = post.firmas;
+            advertenciaFirmasManual = post.advertenciaFirmas;
+            listoParaIndiceManual = post.listoParaIndice;
+            indicePublicoManual = post.indicePublico;
+            advertenciaIndiceManual = post.advertenciaIndice;
+          }
+        }
+
+        return json(
+          {
+            ok: true,
+            ...emitido.data,
+            firmas: firmasManual,
+            requiereFirmaInstitucional: listoParaIndiceManual !== true,
+            indicePublico: indicePublicoManual,
+            advertenciaFirmas: advertenciaFirmasManual,
+            advertenciaIndice: advertenciaIndiceManual,
           },
           200,
           corsHeaders,
@@ -2844,13 +4439,34 @@ Deno.serve(async (req) => {
       if (mis.error) {
         advertencias.push(`mis-cursos: ${mis.error.message}`);
       }
+      const payloadCursosAlumno = cursos.error
+        ? vacioCursos
+        : (cursos.data as Record<string, unknown>);
+      const payloadMisAlumno = mis.error
+        ? { ok: true, total: 0, cursos: [] }
+        : (mis.data as Record<string, unknown>);
+      if (!cursos.error) {
+        await enriquecerCertificadoListadoCursos(
+          secundaria,
+          payloadCursosAlumno,
+        );
+        await enriquecerModalidadListadoCursos(
+          secundaria,
+          payloadCursosAlumno,
+        );
+      }
+      if (!mis.error) {
+        await enriquecerCertificadoMisCursos(secundaria, payloadMisAlumno);
+        await enriquecerModalidadListadoCursos(
+          secundaria,
+          payloadMisAlumno,
+        );
+      }
       return json(
         {
           ok: true,
-          cursos: cursos.error ? vacioCursos : cursos.data,
-          misCursos: mis.error
-            ? { ok: true, total: 0, cursos: [] }
-            : mis.data,
+          cursos: payloadCursosAlumno,
+          misCursos: payloadMisAlumno,
           advertencias: advertencias.length ? advertencias : undefined,
         },
         200,
@@ -3608,6 +5224,14 @@ Deno.serve(async (req) => {
           corsHeaders,
         );
       }
+      await invitarAlumnoSesionesFuturasCurso(
+        principalAdmin,
+        secundaria,
+        cursoId,
+        authRef,
+        correoAlumno || undefined,
+      );
+
       return json(
         {
           ok: true,
@@ -3788,6 +5412,35 @@ Deno.serve(async (req) => {
       }
 
       const data = (act.data ?? {}) as Record<string, unknown>;
+      const cursoActivadoId = String(data.cursoId ?? "").trim();
+      const estudianteActivadoId = String(data.estudianteId ?? "").trim();
+      if (
+        principalAdmin &&
+        cursoActivadoId &&
+        UUID_RE.test(estudianteActivadoId)
+      ) {
+        let correoActivado = String(usuario.user.email ?? "").trim();
+        if (estudianteActivadoId !== usuario.user.id) {
+          const resuelto = await principal.rpc(
+            "org_resolver_estudiante_secundaria",
+            {
+              p_instalacion_id: instalacionId,
+              p_identidad_id: estudianteActivadoId,
+            },
+          );
+          if (resuelto.data?.ok && resuelto.data?.correo) {
+            correoActivado = String(resuelto.data.correo);
+          }
+        }
+        await invitarAlumnoSesionesFuturasCurso(
+          principalAdmin,
+          secundaria,
+          cursoActivadoId,
+          estudianteActivadoId,
+          correoActivado,
+        );
+      }
+
       return json(
         {
           ok: true,
@@ -3842,7 +5495,16 @@ Deno.serve(async (req) => {
       );
     }
 
-    return json({ error: "Accion no soportada" }, 400, corsHeaders);
+    return json(
+      {
+        error: "Accion no soportada",
+        action: typeof entrada.action === "string" ? entrada.action : null,
+        hint:
+          "La Edge Function secondary-gateway desplegada no reconoce esta acción. Redeploya: bunx supabase functions deploy secondary-gateway --project-ref <PRINCIPAL_REF>",
+      },
+      400,
+      corsHeaders,
+    );
   } catch (error) {
     return json(
       { error: error instanceof Error ? error.message : "Error interno" },

@@ -4,8 +4,12 @@ export function meetUrlEsSimulado(
   calendarEventId?: string | null,
 ) {
   const url = (urlAcceso ?? "").trim();
-  const cal = (calendarEventId ?? "").trim();
   if (!url) return true;
-  if (cal.startsWith("gcal_") || cal.startsWith("sec-")) return true;
-  return !/meet\.google\.com\/[a-z]{3}-[a-z]{4}-[a-z]{3}(?:\?|$)/i.test(url);
+  // URL real de Meet siempre gana (aunque el calendar_event_id sea placeholder).
+  if (/meet\.google\.com\/[a-z0-9]{3}-[a-z0-9]{4}-[a-z0-9]{3}(?:\?|$|\/)/i.test(url)) {
+    return false;
+  }
+  const cal = (calendarEventId ?? "").trim();
+  if (cal.startsWith("gcal_")) return true;
+  return true;
 }

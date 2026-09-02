@@ -8,6 +8,7 @@ import {
 } from "@/api/repositorio-local";
 import { CONTEXTO_SESION_KEY } from "@/lib/constants";
 import { env } from "@/lib/env";
+import { urlPortalLoginClaseEnVivo } from "@/lib/ruta-consumo-curso";
 import { mapearCursoSecundariaADocente, mapearDocumentoABorrador, mapearSesionSecundariaADocente } from "@/api/services/mapper-curso-secundaria";
 import { perfilDocenteService } from "@/api/services/perfil-docente.service";
 import { secundariaGatewayService } from "@/api/services/secundaria-gateway.service";
@@ -348,7 +349,7 @@ function notificacionesDelContexto(
       detalle: "Revisa el enlace y los materiales antes de iniciar.",
       fecha: "2026-07-16T08:30:00-05:00",
       leida: false,
-      ruta: "/docente/sesiones",
+      ruta: "/docente/calendario",
       tipo: "SESION",
     },
   ];
@@ -541,7 +542,36 @@ const sesiones = {
         terminaEn: fin.toISOString(),
         urlAcceso: null,
       });
-      return mapearSesionSecundariaADocente(creada.sesion);
+      const mapeada = mapearSesionSecundariaADocente(creada.sesion);
+      const correos = (sesion.invitadosEmails ?? []).filter((item) =>
+        item.includes("@"),
+      );
+      if (correos.length) {
+        const { notificacionesCorreoService } = await import(
+          "@/api/services/notificaciones-correo.service"
+        );
+        const { correoEnSegundoPlano } = await import(
+          "@/lib/correo-en-segundo-plano"
+        );
+        correoEnSegundoPlano(
+          notificacionesCorreoService.enviarClaseProgramadaMasivo({
+            correos,
+            datosBase: {
+              tituloClase: sesion.titulo,
+              nombreCurso: creada.sesion.cursoTitulo || sesion.curso,
+              fechaHora: inicio.toISOString(),
+              urlMeet:
+                creada.googleMeet?.meetUrl ??
+                creada.sesion.urlAcceso ??
+                mapeada.enlace ??
+                undefined,
+              urlCurso: urlPortalLoginClaseEnVivo(sesion.cursoId),
+            },
+          }),
+          "clase_programada",
+        );
+      }
+      return mapeada;
     }
     const contexto = obtenerContextoActual();
     const creada = await sesionesEnVivoCompartidas.programar({
@@ -682,8 +712,8 @@ function mapearCertificadoEmitidoSecundaria(
         }).format(new Date(fecha))
       : "—",
     estado,
-    cursoId: item.cursoId,
-    estudianteId: item.estudianteId,
+    cursoId: item.cursoId ?? undefined,
+    estudianteId: item.estudianteId ?? undefined,
     notaFinal: item.notaFinal ?? undefined,
     horasCertificadas: item.horasCertificadas,
     modulosCompletados: item.modulosCompletados,
@@ -692,6 +722,9 @@ function mapearCertificadoEmitidoSecundaria(
     documentoId: item.documentoId ?? undefined,
     claveAlmacenamiento: item.claveAlmacenamiento ?? undefined,
     revocadoEn: item.revocadoEn ?? undefined,
+    origenEmision: item.origenEmision ?? undefined,
+    detalleManual: item.detalleManual ?? undefined,
+    plantillaRef: item.plantillaRef ?? undefined,
   };
 }
 
@@ -716,8 +749,20 @@ async function persistirPdfCertificadoEmitido(
   certificado: CertificadoEmitidoDocente,
   opciones: {
     logoEntidadUrl?: string | null;
+    /** Reemplazo puntual de logo (emisión / temporal), sin alterar el diseño guardado. */
+    logoOverrideUrl?: string | null;
     plantillaCertificadoId?: string | null;
     cantidadFirmas?: number | null;
+    detalleTexto?: string | null;
+    categoriaTexto?: string | null;
+    /** Firma(s) puntuales de esta emisión (nombre + imagen). */
+    firmantes?: Array<{
+      nombre: string;
+      cargo?: string;
+      imagen?: string;
+    }> | null;
+    /** Layout ajustado solo para esta emisión (no persiste el diseño). */
+    layoutOverride?: import("@/lib/plantilla-certificado").LayoutPlantillaCertificado | null;
   } = {},
 ): Promise<CertificadoEmitidoDocente> {
   const certificadoId = certificado.certificadoId || certificado.id;
@@ -755,32 +800,79 @@ async function persistirPdfCertificadoEmitido(
     const config =
       await plantillasCertificadoService.obtenerConfig(instalacionId);
     const plantillaId = String(opciones.plantillaCertificadoId ?? "").trim();
-    const plantilla =
+    const plantillaBase =
       (plantillaId
         ? config.plantillas.find((p) => p.id === plantillaId)
         : null) ??
       config.plantillas.find((p) => p.esDefault) ??
       (await plantillasCertificadoService.obtenerDefault(instalacionId));
 
+    const overrideLogo = String(opciones.logoOverrideUrl ?? "").trim();
+    const firmantesEmitidos = (opciones.firmantes ?? [])
+      .map((f) => ({
+        nombre: String(f.nombre ?? "").trim(),
+        cargo: String(f.cargo ?? "").trim() || undefined,
+        imagen: String(f.imagen ?? "").trim() || undefined,
+      }))
+      .filter((f) => f.nombre);
+
+    let plantilla = plantillaBase
+      ? {
+          ...plantillaBase,
+          usarLogoEntidad: true,
+          logoOverrideUrl: overrideLogo || plantillaBase.logoOverrideUrl,
+          layout: opciones.layoutOverride
+            ? opciones.layoutOverride
+            : plantillaBase.layout,
+        }
+      : null;
+
+    if (plantilla && firmantesEmitidos.length === 1 && !opciones.layoutOverride) {
+      const { layoutDeModelo } = await import("@/lib/plantilla-certificado");
+      const derivado = layoutDeModelo(plantilla.layout, 1);
+      plantilla = {
+        ...plantilla,
+        layout: {
+          ...plantilla.layout,
+          ...derivado,
+          cantidadFirmantesActiva: 1,
+        },
+      };
+    } else if (plantilla && opciones.layoutOverride) {
+      plantilla = {
+        ...plantilla,
+        layout: {
+          ...opciones.layoutOverride,
+          cantidadFirmantesActiva: 1,
+        },
+      };
+    }
+
     const cantidadFirmas = clampCantidadFirmasCertificado(
-      opciones.cantidadFirmas ??
-        plantilla?.layout?.cantidadFirmantesActiva ??
-        1,
+      firmantesEmitidos.length === 1
+        ? 1
+        : (opciones.cantidadFirmas ??
+            plantilla?.layout?.cantidadFirmantesActiva ??
+            1),
     );
 
     const blob = await blobCertificatePdf({
       holderName: certificado.nombre,
       courseTitle: certificado.curso,
-      category: "Formación especializada",
-      duration: certificado.horasCertificadas
-        ? `${certificado.horasCertificadas} horas certificadas`
-        : "Duración certificada",
+      category:
+        opciones.categoriaTexto?.trim() || "Certificación institucional",
+      duration: opciones.detalleTexto?.trim()
+        ? opciones.detalleTexto.trim()
+        : certificado.horasCertificadas
+          ? `${certificado.horasCertificadas} horas certificadas`
+          : "Certificación institucional",
       level: "Aprobado",
       mode: "Virtual",
       issuedAt: certificado.fecha,
       certificateCode: codigo,
       issuerName: certificado.organizacionEmisora ?? "Tukuy Academy",
       issuerLogoUrl: opciones.logoEntidadUrl || undefined,
+      firmantes: firmantesEmitidos.length ? firmantesEmitidos : undefined,
       plantilla: plantilla ?? undefined,
     });
     const archivo = new File(
@@ -981,7 +1073,7 @@ async function sintetizarNotificacionesSecundaria(): Promise<
       detalle: `${sesion.titulo} · ${sesion.cursoTitulo}`,
       fecha: sesion.iniciaEn,
       leida: leidas.has(id),
-      ruta: "/docente/sesiones",
+      ruta: "/docente/calendario",
       tipo: "SESION",
     });
   }
@@ -1138,6 +1230,54 @@ function progresoBorrador(borrador: BorradorCursoDocente) {
     (requisitos.filter((valor) => Boolean(valor)).length / requisitos.length) *
       100,
   );
+}
+
+function borradorSemillaDesdeCurso(curso: CursoDocente): BorradorCursoDocente {
+  return {
+    titulo: curso.titulo,
+    subtitulo: "",
+    descripcion: "",
+    publico: "",
+    objetivos: [""],
+    requisitos: [],
+    categoria: "",
+    nivel: "Básico",
+    imagen: curso.imagen ?? "",
+    ambito: curso.ambito,
+    organizacionId: curso.organizacionId,
+    acceso: curso.modeloAcceso === "VENTA_INDIVIDUAL" ? "PAGO" : "ORGANIZACION",
+    precio: 0,
+    visibilidad: curso.ambito === "INDEPENDIENTE" ? "PUBLICO" : "ORGANIZACION",
+    permiteEmpresas: curso.ambito === "INDEPENDIENTE",
+    certificado: true,
+    nombreCertificado: "",
+    notaMinima: 14,
+    vigenciaMeses: 0,
+    docenteResponsableId: curso.docenteResponsableId,
+    docenteResponsableNombre: curso.docenteResponsableNombre,
+    cargadoPorNombre: curso.cargadoPorNombre,
+    origenCarga: curso.origenCarga,
+    secciones: [],
+  };
+}
+
+function borradorCopiaSinIds(
+  borrador: BorradorCursoDocente,
+  titulo: string,
+): BorradorCursoDocente {
+  return {
+    ...borrador,
+    titulo,
+    secciones: borrador.secciones.map((seccion) => ({
+      ...seccion,
+      id: undefined,
+      items: seccion.items?.map((item) => ({ ...item, id: undefined })),
+      recursos: seccion.recursos?.map((recurso) => ({
+        ...recurso,
+        id: `${recurso.id}-copia-${Date.now()}`,
+      })),
+    })),
+  };
 }
 
 async function registrarActividad(titulo: string, detalle: string) {
@@ -1439,6 +1579,35 @@ export const docenteService = {
   },
 
   async duplicarCurso(id: string): Promise<CursoDocente> {
+    if (apiConfig.secundariaCursos) {
+      const contexto = obtenerContextoActual();
+      const original = await cursos.obtener(id);
+      if (!original) throw new Error("No se encontró el curso a duplicar");
+      const resultadoBorrador =
+        await secundariaGatewayService.obtenerBorrador(id);
+      const borrador = mapearDocumentoABorrador(
+        resultadoBorrador.borrador as Record<string, unknown>,
+        borradorSemillaDesdeCurso(original),
+      );
+      const tituloCopia = `${(borrador.titulo || original.titulo).trim()} · copia`;
+      const borradorCopia = borradorCopiaSinIds(borrador, tituloCopia);
+      const resultado = await secundariaGatewayService.guardarCurso({
+        cursoId: null,
+        borrador: borradorCopia,
+        estado: "BORRADOR",
+      });
+      const mapeado = mapearCursoSecundariaADocente(resultado.curso, contexto);
+      await registrarActividad("Curso duplicado", tituloCopia);
+      return {
+        ...mapeado,
+        titulo: tituloCopia,
+        estado: "BORRADOR",
+        estudiantes: 0,
+        valoracion: 0,
+        progreso: progresoBorrador(borradorCopia),
+        actualizado: "Ahora",
+      };
+    }
     if (!apiConfig.useMock) {
       const { data } = await api.post<CursoDocente>(
         API.docente.duplicarCurso(id),
@@ -1683,22 +1852,71 @@ export const docenteService = {
         );
         if (!encontrado) throw new Error("No se pudo emitir el certificado");
         const mapeado = mapearCertificadoEmitidoSecundaria(encontrado);
-        return persistirPdfCertificadoEmitido({
+        const certificadoMapeado = await persistirPdfCertificadoEmitido({
           ...mapeado,
           requiereFirmaInstitucional:
             resultado.requiereFirmaInstitucional === true,
         });
+        const { notificacionesCorreoService } = await import(
+          "@/api/services/notificaciones-correo.service"
+        );
+        const { correoEnSegundoPlano } = await import(
+          "@/lib/correo-en-segundo-plano"
+        );
+        void notificacionesCorreoService
+          .resolverCorreoIdentidad(String(encontrado.estudianteId ?? "").trim())
+          .then((correo) => {
+            if (!correo) return;
+            correoEnSegundoPlano(
+              notificacionesCorreoService.enviarCertificadoEmitido({
+                para: correo,
+                datos: {
+                  nombrePersona: encontrado.nombre,
+                  nombreCurso: encontrado.curso,
+                  codigoVerificacion:
+                    resultado.codigoVerificacion ??
+                    encontrado.codigoVerificacion,
+                },
+              }),
+              "certificado-emitido",
+            );
+          });
+        return certificadoMapeado;
       }
       await registrarActividad(
         "Certificado emitido",
         `${emitido.nombre} · ${emitido.curso}`,
       );
-      return persistirPdfCertificadoEmitido({
+      const certificadoMapeado = await persistirPdfCertificadoEmitido({
         ...mapearCertificadoEmitidoSecundaria(emitido),
         certificadoId: resultado.certificadoId || emitido.id,
         documentoId: resultado.documentoId || undefined,
         requiereFirmaInstitucional: resultado.requiereFirmaInstitucional === true,
       });
+      const { notificacionesCorreoService } = await import(
+        "@/api/services/notificaciones-correo.service"
+      );
+      const { correoEnSegundoPlano } = await import(
+        "@/lib/correo-en-segundo-plano"
+      );
+      void notificacionesCorreoService
+        .resolverCorreoIdentidad(String(emitido.estudianteId ?? "").trim())
+        .then((correo) => {
+          if (!correo) return;
+          correoEnSegundoPlano(
+            notificacionesCorreoService.enviarCertificadoEmitido({
+              para: correo,
+              datos: {
+                nombrePersona: emitido.nombre,
+                nombreCurso: emitido.curso,
+                codigoVerificacion:
+                  resultado.codigoVerificacion ?? emitido.codigoVerificacion,
+              },
+            }),
+            "certificado-emitido",
+          );
+        });
+      return certificadoMapeado;
     }
 
     if (!apiConfig.useMock) {
@@ -1762,6 +1980,134 @@ export const docenteService = {
       `${emitido.nombre} · ${emitido.curso}`,
     );
     return emitido;
+  },
+
+  /** Emisión libre (sin matrícula): titular + motivo + plantilla. */
+  async emitirCertificadoManual(entrada: {
+    titularNombre: string;
+    motivoTitulo: string;
+    correoTitular?: string | null;
+    detalle?: string | null;
+    titularIdentidadRef?: string | null;
+    plantillaId?: string | null;
+    logoEntidadUrl?: string | null;
+    logoOverrideUrl?: string | null;
+    /** Firma temporal de esta emisión (una sola). */
+    firmanteNombre?: string | null;
+    firmanteCargo?: string | null;
+    firmaImagenUrl?: string | null;
+    layoutOverride?: import("@/lib/plantilla-certificado").LayoutPlantillaCertificado | null;
+  }): Promise<CertificadoEmitidoDocente> {
+    if (!apiConfig.secundariaCursos) {
+      throw new Error(
+        "La emisión manual requiere secundaria (VITE_SECUNDARIA_CURSOS=true).",
+      );
+    }
+    const titular = entrada.titularNombre.trim();
+    const motivo = entrada.motivoTitulo.trim();
+    if (!titular || !motivo) {
+      throw new Error("Indica el nombre del titular y el motivo o título.");
+    }
+
+    const resultado = await secundariaGatewayService.emitirCertificadoManual({
+      titularNombre: titular,
+      motivoTitulo: motivo,
+      correoTitular: entrada.correoTitular?.trim() || null,
+      detalle: entrada.detalle?.trim() || null,
+      titularIdentidadRef: entrada.titularIdentidadRef?.trim() || null,
+      plantillaId: entrada.plantillaId?.trim() || null,
+    });
+
+    const emitido =
+      resultado.emitidos.find(
+        (item) =>
+          item.id === resultado.certificadoId ||
+          item.codigoVerificacion === resultado.codigoVerificacion,
+      ) ??
+      ({
+        id: resultado.certificadoId,
+        codigoVerificacion: resultado.codigoVerificacion,
+        nombre: resultado.titular ?? titular,
+        curso: resultado.curso ?? motivo,
+        estado: "EMITIDO",
+        fecha: new Date().toISOString(),
+        emitidoEn: new Date().toISOString(),
+        documentoId: resultado.documentoId,
+        origenEmision: "MANUAL",
+        plantillaRef: resultado.plantillaRef ?? entrada.plantillaId,
+      } as import("@/lib/contrato-secundaria").CertificadoEmitidoSecundaria);
+
+    const firmanteNombre = String(entrada.firmanteNombre ?? "").trim();
+    const firmaImagenUrl = String(entrada.firmaImagenUrl ?? "").trim();
+    const firmantes =
+      firmanteNombre
+        ? [
+            {
+              nombre: firmanteNombre,
+              cargo: String(entrada.firmanteCargo ?? "").trim() || undefined,
+              imagen: firmaImagenUrl || undefined,
+            },
+          ]
+        : null;
+
+    const mapeado = await persistirPdfCertificadoEmitido(
+      {
+        ...mapearCertificadoEmitidoSecundaria(emitido),
+        certificadoId: resultado.certificadoId || emitido.id,
+        documentoId: resultado.documentoId || emitido.documentoId || undefined,
+        requiereFirmaInstitucional: false,
+      },
+      {
+        logoEntidadUrl: entrada.logoEntidadUrl,
+        logoOverrideUrl: entrada.logoOverrideUrl,
+        plantillaCertificadoId:
+          entrada.plantillaId ?? resultado.plantillaRef ?? null,
+        detalleTexto: entrada.detalle,
+        categoriaTexto: "Certificación institucional",
+        cantidadFirmas: firmantes ? 1 : null,
+        firmantes,
+        layoutOverride: entrada.layoutOverride ?? null,
+      },
+    );
+
+    // Asegura índice público aunque el flujo de firmas org deje pendientes.
+    const certUuid = mapeado.certificadoId || resultado.certificadoId;
+    if (certUuid && /^[0-9a-f-]{36}$/i.test(certUuid)) {
+      try {
+        await secundariaGatewayService.publicarIndiceCertificado(certUuid);
+      } catch {
+        /* el PDF ya se emitió; el índice puede republicarse desde el listado */
+      }
+    }
+
+    await registrarActividad(
+      "Certificado manual emitido",
+      `${mapeado.nombre} · ${mapeado.curso}`,
+    );
+
+    const correo = entrada.correoTitular?.trim();
+    if (correo) {
+      const { notificacionesCorreoService } = await import(
+        "@/api/services/notificaciones-correo.service"
+      );
+      const { correoEnSegundoPlano } = await import(
+        "@/lib/correo-en-segundo-plano"
+      );
+      correoEnSegundoPlano(
+        notificacionesCorreoService.enviarCertificadoEmitido({
+          para: correo,
+          datos: {
+            nombrePersona: mapeado.nombre,
+            nombreCurso: mapeado.curso,
+            codigoVerificacion:
+              resultado.codigoVerificacion ?? mapeado.codigoVerificacion,
+          },
+        }),
+        "certificado-manual-emitido",
+      );
+    }
+
+    return mapeado;
   },
 
   /** Genera PDF con plantilla default y guarda snapshot en el documento (emisión o auto-cert). */
@@ -2197,19 +2543,48 @@ export const docenteService = {
     const tasaFinalizacion = listaEstudiantes.length
       ? Math.round((completados / listaEstudiantes.length) * 100)
       : 0;
+    const horasEstimadas = Math.round(listaEstudiantes.length * 4.4);
     const valores: Record<string, string> = {
       estudiantes: String(listaEstudiantes.length),
       finalizacion: `${tasaFinalizacion}%`,
-      horas: String(Math.round(listaEstudiantes.length * 4.4)),
+      horas: String(horasEstimadas),
       certificados: String(emitidos.length),
-      satisfaccion: promedioValoracion.toFixed(1),
+      satisfaccion: valoracion.length ? promedioValoracion.toFixed(1) : "—",
       riesgo: String(enRiesgo.length),
       progreso: `${promedioProgreso}%`,
+    };
+    const detallesKpi: Record<string, string> = {
+      estudiantes: listaEstudiantes.length
+        ? "Matriculados en tus cursos"
+        : "Sin estudiantes aún",
+      finalizacion: listaEstudiantes.length
+        ? `${completados} de ${listaEstudiantes.length} completaron`
+        : "Sin datos de finalización",
+      horas: "Estimado · ~4.4 h por estudiante",
+      certificados: emitidos.length
+        ? "Certificados emitidos en tus cursos"
+        : "Ninguno emitido aún",
+      satisfaccion: valoracion.length
+        ? `Promedio de ${valoracion.length} curso(s) con valoración`
+        : "Sin valoraciones aún",
+      riesgo: enRiesgo.length
+        ? "Progreso bajo o estado en riesgo"
+        : "Ninguno en riesgo",
     };
     resultado.kpis = resultado.kpis.map((kpi) => ({
       ...kpi,
       valor: valores[kpi.id] ?? kpi.valor,
+      // Sin serie histórica real: no inventar % de variación.
+      variacion: "",
+      tendencia: "sube",
+      detalle: detallesKpi[kpi.id] ?? "",
     }));
+    // Gráficos temporales requieren eventos diarios/mensuales: aún no hay fuente.
+    resultado.actividadSemanal = [];
+    resultado.tendenciaMensual = [];
+    resultado.organizaciones = [];
+    resultado.modulosDestacados = [];
+    resultado.horasPico = [];
     resultado.rendimientoCursos = listaCursos.map((curso) => {
       const participantes = listaEstudiantes.filter(
         (estudiante) => estudiante.cursoId === curso.id,

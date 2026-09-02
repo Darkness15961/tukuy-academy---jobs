@@ -53,6 +53,7 @@ onMounted(async () => {
             year: "numeric",
           })
         : "—";
+      const cursoId = String(item.cursoId ?? "").trim() || item.id;
       const fila: MetaCertificadoAlumno = {
         codigo: item.codigoVerificacion || item.id,
         fecha,
@@ -61,10 +62,10 @@ onMounted(async () => {
         claveAlmacenamiento: item.claveAlmacenamiento ?? null,
         organizacionEmisora: item.organizacionEmisora,
       };
-      meta[item.cursoId] = fila;
-      entradasMeta.push({ cursoId: item.cursoId, meta: fila });
+      meta[cursoId] = fila;
+      entradasMeta.push({ cursoId, meta: fila });
       return {
-        id: item.cursoId,
+        id: cursoId,
         title: item.curso,
         category: "Academia",
         duration: `${Number(item.horasCertificadas ?? 0) || 1} h`,

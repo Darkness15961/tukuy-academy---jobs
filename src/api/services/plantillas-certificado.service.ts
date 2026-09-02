@@ -6,12 +6,14 @@ import {
   normalizarLayoutPlantilla,
   type ConfigCertificadosOrganizacion,
   type FondoCertificadoOrganizacion,
+  type LogoCertificadoOrganizacion,
   type PlantillaCertificado,
 } from "@/lib/plantilla-certificado";
 import { supabasePrincipal } from "@/lib/supabase";
 
 const PREFIJO_LOCAL = "tukuy_plantillas_certificado_v1:";
 const PREFIJO_FONDOS = "tukuy_fondos_certificado_v1:";
+const PREFIJO_LOGOS = "tukuy_logos_certificado_v1:";
 
 /** Clona sin Proxy reactivo (structuredClone falla con refs de Vue). */
 export function clonarPlantilla<T>(valor: T): T {
@@ -24,6 +26,10 @@ function claveLocal(instalacionId: string) {
 
 function claveFondos(instalacionId: string) {
   return `${PREFIJO_FONDOS}${instalacionId}`;
+}
+
+function claveLogos(instalacionId: string) {
+  return `${PREFIJO_LOGOS}${instalacionId}`;
 }
 
 function leerLocal(instalacionId: string): ConfigCertificadosOrganizacion | null {
@@ -56,6 +62,24 @@ function guardarFondosLocal(
   fondos: FondoCertificadoOrganizacion[],
 ) {
   localStorage.setItem(claveFondos(instalacionId), JSON.stringify(fondos));
+}
+
+function leerLogosLocal(instalacionId: string): LogoCertificadoOrganizacion[] {
+  try {
+    const raw = localStorage.getItem(claveLogos(instalacionId));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as LogoCertificadoOrganizacion[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function guardarLogosLocal(
+  instalacionId: string,
+  logos: LogoCertificadoOrganizacion[],
+) {
+  localStorage.setItem(claveLogos(instalacionId), JSON.stringify(logos));
 }
 
 function mapearPlantilla(raw: Record<string, unknown>): PlantillaCertificado {
@@ -280,6 +304,50 @@ export const plantillasCertificadoService = {
 
     const next = leerFondosLocal(instalacionId).filter((f) => f.id !== fondoId);
     guardarFondosLocal(instalacionId, next);
+    return next;
+  },
+
+  async listarLogos(
+    instalacionId: string,
+  ): Promise<LogoCertificadoOrganizacion[]> {
+    if (!instalacionId) return [];
+    return leerLogosLocal(instalacionId);
+  },
+
+  async registrarLogo(
+    instalacionId: string,
+    logoUrl: string,
+    nombre?: string,
+  ): Promise<LogoCertificadoOrganizacion[]> {
+    const url = logoUrl.trim();
+    if (!instalacionId || !url) return this.listarLogos(instalacionId);
+
+    const actual = leerLogosLocal(instalacionId);
+    const existente = actual.find((l) => l.logoUrl === url);
+    if (existente) {
+      existente.nombre = nombre?.trim() || existente.nombre;
+      guardarLogosLocal(instalacionId, actual);
+      return actual;
+    }
+    const nuevo: LogoCertificadoOrganizacion = {
+      id: crypto.randomUUID(),
+      instalacionId,
+      nombre: nombre?.trim() || `Logo ${new Date().toLocaleString("es-PE")}`,
+      logoUrl: url,
+      creadoEn: new Date().toISOString(),
+    };
+    const next = [nuevo, ...actual].slice(0, 40);
+    guardarLogosLocal(instalacionId, next);
+    return next;
+  },
+
+  async eliminarLogo(
+    instalacionId: string,
+    logoId: string,
+  ): Promise<LogoCertificadoOrganizacion[]> {
+    if (!instalacionId || !logoId) return this.listarLogos(instalacionId);
+    const next = leerLogosLocal(instalacionId).filter((l) => l.id !== logoId);
+    guardarLogosLocal(instalacionId, next);
     return next;
   },
 

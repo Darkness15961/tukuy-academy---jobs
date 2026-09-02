@@ -14,18 +14,39 @@ import {
   UsersRound,
 } from "lucide-vue-next";
 import type { Directive } from "vue";
+import { onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import SiteFooter from "@/components/shared/SiteFooter.vue";
 import TarjetaCursoTendencia from "@/components/shared/TarjetaCursoTendencia.vue";
 import { Button } from "@/components/ui/button";
-import { useCursos } from "@/composables/useCursos";
+import { catalogoPublicoService } from "@/api/services/catalogo-publico.service";
+import { useMetaSocial } from "@/composables/useMetaSocial";
 import { CORREO_VENTAS } from "@/lib/constants";
+import { META_SITIO } from "@/lib/meta-social";
+import type { Course } from "@/types/academia";
 import HeaderPublico from "../components/HeaderPublico.vue";
 import HeroInstitucional from "../components/HeroInstitucional.vue";
 import { bloquesAdn } from "../data/portada.mock";
 
 const router = useRouter();
-const { courses } = useCursos();
+const cursosPublicos = ref<Course[]>([]);
+const cargandoCursos = ref(true);
+
+useMetaSocial({
+  title: META_SITIO.title,
+  description: META_SITIO.description,
+  image: META_SITIO.image,
+  url: "/",
+  type: "website",
+});
+
+onMounted(async () => {
+  try {
+    cursosPublicos.value = await catalogoPublicoService.listarCursos();
+  } finally {
+    cargandoCursos.value = false;
+  }
+});
 
 const observadoresTitulos = new WeakMap<HTMLElement, IntersectionObserver>();
 
@@ -281,21 +302,28 @@ function escribirVentas() {
           <Button
             class="rounded-none"
             variant="outline"
-            @click="router.push('/login')"
+            @click="router.push({ name: 'login', query: { continuar: '/tukuy-academy/cursos' } })"
             >Ver catálogo completo<ArrowRight class="h-4 w-4"
           /></Button>
         </div>
         <div class="mt-10 grid gap-5 md:grid-cols-2 xl:grid-cols-4">
           <TarjetaCursoTendencia
-            v-for="c in courses.slice(0, 4)"
+            v-for="c in cursosPublicos.slice(0, 4)"
             :key="c.id"
             :course="c"
             fluid
+            modo-catalogo-publico
             :show-actions="false"
             :show-detail="false"
-            @select="router.push(`/cursos/${c.id}`)"
+            @select="router.push({ name: 'detalle-curso-publico', params: { cursoId: c.id } })"
           />
         </div>
+        <p
+          v-if="!cargandoCursos && cursosPublicos.length === 0"
+          class="mt-6 text-sm text-[#52657A]"
+        >
+          Aún no hay cursos publicados en el catálogo.
+        </p>
       </div>
     </section>
 

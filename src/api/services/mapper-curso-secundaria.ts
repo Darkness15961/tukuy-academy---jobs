@@ -20,6 +20,7 @@ import type {
 import type { ContextoSesion } from "@/types/membresia.types";
 import type { SesionEnVivoSecundaria } from "@/lib/contrato-secundaria";
 import { cursoEstadoVisibleEnCatalogoAlumno } from "@/lib/catalogo-alumno";
+import { resolverCertificadoCursoPortal } from "@/lib/curso-certificado";
 import {
   normalizarPosicionPortada,
   urlPublicaMedia,
@@ -90,11 +91,17 @@ function mapearModalidad(modalidad: string): ModalidadImparticion {
   return "VIRTUAL";
 }
 
-function mapearModalidadPortal(modalidad: string): Course["mode"] {
+function mapearModalidadPortal(
+  modalidad: string,
+  categoria?: string | null,
+): Course["mode"] {
   const valor = modalidad.toUpperCase();
   if (valor === "EN_VIVO" || valor === "PRESENCIAL") return "Presencial";
   if (valor === "HIBRIDA" || valor === "HIBRIDO" || valor === "MIXTO") {
     return "Mixto";
+  }
+  if (/clase(s)?\s+en\s+vivo/i.test(String(categoria ?? ""))) {
+    return "Presencial";
   }
   return "Virtual";
 }
@@ -393,7 +400,7 @@ export function mapearCursoSecundariaAPortal(
     category: curso.categoria || "Academia",
     duration: duracionTexto === "—" ? "—" : duracionTexto,
     level: "Intermedio",
-    mode: mapearModalidadPortal(curso.modalidad),
+    mode: mapearModalidadPortal(curso.modalidad, curso.categoria),
     progress: progreso,
     status: estado,
     pricing: dePago ? "paid" : "free",
@@ -405,6 +412,7 @@ export function mapearCursoSecundariaAPortal(
     alcance: "PUBLICO",
     estadoPublicacion: curso.estado,
     visibleEnCatalogo: cursoEstadoVisibleEnCatalogoAlumno(curso.estado),
+    certificado: resolverCertificadoCursoPortal(curso, matricula),
   };
 }
 
@@ -416,7 +424,7 @@ export function mapearMatriculaAPortal(item: MatriculaCursoSecundaria): Course {
     category: item.categoria || "Academia",
     duration: "—",
     level: "Intermedio",
-    mode: mapearModalidadPortal(item.modalidad),
+    mode: mapearModalidadPortal(item.modalidad, item.categoria),
     progress: progreso,
     status: progreso >= 100 ? "Completado" : "En curso",
     pricing: "free",
@@ -432,6 +440,7 @@ export function mapearMatriculaAPortal(item: MatriculaCursoSecundaria): Course {
     origen: "tukuy",
     alcance: "PUBLICO",
     visibleEnCatalogo: false,
+    certificado: resolverCertificadoCursoPortal(null, item),
   };
 }
 

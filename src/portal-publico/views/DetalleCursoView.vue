@@ -8,77 +8,135 @@ import {
   Play,
   ShieldCheck,
   Star,
-  Video,
 } from "lucide-vue-next";
 import { computed, ref, watch, watchEffect } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 import SiteFooter from "@/components/shared/SiteFooter.vue";
 import { Button } from "@/components/ui/button";
+import { catalogoPublicoService } from "@/api/services/catalogo-publico.service";
 import { cursoPublicoService } from "@/api/services/curso-publico.service";
 import { aprendizajeService } from "@/api/services/aprendizaje.service";
 import { useAuth } from "@/composables/useAuth";
 import { useCarrito } from "@/composables/useCarrito";
 import { useCursos } from "@/composables/useCursos";
+import { useMetaSocial } from "@/composables/useMetaSocial";
+import { useContextoSesion } from "@/composables/useContextoSesion";
 import { cursoEstaMatriculado, cursoEsDePago } from "@/lib/acceso-curso";
 import { CORREO_VENTAS } from "@/lib/constants";
 import { inicialesNombre, urlFotoPerfilReal } from "@/lib/foto-perfil";
 import {
   enrichCourse,
+  etiquetaModalidadCurso,
   formatCourseRating,
   formatReviewCount,
 } from "@/lib/presentacion-curso";
+import { descripcionCursoParaMeta } from "@/lib/meta-social";
+import { rutaConsumoCursoAlumno } from "@/lib/ruta-consumo-curso";
+import CompartirSesionRedes from "@/components/shared/CompartirSesionRedes.vue";
+import ImagenPortadaCurso from "@/components/shared/ImagenPortadaCurso.vue";
+import { urlCompartirCursoConOpenGraph } from "@/lib/compartir-sesion-en-vivo";
 import EsqueletoDetalleCurso from "../components/EsqueletoDetalleCurso.vue";
 import HeaderPublico from "../components/HeaderPublico.vue";
-import type { DetalleCursoPublico } from "@/types/academia";
+import type { Course, DetalleCursoPublico } from "@/types/academia";
 
 const route = useRoute();
 const router = useRouter();
-const { courses, loading } = useCursos();
+const { contextoActivo } = useContextoSesion();
+const { courses } = useCursos();
 const { isAuthenticated } = useAuth();
 const { addToCart, isInCart } = useCarrito();
 
-const curso = computed(() =>
-  courses.value.find((item) => item.id === String(route.params.cursoId)),
-);
+const curso = ref<Course | null>(null);
+const detalle = ref<DetalleCursoPublico | null>(null);
+const cargandoFicha = ref(true);
+const errorFicha = ref<string | null>(null);
+let generacionCarga = 0;
+
 const cursoPresentado = computed(() =>
   curso.value ? enrichCourse(curso.value) : null,
 );
-const detalle = ref<DetalleCursoPublico | null>(null);
-const cargandoDetalle = ref(false);
 const yaMatriculado = computed(() =>
   cursoPresentado.value ? cursoEstaMatriculado(cursoPresentado.value) : false,
 );
+const valoracionCurso = computed(() => {
+  const valor = Number(cursoPresentado.value?.rating);
+  return Number.isFinite(valor) ? valor : null;
+});
 
-watch(
-  courses,
-  async (lista) => {
-    if (!lista.length) return;
-    const conProgreso = await aprendizajeService.aplicarProgresosACursos(lista);
-    conProgreso.forEach((actualizado) => {
-      const item = courses.value.find((c) => c.id === actualizado.id);
-      if (!item) return;
-      item.progress = actualizado.progress;
-      item.status = actualizado.status;
-    });
-  },
-  { immediate: true },
-);
+async function cargarFichaPublica() {
+  const cursoId = String(route.params.cursoId ?? "").trim();
+  const generacion = ++generacionCarga;
+  cargandoFicha.value = true;
+  errorFicha.value = null;
+  curso.value = null;
+  detalle.value = null;
 
-watch(
-  curso,
-  async (cursoActual) => {
-    detalle.value = null;
-    if (!cursoActual) return;
-    cargandoDetalle.value = true;
-    try {
-      detalle.value = await cursoPublicoService.obtenerDetalle(cursoActual);
-    } finally {
-      cargandoDetalle.value = false;
+  try {
+    let encontrado = cursoId
+      ? await catalogoPublicoService.obtenerPorId(cursoId)
+      : null;
+    if (
+      !encontrado &&
+      cursoId &&
+      contextoActivo.value?.portal === "estudiante" &&
+      courses.value.length
+    ) {
+      encontrado =
+        courses.value.find((item) => item.id === cursoId) ?? null;
     }
+    if (generacion !== generacionCarga) return;
+    if (!encontrado) return;
+
+    const detalleCargado =
+      await cursoPublicoService.obtenerDetalle(encontrado);
+    if (generacion !== generacionCarga) return;
+
+    curso.value = encontrado;
+    detalle.value = detalleCargado;
+
+    if (
+      contextoActivo.value?.portal === "estudiante" &&
+      isAuthenticated.value
+    ) {
+      const [actualizado] = await aprendizajeService.aplicarProgresosACursos([
+        encontrado,
+      ]);
+      if (generacion !== generacionCarga || !actualizado || !curso.value) {
+        return;
+      }
+      curso.value = { ...curso.value, ...actualizado };
+    }
+  } catch (causa) {
+    if (generacion !== generacionCarga) return;
+    errorFicha.value =
+      causa instanceof Error
+        ? causa.message
+        : "No se pudo cargar el detalle del curso.";
+  } finally {
+    if (generacion === generacionCarga) {
+      cargandoFicha.value = false;
+    }
+  }
+}
+
+watch(
+  () => route.params.cursoId,
+  () => {
+    void cargarFichaPublica();
   },
   { immediate: true },
 );
+
+watch(
+  [courses, () => contextoActivo.value?.portal],
+  () => {
+    if (contextoActivo.value?.portal !== "estudiante") return;
+    if (!courses.value.length || curso.value || cargandoFicha.value) return;
+    void cargarFichaPublica();
+  },
+);
+
 const moduloAbierto = ref<string | null>(null);
 
 watchEffect(() => {
@@ -130,7 +188,12 @@ function iniciarInscripcion() {
   if (!cursoPresentado.value) return;
 
   if (yaMatriculado.value) {
-    router.push(`/tukuy-academy/aprendizaje/${cursoPresentado.value.id}`);
+    router.push(
+      rutaConsumoCursoAlumno(cursoPresentado.value.id, {
+        mode: cursoPresentado.value.mode,
+        categoria: cursoPresentado.value.category,
+      }),
+    );
     return;
   }
 
@@ -139,12 +202,13 @@ function iniciarInscripcion() {
     return;
   }
 
-  const destino = "/tukuy-academy/cursos";
+  // Público → login → ficha del portal para «Inscribirme».
+  const destinoPortal = `/tukuy-academy/cursos/${cursoPresentado.value.id}`;
   if (isAuthenticated.value) {
-    router.push(destino);
+    router.push(destinoPortal);
     return;
   }
-  router.push({ name: "login", query: { continuar: destino } });
+  router.push({ name: "login", query: { continuar: destinoPortal } });
 }
 
 const fotoInstructor = computed(() =>
@@ -153,6 +217,28 @@ const fotoInstructor = computed(() =>
 const inicialesInstructor = computed(() =>
   inicialesNombre(detalle.value?.instructor.nombre, "DO"),
 );
+
+const metaCurso = computed(() => {
+  const c = cursoPresentado.value;
+  if (!c) return null;
+  const resumenDetalle = detalle.value?.instructor.biografia?.trim();
+  return {
+    title: `${c.title} · Tukuy Academy`,
+    description: descripcionCursoParaMeta({
+      title: c.title,
+      resumen: c.resumen || resumenDetalle,
+      category: c.category,
+      duration: c.duration,
+      level: c.level,
+      instructor: c.instructor ?? detalle.value?.instructor.nombre,
+    }),
+    image: c.image,
+    url: `/cursos/${c.id}`,
+    type: "article" as const,
+  };
+});
+
+useMetaSocial(metaCurso);
 </script>
 
 <template>
@@ -194,28 +280,33 @@ const inicialesInstructor = computed(() =>
             </h1>
 
             <div class="mt-7 flex flex-wrap items-center gap-x-5 gap-y-3">
-              <div class="flex items-center gap-2">
-                <strong class="text-lg text-[#F5B400]">
-                  {{ formatCourseRating(cursoPresentado.rating!) }}
-                </strong>
-                <span class="flex text-[#F5B400]">
-                  <Star
-                    v-for="indice in 5"
-                    :key="indice"
-                    class="h-4 w-4"
-                    :class="
-                      indice <= Math.round(cursoPresentado.rating!)
-                        ? 'fill-current'
-                        : 'opacity-35'
-                    "
-                  />
-                </span>
-                <span class="text-sm text-white/60">
-                  {{ formatReviewCount(cursoPresentado.reviewCount!) }}
-                  valoraciones
-                </span>
-              </div>
-              <span class="h-4 w-px bg-white/25" />
+              <template v-if="valoracionCurso != null">
+                <div class="flex items-center gap-2">
+                  <strong class="text-lg text-[#F5B400]">
+                    {{ formatCourseRating(valoracionCurso) }}
+                  </strong>
+                  <span class="flex text-[#F5B400]">
+                    <Star
+                      v-for="indice in 5"
+                      :key="indice"
+                      class="h-4 w-4"
+                      :class="
+                        indice <= Math.round(valoracionCurso)
+                          ? 'fill-current'
+                          : 'opacity-35'
+                      "
+                    />
+                  </span>
+                  <span
+                    v-if="cursoPresentado.reviewCount"
+                    class="text-sm text-white/60"
+                  >
+                    {{ formatReviewCount(cursoPresentado.reviewCount) }}
+                    valoraciones
+                  </span>
+                </div>
+                <span class="h-4 w-px bg-white/25" />
+              </template>
               <span class="inline-flex items-center gap-2 text-sm text-white/75">
                 <Clock3 class="h-4 w-4 text-[#F5B400]" />
                 {{ cursoPresentado.duration }}
@@ -224,8 +315,17 @@ const inicialesInstructor = computed(() =>
                 {{ cursoPresentado.level }}
               </span>
               <span class="border border-white/20 px-3 py-1 text-xs font-bold">
-                {{ cursoPresentado.mode }}
+                {{ etiquetaModalidadCurso(cursoPresentado.mode) }}
               </span>
+            </div>
+
+            <div class="mt-6">
+              <CompartirSesionRedes
+                :titulo="cursoPresentado.title"
+                :url="urlCompartirCursoConOpenGraph(cursoPresentado.id)"
+                etiqueta-enlace="Ver curso e inscribirte"
+                tono="oscuro"
+              />
             </div>
 
             <div class="mt-8 flex items-center gap-4 border-l-4 border-[#F5B400] pl-5">
@@ -233,6 +333,7 @@ const inicialesInstructor = computed(() =>
                 v-if="fotoInstructor"
                 :src="fotoInstructor"
                 :alt="detalle.instructor.nombre"
+                referrerpolicy="no-referrer"
                 class="h-14 w-14 object-cover"
               />
               <div
@@ -254,8 +355,9 @@ const inicialesInstructor = computed(() =>
           </div>
 
           <aside class="border border-white/20 bg-[#020817] shadow-2xl">
-            <div class="relative aspect-video bg-black">
+            <div class="relative aspect-video overflow-hidden bg-black">
               <video
+                v-if="detalle.videoPresentacion"
                 class="h-full w-full object-cover"
                 controls
                 preload="metadata"
@@ -264,12 +366,13 @@ const inicialesInstructor = computed(() =>
                 <source :src="detalle.videoPresentacion" type="video/mp4" />
                 Tu navegador no permite reproducir este video.
               </video>
-              <span
-                class="pointer-events-none absolute left-4 top-4 inline-flex items-center gap-2 bg-black/65 px-3 py-1.5 text-xs font-bold backdrop-blur"
-              >
-                <Video class="h-4 w-4 text-[#F5B400]" />
-                Vista previa del curso
-              </span>
+              <ImagenPortadaCurso
+                v-else
+                :src="cursoPresentado.image"
+                :alt="cursoPresentado.title"
+                :object-position="cursoPresentado.imagenPosicion"
+                contenedor-class="aspect-video h-full w-full bg-black"
+              />
             </div>
 
             <div class="p-6">
@@ -384,7 +487,12 @@ const inicialesInstructor = computed(() =>
             </h2>
             <p class="mt-4 text-sm text-[#64748B]">
               {{ detalle.modulos.length }} módulos ·
-              {{ detalle.modulos.reduce((total, modulo) => total + modulo.temas.length, 0) }}
+              {{
+                detalle.modulos.reduce(
+                  (total, modulo) => total + (modulo.temas?.length ?? 0),
+                  0,
+                )
+              }}
               temas
             </p>
 
@@ -425,7 +533,7 @@ const inicialesInstructor = computed(() =>
                 >
                   <div
                     v-for="(tema, temaIndice) in modulo.temas"
-                    :key="tema"
+                    :key="`${modulo.id}-${temaIndice}`"
                     class="flex items-center gap-3 border-b border-[#E8EDF5] py-4 last:border-b-0"
                   >
                     <Play class="h-4 w-4 shrink-0 text-[#0B3A78]" />
@@ -449,6 +557,7 @@ const inicialesInstructor = computed(() =>
                 v-if="fotoInstructor"
                 :src="fotoInstructor"
                 :alt="detalle.instructor.nombre"
+                referrerpolicy="no-referrer"
                 class="h-24 w-24 object-cover"
               />
               <div
@@ -501,7 +610,7 @@ const inicialesInstructor = computed(() =>
       </section>
     </main>
 
-    <EsqueletoDetalleCurso v-else-if="loading || cargandoDetalle" />
+    <EsqueletoDetalleCurso v-else-if="cargandoFicha" />
 
     <main
       v-else
@@ -512,6 +621,9 @@ const inicialesInstructor = computed(() =>
           Curso no encontrado
         </p>
         <h1 class="mt-3 text-4xl font-black">Este curso no está disponible</h1>
+        <p v-if="errorFicha" class="mx-auto mt-4 max-w-md text-sm text-[#64748B]">
+          {{ errorFicha }}
+        </p>
         <Button class="mt-7" @click="router.push('/#cursos')">
           Volver al catálogo
         </Button>

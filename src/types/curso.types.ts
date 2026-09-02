@@ -31,10 +31,14 @@ export type Course = {
   alcance?: CourseAlcance;
   organizacionId?: string;
   organizacionNombre?: string;
+  /** Si es false, el curso no emite certificado al completarlo. */
+  certificado?: boolean;
   /** Estado de publicación en secundaria (PUBLICADO, BORRADOR, …). */
   estadoPublicacion?: string;
   /** Si es false, no aparece en el catálogo (sí en Mi aprendizaje). */
   visibleEnCatalogo?: boolean;
+  /** Resumen / descripción corta para catálogo y Open Graph. */
+  resumen?: string;
 };
 
 export type CourseLesson = {

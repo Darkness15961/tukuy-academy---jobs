@@ -52,6 +52,10 @@ __screenshots__/
 # Docker local overrides
 docker-compose.override.yml
 
+# Tooling local
+.agents/
+.codex/
+
 # OS
 .DS_Store
 Thumbs.db
@@ -74,3 +78,7 @@ temp/
 *.bak
 *.swp
 *~
+
+# Supabase CLI local state (never commit)
+**/.temp/
+.supabase/

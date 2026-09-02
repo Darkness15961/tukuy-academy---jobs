@@ -27,6 +27,7 @@ import {
 } from "@/api/services/docente.service";
 import { organizacionService } from "@/api/services/organizacion.service";
 import { useContextoSesion } from "@/composables/useContextoSesion";
+import { mensajeUsuarioDeError } from "@/lib/mensaje-error";
 type SeveridadEstado = "success" | "danger" | "info" | "warn";
 
 const props = withDefaults(
@@ -47,6 +48,7 @@ const props = withDefaults(
 );
 
 const cargando = ref(true);
+const errorCarga = ref<string | null>(null);
 const { contextoActivo } = useContextoSesion();
 const listado = ref<EstudianteDocente[]>([]);
 const listadoCursos = ref<CursoDocente[]>([]);
@@ -203,6 +205,7 @@ const cantidadFiltrosActivos = computed(
 const hayFiltros = computed(() => cantidadFiltrosActivos.value > 0);
 
 onMounted(async () => {
+  errorCarga.value = null;
   try {
     if (props.alcance === "ORGANIZACION") {
       listado.value = await organizacionService.matriculas.listar();
@@ -217,6 +220,9 @@ onMounted(async () => {
     listado.value = estudiantesGuardados.filter((estudiante) =>
       cursosPermitidos.value.has(estudiante.cursoId),
     );
+  } catch (error) {
+    errorCarga.value = mensajeUsuarioDeError(error);
+    listado.value = [];
   } finally {
     cargando.value = false;
   }
@@ -330,6 +336,13 @@ function exportarResultados() {
         <Download class="h-4 w-4" />
         Exportar resultados
       </Button>
+    </div>
+
+    <div
+      v-if="errorCarga"
+      class="rounded-lg border border-amber-500/35 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100"
+    >
+      {{ errorCarga }}
     </div>
 
     <div

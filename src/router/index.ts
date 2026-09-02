@@ -9,10 +9,6 @@ import {
   hayRecuperacionClave,
 } from "@/lib/recuperacion-clave";
 import { supabasePrincipal } from "@/lib/supabase";
-import {
-  onboardingAprendizajeService,
-  onboardingYaCompletadoEnSesion,
-} from "@/api/services/onboarding-aprendizaje.service";
 
 const portalLayout = () => import("@/views/portal/PortalLayout.vue");
 const docenteLayout = () => import("@/portal-docente/DocenteLayout.vue");
@@ -176,6 +172,16 @@ const router = createRouter({
       },
     },
     {
+      path: "/datos-certificado",
+      name: "datos-certificado",
+      component: () => import("@/views/DatosCertificadoView.vue"),
+      meta: {
+        requiresAuth: true,
+        allowWithoutContext: true,
+        hideHeaderFooter: true,
+      },
+    },
+    {
       path: "/seleccionar-contexto",
       name: "seleccionar-contexto",
       component: () => import("@/views/SeleccionarContextoView.vue"),
@@ -270,13 +276,7 @@ const router = createRouter({
         },
         {
           path: "sesiones",
-          name: "sesiones-docente",
-          component: () =>
-            import("@/portal-docente/views/SesionesDocenteView.vue"),
-          meta: {
-            titulo: "Sesiones en vivo",
-            requiredPermission: "sesiones.gestionar",
-          },
+          redirect: { name: "calendario-docente" },
         },
         {
           path: "calendario",
@@ -284,7 +284,7 @@ const router = createRouter({
           component: () =>
             import("@/portal-docente/views/CalendarioDocenteView.vue"),
           meta: {
-            titulo: "Calendario",
+            titulo: "Clases en vivo",
             requiredPermission: "sesiones.gestionar",
           },
         },
@@ -360,6 +360,18 @@ const router = createRouter({
           meta: {
             titulo: "Certificados institucionales",
             requiredPermission: "certificados.ver",
+          },
+        },
+        {
+          path: "certificados/emision-manual",
+          name: "emision-manual-certificado-organizacion",
+          component: () =>
+            import(
+              "@/portal-organizacion/views/EmisionManualCertificadoView.vue"
+            ),
+          meta: {
+            titulo: "Emisión manual de certificado",
+            requiredPermission: "certificados.emitir",
           },
         },
         {
@@ -736,6 +748,13 @@ const router = createRouter({
           meta: { requiresAuth: true, hideHeaderFooter: true },
         },
         {
+          path: "clase-en-vivo/:courseId",
+          name: "portal-live-class",
+          component: () =>
+            import("@/views/portal/clase-en-vivo/ClaseEnVivoAlumnoView.vue"),
+          meta: { requiresAuth: true, hideHeaderFooter: true },
+        },
+        {
           path: "cursos",
           name: "portal-courses",
           component: () => import("@/views/portal/cursos/CursosView.vue"),
@@ -879,27 +898,6 @@ router.beforeEach(async (to) => {
   const contextoGuardado = localStorage.getItem(CONTEXTO_SESION_KEY);
   if (to.meta.requiresAuth && !token) {
     return { name: "login", query: { continuar: to.fullPath } };
-  }
-
-  // Primer acceso: carrera + intereses (solo una vez).
-  if (
-    token &&
-    !hayRecuperacionClave() &&
-    to.name !== "onboarding-aprendizaje" &&
-    to.name !== "auth-callback" &&
-    to.name !== "restablecer-clave" &&
-    !onboardingYaCompletadoEnSesion()
-  ) {
-    try {
-      const requiere = await onboardingAprendizajeService.requiereOnboarding();
-      if (requiere) {
-        // Solo conservar deep-link explícito de login (continuar=…),
-        // no la ruta que disparó el gate (p. ej. /aprendizaje vacío).
-        return { name: "onboarding-aprendizaje" };
-      }
-    } catch {
-      // Si falla la verificación, no bloqueamos el acceso.
-    }
   }
 
   if (to.name === "login" && token && !hayRecuperacionClave()) {

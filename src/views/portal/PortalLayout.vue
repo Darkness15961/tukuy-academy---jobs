@@ -32,6 +32,8 @@ import {
   abrirPdfCertificadoAlumno,
   reemplazarMetaCertificadosAlumno,
 } from "@/lib/certificado-alumno-meta";
+import { onboardingAprendizajeService } from "@/api/services/onboarding-aprendizaje.service";
+import { datosCertificadoService } from "@/api/services/datos-certificado.service";
 import {
   cursoEstaMatriculado,
   cursoPuedeInscribirseGratis,
@@ -42,6 +44,15 @@ import {
   pasarelaCursosHabilitada,
 } from "@/lib/acceso-curso";
 import { cursoVisibleEnCatalogoAlumno } from "@/lib/catalogo-alumno";
+import {
+  modalidadSecundariaAMode,
+} from "@/lib/presentacion-curso";
+import { rutaConsumoCursoAlumno } from "@/lib/ruta-consumo-curso";
+import {
+  cursoEstaCompletado,
+  cursoOfreceCertificado,
+} from "@/lib/curso-certificado";
+import { guardarCertificadoPendiente } from "@/lib/solicitud-certificado";
 import { cursosPerfilesEntidadesMock } from "@/modulos/comunidad/data/entidades-publicas.mock";
 import { entidadesComunidadService } from "@/modulos/comunidad/services/entidades.service";
 import { portalPathByView, resolvePortalView } from "@/lib/portal-routes";
@@ -80,6 +91,7 @@ const {
   workExperiences,
   loading: userLoading,
   updateProfile,
+  refetch: refetchUsuario,
 } = useUsuario();
 const { cartCount, addToCart, removeFromCart, clearCart, isInCart } = useCarrito();
 const { favoritesCount, isFavorite, toggleFavorite, favoriteCourseIds, sincronizarConCatalogo } =
@@ -104,23 +116,28 @@ onMounted(() => {
       .listarMisCertificados()
       .then((data) => {
         reemplazarMetaCertificadosAlumno(
-          (data.emitidos ?? []).map((item) => ({
-            cursoId: item.cursoId,
-            meta: {
-              codigo: item.codigoVerificacion || item.id,
-              fecha: item.fecha
-                ? new Date(item.fecha).toLocaleDateString("es-PE", {
-                    day: "2-digit",
-                    month: "short",
-                    year: "numeric",
-                  })
-                : "—",
-              horas: Number(item.horasCertificadas ?? 0),
-              certificadoId: item.id,
-              claveAlmacenamiento: item.claveAlmacenamiento ?? null,
-              organizacionEmisora: item.organizacionEmisora,
-            },
-          })),
+          (data.emitidos ?? [])
+            .map((item) => {
+              const cursoId = String(item.cursoId ?? "").trim() || item.id;
+              return {
+                cursoId,
+                meta: {
+                  codigo: item.codigoVerificacion || item.id,
+                  fecha: item.fecha
+                    ? new Date(item.fecha).toLocaleDateString("es-PE", {
+                        day: "2-digit",
+                        month: "short",
+                        year: "numeric",
+                      })
+                    : "—",
+                  horas: Number(item.horasCertificadas ?? 0),
+                  certificadoId: item.id,
+                  claveAlmacenamiento: item.claveAlmacenamiento ?? null,
+                  organizacionEmisora: item.organizacionEmisora,
+                },
+              };
+            })
+            .filter((item) => Boolean(item.cursoId)),
         );
       })
       .catch(() => {
@@ -233,11 +250,54 @@ function verDetalleCurso(course: Course) {
   void router.push(`/tukuy-academy/cursos/${course.id}`);
 }
 
+function irAConsumoCurso(courseOrId: Course | string) {
+  void resolverYAbrirConsumoCurso(courseOrId);
+}
+
+async function resolverYAbrirConsumoCurso(courseOrId: Course | string) {
+  const course =
+    typeof courseOrId === "string"
+      ? courses.value.find((item) => item.id === courseOrId)
+      : courseOrId;
+  const id = typeof courseOrId === "string" ? courseOrId : courseOrId.id;
+  let modalidad: string | null = null;
+  let categoria = course?.category ?? null;
+  let mode = course?.mode;
+  let tieneSesionesEnVivo = false;
+
+  if (apiConfig.secundariaCursos && id) {
+    try {
+      const remoto = await secundariaGatewayService.obtenerCurso(id);
+      modalidad = remoto.modalidad ?? null;
+      categoria = String(remoto.categoria ?? categoria ?? "") || null;
+      mode = modalidadSecundariaAMode(modalidad);
+    } catch {
+      // Catálogo local como respaldo.
+    }
+    try {
+      const sesiones = await secundariaGatewayService.listarSesiones(id);
+      tieneSesionesEnVivo =
+        Array.isArray(sesiones?.sesiones) && sesiones.sesiones.length > 0;
+    } catch {
+      // Sin sesiones no bloquea el enrutado.
+    }
+  }
+
+  await router.push(
+    rutaConsumoCursoAlumno(id, {
+      mode,
+      modalidad,
+      categoria,
+      tieneSesionesEnVivo,
+    }),
+  );
+}
+
 function handleAddToCart(courseId: string) {
   mensajeAccesoCurso.value = "";
   const course = courses.value.find((item) => item.id === courseId);
   if (course && cursoEstaMatriculado(course)) {
-    void router.push(`/tukuy-academy/aprendizaje/${courseId}`);
+    void irAConsumoCurso(courseId);
     return;
   }
   if (!pasarelaCursosHabilitada) {
@@ -274,7 +334,7 @@ function irAlCarrito() {
 function comprarAhora(courseId: string) {
   const course = courses.value.find((item) => item.id === courseId);
   if (course && cursoEstaMatriculado(course)) {
-    void router.push(`/tukuy-academy/aprendizaje/${courseId}`);
+    void irAConsumoCurso(courseId);
     return;
   }
   if (!pasarelaCursosHabilitada) {
@@ -328,6 +388,49 @@ async function handleDownloadCertificate(course: Course) {
   }
 }
 
+/** Encuesta diferida: solo al solicitar certificado de un curso completado. */
+async function solicitarCertificadoCurso(course: Course) {
+  if (!user.value) return;
+  if (!cursoOfreceCertificado(course)) {
+    toast.info("Este curso no emite certificado.");
+    return;
+  }
+  if (!cursoEstaCompletado(course)) {
+    toast.info("Completa el curso al 100% para obtener tu certificado.");
+    return;
+  }
+
+  try {
+    const requiereDatos = await datosCertificadoService.requiereCompletar();
+    if (requiereDatos) {
+      guardarCertificadoPendiente(course.id);
+      await router.push({
+        name: "datos-certificado",
+        query: { cursoId: course.id },
+      });
+      return;
+    }
+
+    const requiere = await onboardingAprendizajeService.requiereOnboarding();
+    if (requiere) {
+      guardarCertificadoPendiente(course.id);
+      await router.push({
+        name: "onboarding-aprendizaje",
+        query: { motivo: "certificado", cursoId: course.id },
+      });
+      return;
+    }
+    await refetchUsuario();
+    await handleViewCertificate(course);
+  } catch (causa) {
+    toast.error(
+      causa instanceof Error
+        ? causa.message
+        : "No se pudo abrir el certificado.",
+    );
+  }
+}
+
 async function sincronizarProgresosCursos() {
   if (courses.value.length === 0) return;
   const conProgreso = await aprendizajeService.aplicarProgresosACursos(
@@ -355,8 +458,8 @@ async function refrescarCursosTrasMatricula() {
 }
 
 async function irAlCursoTrasInscripcion(course: Course) {
-  await matricularCurso(course.id, courses.value, { actualizarLista: false });
-  await router.push(`/tukuy-academy/aprendizaje/${course.id}`);
+  await matricularCurso(course.id, courses.value, { actualizarLista: true });
+  await resolverYAbrirConsumoCurso(course);
   void refrescarCursosTrasMatricula();
 }
 
@@ -378,7 +481,7 @@ async function openSimuladorCurso(course: Course) {
     !contexto.organizacionId?.startsWith("org-personal-");
 
   if (cursoEstaMatriculado(course)) {
-    await router.push(`/tukuy-academy/aprendizaje/${course.id}`);
+    await irAConsumoCurso(course);
     return;
   }
 
@@ -556,6 +659,7 @@ const portalContext = {
   toggleFavorite: handleToggleFavorite,
   handleViewCertificate,
   handleDownloadCertificate,
+  solicitarCertificadoCurso,
   openSimuladorCurso,
   matricularTrasCompra,
   sincronizarProgresosCursos,

@@ -81,6 +81,40 @@ export interface ProgramarSesionEnVivoInput {
   };
 }
 
+/** Alta corta: curso mínimo EN_VIVO + sesión + Meet. */
+export interface CrearSesionEnVivoRapidaInput {
+  organizacionId: string;
+  /** Nombre del curso (obligatorio). */
+  tituloCurso: string;
+  descripcion?: string;
+  /** Título de la clase en Calendar; default = tituloCurso. */
+  tituloSesion?: string;
+  fechaHoraInicio: string;
+  duracionMinutos: number;
+  alcance?: "PUBLICO" | "INTERNO";
+  /** URL/key de portada (Open Graph / catálogo). */
+  portadaUrl?: string | null;
+  emailsInvitados?: string[];
+  /** Default true: al matricularse también se agendan. */
+  invitarMatriculados?: boolean;
+  /** Emite certificado al cumplir criterios (default false). */
+  certificado?: boolean;
+  /** Si certificado: exigir % de pases de asistencia (default true). */
+  exigirAsistencia?: boolean;
+  /** Default 50. */
+  porcentajeMinimoAsistencia?: number;
+  /** Si certificado: exigir nota mínima. */
+  exigirNota?: boolean;
+  /** Default 14 (escala 0–20). */
+  notaMinima?: number;
+  docenteNombre: string;
+  docenteEmail: string;
+  creadoPor: {
+    portal: PortalCreadorSesion;
+    nombre: string;
+  };
+}
+
 export function cursoAdmiteSesionesEnVivo(
   modalidad?: "VIRTUAL" | "EN_VIVO" | "HIBRIDA" | null,
 ) {

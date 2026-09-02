@@ -66,6 +66,7 @@ const FRAGMENTOS_POR_ACCION: Record<string, FragmentoClave[] | "*"> = {
   "publicar-curso": ["cursos"],
   "actualizar-estado-curso": ["cursos"],
   "eliminar-curso": ["cursos"],
+  "eliminar-curso-permanente": ["cursos"],
   "revisar-contenido": ["cursos"],
   "observar-curso": ["cursos"],
   "aprobar-curso": ["cursos"],
@@ -76,13 +77,19 @@ const FRAGMENTOS_POR_ACCION: Record<string, FragmentoClave[] | "*"> = {
   "calificar-quiz": ["misCursos", "entregas"],
   "guardar-apuntes": ["misCursos"],
   "guardar-item-activo": [],
-  "crear-sesion": ["sesiones"],
+  "crear-sesion": ["sesiones", "cursos"],
+  "crear-sesion-rapida": ["sesiones", "cursos"],
   "actualizar-sesion": ["sesiones"],
   "eliminar-sesion": ["sesiones"],
   "actualizar-estado-sesion": ["sesiones"],
   "crear-orden-compra": [],
   "marcar-asistencia-sesion": [],
+  "abrir-pase-asistencia": [],
+  "cerrar-pase-asistencia": [],
+  "marcar-asistencia-pase": [],
+  "checkin-pase-asistencia": [],
   "emitir-certificado": [],
+  "emitir-certificado-manual": [],
   "firmar-certificado": [],
   "calificar-entrega": ["entregas"],
   "enviar-entrega": ["entregas"],
@@ -816,11 +823,148 @@ export const secundariaGatewayService = {
     terminaEn: string;
     urlAcceso?: string | null;
     attendees?: string[];
+    /** Default true: invita matriculados activos al evento Calendar/Meet. */
+    invitarMatriculados?: boolean;
   }): Promise<ResultadoCrearSesionSecundaria> {
     return invocarMutacion<ResultadoCrearSesionSecundaria>(
       "crear-sesion",
       entrada,
     );
+  },
+
+  /** Curso mínimo EN_VIVO + sesión + Meet + invitados en un solo paso. */
+  async crearSesionRapida(entrada: {
+    tituloCurso: string;
+    descripcion?: string;
+    tituloSesion?: string;
+    iniciaEn: string;
+    duracionMinutos?: number;
+    alcance?: "PUBLICO" | "INTERNO";
+    portadaUrl?: string | null;
+    attendees?: string[];
+    invitarMatriculados?: boolean;
+    certificado?: boolean;
+    exigirAsistencia?: boolean;
+    porcentajeMinimoAsistencia?: number;
+    exigirNota?: boolean;
+    notaMinima?: number;
+  }): Promise<import("@/lib/contrato-secundaria").ResultadoCrearSesionRapidaSecundaria> {
+    return invocarMutacion("crear-sesion-rapida", entrada);
+  },
+
+  async listarPasesAsistencia(sesionId: string) {
+    return invocar<{
+      ok: true;
+      sesionId: string;
+      totalPases: number;
+      pases: Array<{
+        id: string;
+        sesionId: string;
+        numero: number;
+        titulo?: string | null;
+        estado: string;
+        codigo?: string | null;
+        abiertoEn?: string | null;
+        cerradoEn?: string | null;
+        presentes?: number;
+      }>;
+      resumenAlumnos: Array<{
+        estudianteId: string;
+        matriculaId?: string;
+        nombre: string;
+        iniciales?: string;
+        pasesPresente: number;
+        pasesTotales: number;
+        porcentajeAsistencia: number | null;
+      }>;
+    }>("list-pases-asistencia", { sesionId });
+  },
+
+  async abrirPaseAsistencia(sesionId: string, titulo?: string) {
+    return invocarMutacion<{
+      ok: true;
+      pase: {
+        id: string;
+        sesionId: string;
+        numero: number;
+        titulo?: string | null;
+        estado: string;
+        codigo?: string | null;
+        abiertoEn?: string | null;
+        cerradoEn?: string | null;
+      };
+    }>("abrir-pase-asistencia", { sesionId, titulo: titulo ?? null });
+  },
+
+  async cerrarPaseAsistencia(paseId: string) {
+    return invocarMutacion<{
+      ok: true;
+      pase: {
+        id: string;
+        sesionId: string;
+        numero: number;
+        titulo?: string | null;
+        estado: string;
+        codigo?: string | null;
+        abiertoEn?: string | null;
+        cerradoEn?: string | null;
+      };
+    }>("cerrar-pase-asistencia", { paseId });
+  },
+
+  async listarAsistenciaPase(paseId: string) {
+    return invocar<{
+      ok: true;
+      paseId: string;
+      sesionId: string;
+      numero: number;
+      titulo?: string | null;
+      estado: string;
+      codigo?: string | null;
+      total: number;
+      presentes: number;
+      asistencias: Array<{
+        estudianteId: string;
+        matriculaId?: string;
+        nombre: string;
+        iniciales: string;
+        estado: string;
+        marcadoEn?: string | null;
+      }>;
+    }>("list-asistencia-pase", { paseId });
+  },
+
+  async marcarAsistenciaPase(
+    paseId: string,
+    items: Array<{
+      estudianteId: string;
+      estado: string;
+      matriculaId?: string;
+    }>,
+  ) {
+    return invocarMutacion<{
+      ok: true;
+      paseId: string;
+      sesionId: string;
+      total: number;
+      presentes: number;
+      asistencias: Array<{
+        estudianteId: string;
+        matriculaId?: string;
+        nombre: string;
+        iniciales: string;
+        estado: string;
+      }>;
+    }>("marcar-asistencia-pase", { paseId, items });
+  },
+
+  async checkinPaseAsistencia(sesionId: string, codigo: string) {
+    return invocarMutacion<{
+      ok: true;
+      paseId: string;
+      numero: number;
+      estado: string;
+    }>("checkin-pase-asistencia", { sesionId, codigo });
   },
 
   async probeGoogleCalendar() {
@@ -963,6 +1107,37 @@ export const secundariaGatewayService = {
     }>("emitir-certificado", { matriculaId });
   },
 
+  async emitirCertificadoManual(entrada: {
+    titularNombre: string;
+    motivoTitulo: string;
+    correoTitular?: string | null;
+    detalle?: string | null;
+    titularIdentidadRef?: string | null;
+    plantillaId?: string | null;
+  }) {
+    return invocarMutacion<{
+      ok: true;
+      certificadoId: string;
+      codigoVerificacion?: string;
+      documentoId?: string;
+      yaExistia?: boolean;
+      requiereFirmaInstitucional?: boolean;
+      firmas?: Record<string, unknown>;
+      titular?: string;
+      curso?: string;
+      origenEmision?: string;
+      plantillaRef?: string | null;
+      emitidos: import("@/lib/contrato-secundaria").CertificadoEmitidoSecundaria[];
+    }>("emitir-certificado-manual", {
+      titularNombre: entrada.titularNombre,
+      motivoTitulo: entrada.motivoTitulo,
+      correoTitular: entrada.correoTitular ?? null,
+      detalle: entrada.detalle ?? null,
+      titularIdentidadRef: entrada.titularIdentidadRef ?? null,
+      plantillaId: entrada.plantillaId ?? null,
+    });
+  },
+
   async actualizarDocumentoCertificado(entrada: {
     certificadoId: string;
     claveAlmacenamiento: string;
@@ -989,6 +1164,18 @@ export const secundariaGatewayService = {
       tamanoBytes: entrada.tamanoBytes ?? null,
       huellaDocumento: entrada.huellaDocumento ?? null,
       datosPlantilla: entrada.datosPlantilla ?? null,
+    });
+  },
+
+  /** Publica un certificado MANUAL en el verificador público (QR). */
+  async publicarIndiceCertificado(certificadoId: string) {
+    return invocarMutacion<{
+      ok: true;
+      certificadoId: string;
+      indicePublico?: unknown;
+      advertenciaIndice?: string | null;
+    }>("publicar-indice-certificado", {
+      certificadoId,
     });
   },
 

@@ -4,6 +4,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 
 import { sesionesEnVivoCompartidas } from "@/api/services/sesiones-en-vivo-compartidas.service";
 import CalendarioSesionesEnVivo from "@/components/shared/CalendarioSesionesEnVivo.vue";
+import CompartirSesionRedes from "@/components/shared/CompartirSesionRedes.vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -130,6 +131,12 @@ function etiquetaEstado(estado: SesionEnVivoOrganizacion["estado"]) {
             <Link2 class="mr-1 inline h-4 w-4" />
             {{ sesionDetalle.meetUrl || "Sin enlace todavía" }}
           </p>
+          <CompartirSesionRedes
+            :titulo="sesionDetalle.titulo"
+            :curso-titulo="sesionDetalle.cursoTitulo"
+            :url-meet="sesionDetalle.meetUrl"
+            :fecha-hora-inicio="sesionDetalle.fechaHoraInicio"
+          />
           <p
             v-if="sesionDetalle.meetSimulado"
             class="mt-2 text-xs text-amber-700 dark:text-amber-400"

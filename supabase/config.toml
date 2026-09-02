@@ -397,6 +397,21 @@ verify_jwt = false
 [functions.izipay-session]
 verify_jwt = true
 
+# Correos transaccionales (SMTP cPanel). Requiere sesión.
+[functions.enviar-correo]
+verify_jwt = true
+
+# Cron: recordatorios 24h y 1h antes de sesiones en vivo (header x-recordatorios-cron-secret).
+[functions.recordatorios-clases-en-vivo]
+verify_jwt = false
+
+# OAuth Google Calendar por usuario (conectar agenda personal).
+[functions.google-calendar-oauth]
+verify_jwt = false
+
+[functions.meta-curso]
+verify_jwt = false
+
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 

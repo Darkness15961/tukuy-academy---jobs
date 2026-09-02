@@ -2,14 +2,11 @@ import { idVideoYoutube, urlEmbedYoutube } from "@/lib/youtube";
 
 export type FuenteVideoCurso = "youtube" | "tiktok" | "drive";
 
+/** Solo YouTube en el constructor; otras fuentes quedan por compatibilidad de datos viejos. */
 export const OPCIONES_FUENTE_VIDEO: Array<{
   value: FuenteVideoCurso;
   label: string;
-}> = [
-  { value: "youtube", label: "YouTube" },
-  { value: "tiktok", label: "TikTok" },
-  { value: "drive", label: "Google Drive" },
-];
+}> = [{ value: "youtube", label: "YouTube" }];
 
 export function normalizarFuenteVideo(
   entrada: string | null | undefined,
@@ -101,7 +98,7 @@ export function ayudaUrlVideo(fuente: FuenteVideoCurso) {
   if (fuente === "drive") {
     return "Comparte el archivo como “Cualquiera con el enlace” y pega esa URL.";
   }
-  return "Acepta watch, youtu.be, Shorts o live.";
+  return "Pega el enlace de YouTube (watch, youtu.be, Shorts o live). Se reproduce con el player de Tukuy (Plyr).";
 }
 
 export function urlEmbedVideo(

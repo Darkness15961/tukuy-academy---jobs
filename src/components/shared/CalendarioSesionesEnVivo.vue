@@ -52,6 +52,7 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   programar: [cursoId: string];
+  crearRapida: [];
   detalle: [sesion: SesionEnVivoOrganizacion];
   unirse: [sesion: SesionEnVivoOrganizacion];
 }>();
@@ -245,6 +246,10 @@ function pedirProgramar() {
       : (props.cursos[0]?.id ?? "");
   emit("programar", cursoId);
 }
+
+function pedirCrearRapida() {
+  emit("crearRapida");
+}
 </script>
 
 <template>
@@ -270,15 +275,15 @@ function pedirProgramar() {
           />
         </div>
       </div>
-      <Button
-        v-if="puedeProgramar"
-        class="shrink-0 bg-primary"
-        size="sm"
-        @click="pedirProgramar"
-      >
-        <Plus class="h-4 w-4" />
-        Programar sesión
-      </Button>
+      <div v-if="puedeProgramar" class="flex shrink-0 flex-wrap gap-2">
+        <Button variant="outline" size="sm" @click="pedirProgramar">
+          Programar en curso
+        </Button>
+        <Button class="shrink-0 bg-primary" size="sm" @click="pedirCrearRapida">
+          <Plus class="h-4 w-4" />
+          Crear sesión en vivo
+        </Button>
+      </div>
     </div>
 
     <div

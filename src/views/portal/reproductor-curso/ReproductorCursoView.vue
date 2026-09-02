@@ -25,7 +25,7 @@ import {
   UserRound,
   X,
 } from "lucide-vue-next";
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 import { aprendizajeService } from "@/api/services/aprendizaje.service";
@@ -34,6 +34,7 @@ import {
   type EntregaActividadAcademica,
 } from "@/api/services/academico.service";
 import CargaPerezosaCurso from "@/components/shared/CargaPerezosaCurso.vue";
+import ReproductorPlyrYoutube from "@/components/shared/ReproductorPlyrYoutube.vue";
 import { Button } from "@/components/ui/button";
 import { useContextoSesion } from "@/composables/useContextoSesion";
 import { toast } from "@/lib/toast";
@@ -43,16 +44,18 @@ import {
 } from "@/lib/acceso-curso";
 import {
   guardarProgresoVideoSegundos,
+  idVideoYoutube,
   leerProgresoVideoSegundos,
   limpiarProgresoVideo,
 } from "@/lib/youtube";
 import { formatearDuracionVideo } from "@/lib/youtube-duracion";
 import {
+  porcentajeVisionadoEntero,
+  UMBRAL_VISIONADO_VIDEO,
+  visionadoVideoCompleto,
+} from "@/lib/visionado-video";
+import {
   descripcionVisibleAlumno,
-  etiquetaFuenteVideo,
-  urlAperturaVideo,
-  urlEmbedVideo,
-  type FuenteVideoCurso,
 } from "@/lib/video-curso";
 import type { Course } from "@/types/academia";
 import type {
@@ -68,6 +71,18 @@ import { apiConfig } from "@/api/config";
 import { secundariaGatewayService } from "@/api/services/secundaria-gateway.service";
 import { mapearContenidoAprendizajeSecundaria } from "@/api/services/mapper-curso-secundaria";
 import { inicialesNombre, urlFotoPerfilReal } from "@/lib/foto-perfil";
+import {
+  cursoEstaCompletado,
+  cursoOfreceCertificado,
+} from "@/lib/curso-certificado";
+import {
+  etiquetaModalidadCurso,
+  modalidadSecundariaAMode,
+} from "@/lib/presentacion-curso";
+import {
+  cursoEsSoloClasesEnVivo,
+  rutaConsumoCursoAlumno,
+} from "@/lib/ruta-consumo-curso";
 import { urlPublicaMedia } from "@/lib/storage-academia";
 
 const route = useRoute();
@@ -130,59 +145,48 @@ const descripcionClase = computed(() =>
 );
 
 const duracionClaseVisible = computed(() => {
-  if (duracionVideoYoutubeSegundos.value > 0) {
-    return formatearDuracionVideo(duracionVideoYoutubeSegundos.value);
-  }
   if (activeItem.value.duration?.trim()) return activeItem.value.duration.trim();
   return course.value?.duration ?? "";
 });
 
 const videoActivo = computed(() => {
   if (activeItem.value.type !== "video") return null;
+  // Solo YouTube con Plyr (TikTok/Drive ya no se ofrecen en el constructor).
+  const url = String(activeItem.value.videoUrl ?? "").trim();
+  if (!idVideoYoutube(url)) return null;
   const start = leerProgresoVideoSegundos(courseId.value, activeItem.value.id);
-  return urlEmbedVideo(activeItem.value.videoUrl, activeItem.value.videoFuente, {
+  return {
+    url,
     startSeconds: start > 5 ? start : 0,
-  });
+  };
 });
 
-const embedVideo = computed(() => videoActivo.value?.embed ?? null);
-const fuenteVideoActiva = computed<FuenteVideoCurso>(
-  () => videoActivo.value?.fuente ?? "youtube",
-);
-const urlAperturaVideoActiva = computed(() =>
-  urlAperturaVideo(activeItem.value.videoUrl, fuenteVideoActiva.value),
-);
+const embedVideo = computed(() => Boolean(videoActivo.value));
 
-const iframeYoutube = ref<HTMLIFrameElement | null>(null);
-const duracionVideoYoutubeSegundos = ref(0);
-let timerProgresoVideo: ReturnType<typeof setInterval> | null = null;
-let timerDuracionVideo: ReturnType<typeof setInterval> | null = null;
-let ytPlayer: {
-  getCurrentTime?: () => number;
-  getDuration?: () => number;
-  destroy?: () => void;
-} | null = null;
+const duracionVideoSegundos = ref(0);
+const posicionMaximaVideo = ref(0);
 
-declare global {
-  interface Window {
-    YT?: {
-      Player: new (
-        el: HTMLElement | string,
-        opts: Record<string, unknown>,
-      ) => {
-        getCurrentTime: () => number;
-        getDuration: () => number;
-        destroy: () => void;
-      };
-    };
-    onYouTubeIframeAPIReady?: () => void;
-  }
-}
+const porcentajeVisionadoActivo = computed(() => {
+  if (activeItem.value.type !== "video") return 0;
+  return porcentajeVisionadoEntero(
+    posicionMaximaVideo.value,
+    duracionVideoSegundos.value,
+  );
+});
+
+const umbralVisionadoPorcentaje = Math.round(UMBRAL_VISIONADO_VIDEO * 100);
+
+watch(
+  () => activeItem.value.id,
+  () => {
+    duracionVideoSegundos.value = 0;
+    posicionMaximaVideo.value = 0;
+  },
+);
 
 function aplicarDuracionSegundosAItem(itemId: string, segundos: number) {
   const seguro = Math.round(segundos);
   if (!Number.isFinite(seguro) || seguro <= 0) return;
-  duracionVideoYoutubeSegundos.value = seguro;
   const etiqueta = formatearDuracionVideo(seguro);
   if (!etiqueta || !contenido.value) return;
   for (const modulo of contenido.value.modulos) {
@@ -191,42 +195,46 @@ function aplicarDuracionSegundosAItem(itemId: string, segundos: number) {
   }
 }
 
-function cargarApiYoutube(): Promise<void> {
-  if (typeof window === "undefined") return Promise.resolve();
-  if (window.YT?.Player) return Promise.resolve();
-  return new Promise((resolve) => {
-    const previo = window.onYouTubeIframeAPIReady;
-    window.onYouTubeIframeAPIReady = () => {
-      previo?.();
-      resolve();
-    };
-    if (!document.querySelector('script[data-tukuy-yt]')) {
-      const script = document.createElement("script");
-      script.src = "https://www.youtube.com/iframe_api";
-      script.async = true;
-      script.dataset.tukuyYt = "1";
-      document.head.appendChild(script);
-    }
-  });
+function onProgresoVideo(segundos: number) {
+  if (activeItem.value.type !== "video") return;
+  const itemId = activeItem.value.id;
+  guardarProgresoVideoSegundos(courseId.value, itemId, segundos);
+  posicionMaximaVideo.value = Math.max(posicionMaximaVideo.value, segundos);
+  void intentarCompletarVideoPorVisionado(itemId);
 }
 
-function capturarDuracionDesdePlayer(
-  target?: { getDuration?: () => number },
-  itemId?: string,
-) {
-  const duracion = target?.getDuration?.() ?? ytPlayer?.getDuration?.();
-  if (typeof duracion === "number" && Number.isFinite(duracion) && duracion > 1) {
-    aplicarDuracionSegundosAItem(itemId ?? activeItem.value.id, duracion);
-    if (timerDuracionVideo) {
-      clearInterval(timerDuracionVideo);
-      timerDuracionVideo = null;
-    }
+async function intentarCompletarVideoPorVisionado(itemId: string) {
+  if (!itemId || completedItems.value.includes(itemId)) return;
+  if (
+    !visionadoVideoCompleto(
+      posicionMaximaVideo.value,
+      duracionVideoSegundos.value,
+    )
+  ) {
+    return;
   }
+  limpiarProgresoVideo(courseId.value, itemId);
+  await marcarActividadCompleta(itemId);
+}
+
+function onVideoFinalizado() {
+  if (activeItem.value.type !== "video") return;
+  limpiarProgresoVideo(courseId.value, activeItem.value.id);
+  if (!completedItems.value.includes(activeItem.value.id)) {
+    void marcarActividadCompleta(activeItem.value.id);
+  }
+}
+
+function onDuracionVideo(segundos: number) {
+  if (activeItem.value.type !== "video") return;
+  duracionVideoSegundos.value = segundos;
+  aplicarDuracionSegundosAItem(activeItem.value.id, segundos);
+  void intentarCompletarVideoPorVisionado(activeItem.value.id);
 }
 
 async function resolverDuracionDesdeGateway(itemId: string, videoUrl?: string) {
   const url = String(videoUrl ?? "").trim();
-  if (!url) return;
+  if (!url || !idVideoYoutube(url)) return;
   try {
     const respuesta =
       await secundariaGatewayService.obtenerDuracionYoutube(url);
@@ -234,110 +242,26 @@ async function resolverDuracionDesdeGateway(itemId: string, videoUrl?: string) {
     if (activeItem.value.id !== itemId) return;
     aplicarDuracionSegundosAItem(itemId, respuesta.segundos);
   } catch {
-    /* Sin API key: se intenta luego con IFrame API */
+    /* Plyr / API puede completar luego */
   }
-}
-
-async function montarPlayerYoutube() {
-  if (activeItem.value.type !== "video" || !iframeYoutube.value) return;
-  if (!embedVideo.value || fuenteVideoActiva.value !== "youtube") return;
-  const itemId = activeItem.value.id;
-  const videoUrl = activeItem.value.videoUrl;
-  const duracionGuardada = String(activeItem.value.duration ?? "").trim();
-  const parecePlaceholder =
-    !duracionGuardada ||
-    duracionGuardada === "1 min" ||
-    duracionGuardada === "10 min";
-  if (parecePlaceholder) {
-    void resolverDuracionDesdeGateway(itemId, videoUrl);
-  }
-  try {
-    await cargarApiYoutube();
-    if (!window.YT?.Player || !iframeYoutube.value) return;
-    ytPlayer?.destroy?.();
-    ytPlayer = new window.YT.Player(iframeYoutube.value, {
-      events: {
-        onReady: (evento: { target?: { getDuration?: () => number } }) => {
-          capturarDuracionDesdePlayer(evento.target, itemId);
-          if (timerDuracionVideo) clearInterval(timerDuracionVideo);
-          let intentos = 0;
-          timerDuracionVideo = setInterval(() => {
-            intentos += 1;
-            capturarDuracionDesdePlayer(evento.target, itemId);
-            if (intentos >= 15 && timerDuracionVideo) {
-              clearInterval(timerDuracionVideo);
-              timerDuracionVideo = null;
-            }
-          }, 500);
-        },
-        onStateChange: (evento: { data?: number }) => {
-          // 0 = ended
-          if (evento.data === 0) {
-            limpiarProgresoVideo(courseId.value, activeItem.value.id);
-            if (!completedItems.value.includes(activeItem.value.id)) {
-              void marcarActividadCompleta(activeItem.value.id);
-            }
-          }
-          // 1 = playing: metadata ya disponible
-          if (evento.data === 1) {
-            capturarDuracionDesdePlayer(undefined, itemId);
-          }
-        },
-      },
-    });
-    if (timerProgresoVideo) clearInterval(timerProgresoVideo);
-    timerProgresoVideo = setInterval(() => {
-      const t = ytPlayer?.getCurrentTime?.();
-      if (typeof t === "number" && Number.isFinite(t) && t > 0) {
-        guardarProgresoVideoSegundos(
-          courseId.value,
-          activeItem.value.id,
-          t,
-        );
-      }
-    }, 4000);
-  } catch {
-    // Sin API: el embed igual funciona; solo no hay resume fino.
-  }
-}
-
-function destruirPlayerYoutube() {
-  if (timerProgresoVideo) {
-    clearInterval(timerProgresoVideo);
-    timerProgresoVideo = null;
-  }
-  if (timerDuracionVideo) {
-    clearInterval(timerDuracionVideo);
-    timerDuracionVideo = null;
-  }
-  try {
-    ytPlayer?.destroy?.();
-  } catch {
-    /* noop */
-  }
-  ytPlayer = null;
 }
 
 watch(
   () =>
-    [activeItem.value.id, activeItem.value.type, embedVideo.value, fuenteVideoActiva.value] as const,
-  async () => {
-    destruirPlayerYoutube();
-    duracionVideoYoutubeSegundos.value = 0;
-    if (
-      activeItem.value.type === "video" &&
-      embedVideo.value &&
-      fuenteVideoActiva.value === "youtube"
-    ) {
-      await nextTick();
-      await montarPlayerYoutube();
+    [activeItem.value.id, activeItem.value.type, activeItem.value.videoUrl] as const,
+  () => {
+    if (activeItem.value.type !== "video") return;
+    const url = String(activeItem.value.videoUrl ?? "").trim();
+    const duracionGuardada = String(activeItem.value.duration ?? "").trim();
+    const parecePlaceholder =
+      !duracionGuardada ||
+      duracionGuardada === "1 min" ||
+      duracionGuardada === "10 min";
+    if (parecePlaceholder && idVideoYoutube(url)) {
+      void resolverDuracionDesdeGateway(activeItem.value.id, url);
     }
   },
 );
-
-onBeforeUnmount(() => {
-  destruirPlayerYoutube();
-});
 
 const totalItemsCount = computed(() =>
   syllabusSections.value.reduce((sum, s) => sum + s.items.length, 0),
@@ -347,6 +271,27 @@ const progressPercent = computed(() => {
   if (totalItemsCount.value === 0) return 0;
   return Math.round((completedItemsCount.value / totalItemsCount.value) * 100);
 });
+
+const cursoCompletado = computed(() => {
+  if (!course.value) return progressPercent.value >= 100;
+  return cursoEstaCompletado({
+    status: progressPercent.value >= 100 ? "Completado" : course.value.status,
+    progress: progressPercent.value,
+  });
+});
+
+const ofreceCertificado = computed(
+  () => cursoOfreceCertificado(course.value) && cursoCompletado.value,
+);
+
+async function abrirCertificadoCurso() {
+  if (!course.value) return;
+  await portal.solicitarCertificadoCurso({
+    ...course.value,
+    progress: progressPercent.value,
+    status: cursoCompletado.value ? "Completado" : course.value.status,
+  });
+}
 
 const gradedActivities = computed(() =>
   syllabusSections.value
@@ -510,7 +455,62 @@ async function cargarCurso() {
     await portal.sincronizarProgresosCursos();
     await nextTick();
 
+    if (apiConfig.secundariaCursos) {
+      try {
+        const remoto = await secundariaGatewayService.obtenerCurso(
+          courseId.value,
+        );
+        let tieneSesionesEnVivo = false;
+        try {
+          const sesiones = await secundariaGatewayService.listarSesiones(
+            courseId.value,
+          );
+          tieneSesionesEnVivo =
+            Array.isArray(sesiones?.sesiones) && sesiones.sesiones.length > 0;
+        } catch {
+          // ignore
+        }
+        const modeRemoto = modalidadSecundariaAMode(remoto.modalidad);
+        if (
+          cursoEsSoloClasesEnVivo({
+            mode: modeRemoto,
+            modalidad: remoto.modalidad,
+            categoria: remoto.categoria,
+            tieneSesionesEnVivo,
+          })
+        ) {
+          await router.replace(
+            rutaConsumoCursoAlumno(courseId.value, {
+              mode: modeRemoto,
+              modalidad: remoto.modalidad,
+              categoria: remoto.categoria,
+              tieneSesionesEnVivo,
+            }),
+          );
+          return;
+        }
+      } catch {
+        // Continuar con catálogo local / contenido.
+      }
+    }
+
     let cursoActual = course.value;
+    if (
+      cursoActual &&
+      cursoEsSoloClasesEnVivo({
+        mode: cursoActual.mode,
+        categoria: cursoActual.category,
+      })
+    ) {
+      await router.replace(
+        rutaConsumoCursoAlumno(courseId.value, {
+          mode: cursoActual.mode,
+          categoria: cursoActual.category,
+        }),
+      );
+      return;
+    }
+
     if (!cursoActual && apiConfig.secundariaCursos) {
       // Deep-link: el id puede existir en secundaria aunque el merge del
       // catálogo falle. Cargamos contenido y armamos meta mínima.
@@ -534,7 +534,9 @@ async function cargarCurso() {
         category: String(data.curso?.categoria ?? ""),
         duration: "",
         level: "Basico",
-        mode: "Virtual",
+        mode: modalidadSecundariaAMode(
+          String(data.curso?.modalidad ?? "VIRTUAL"),
+        ),
         progress: mapeado.progreso.progreso,
         status: mapeado.progreso.estado,
         pricing: data.curso?.gratuito === false ? "paid" : "free",
@@ -543,6 +545,7 @@ async function cargarCurso() {
         image: "",
         origen: "tukuy",
         alcance: "PUBLICO",
+        certificado: data.curso?.certificado !== false,
       };
       contenido.value = mapeado.contenido;
       collapsedSections.value = Object.fromEntries(
@@ -555,6 +558,21 @@ async function cargarCurso() {
         mapeado.progreso.itemActivoId ||
         mapeado.contenido.modulos[0]?.items[0]?.id ||
         "v1.1";
+      if (
+        courseFallback.value &&
+        cursoEsSoloClasesEnVivo({
+          mode: courseFallback.value.mode,
+          categoria: courseFallback.value.category,
+        })
+      ) {
+        await router.replace(
+          rutaConsumoCursoAlumno(courseId.value, {
+            mode: courseFallback.value.mode,
+            categoria: courseFallback.value.category,
+          }),
+        );
+        return;
+      }
       restaurarEstadoQuizActivo();
       await cargarEntregaActiva();
       await cargarChatDocente();
@@ -563,6 +581,20 @@ async function cargarCurso() {
 
     if (!cursoActual) {
       errorCarga.value = "No encontramos este curso.";
+      return;
+    }
+    if (
+      cursoEsSoloClasesEnVivo({
+        mode: cursoActual.mode,
+        categoria: cursoActual.category,
+      })
+    ) {
+      await router.replace(
+        rutaConsumoCursoAlumno(courseId.value, {
+          mode: cursoActual.mode,
+          categoria: cursoActual.category,
+        }),
+      );
       return;
     }
     if (!cursoEstaMatriculado(cursoActual)) {
@@ -762,7 +794,14 @@ function encontrarItem(itemId: string): ItemAprendizaje | undefined {
 
 async function toggleItem(itemId: string) {
   const item = encontrarItem(itemId);
-  if (item && (item.type === "quiz" || item.type === "assignment")) return;
+  if (
+    item &&
+    (item.type === "quiz" ||
+      item.type === "assignment" ||
+      item.type === "video")
+  ) {
+    return;
+  }
   if (actividadBloqueada(itemId) && !completedItems.value.includes(itemId)) {
     return;
   }
@@ -1001,6 +1040,15 @@ function getItemIcon(type: ItemAprendizaje["type"]) {
   }
 }
 
+function etiquetaTipoItem(item: ItemAprendizaje) {
+  if (item.duration) return item.duration;
+  if (item.questions) return `${item.questions} preguntas`;
+  if (item.type === "quiz") return "Cuestionario";
+  if (item.type === "assignment") return "Tarea";
+  if (item.type === "reading") return "Lectura";
+  return "Video";
+}
+
 onMounted(() => {
   if (typeof window !== "undefined" && window.innerWidth < 1024) {
     sidebarOpen.value = false;
@@ -1008,6 +1056,17 @@ onMounted(() => {
   void cargarCurso();
 });
 watch(courseId, cargarCurso);
+watch(
+  () => route.query.certificado,
+  (valor) => {
+    if (!valor) return;
+    if (valor !== courseId.value && valor !== "1") return;
+    void abrirCertificadoCurso().finally(() => {
+      const { certificado: _omit, ...resto } = route.query;
+      void router.replace({ query: resto });
+    });
+  },
+);
 </script>
 
 <template>
@@ -1190,9 +1249,7 @@ watch(courseId, cargarCurso);
           class="relative w-full"
           :class="
             activeItem.type === 'video'
-              ? fuenteVideoActiva === 'tiktok'
-                ? 'min-h-[min(70vh,760px)] bg-black'
-                : 'aspect-video max-h-[min(70vh,720px)] bg-black'
+              ? 'aspect-video max-h-[min(70vh,720px)] bg-black'
               : activeItem.type === 'quiz'
                 ? 'min-h-[min(62vh,680px)] max-h-[min(78vh,860px)] overflow-y-auto bg-gradient-to-b from-primary/[0.07] via-background to-background'
                 : 'min-h-[min(62vh,680px)] max-h-[min(78vh,860px)] overflow-y-auto bg-background'
@@ -1216,63 +1273,24 @@ watch(courseId, cargarCurso);
           >
             <ChevronRight class="h-6 w-6" />
           </button>
-          <!-- Video Player State -->
+          <!-- Video Player State (Plyr + YouTube) -->
           <template v-if="activeItem.type === 'video'">
-            <iframe
-              v-if="embedVideo && fuenteVideoActiva === 'youtube'"
-              :key="`${activeItem.id}-${embedVideo}`"
-              ref="iframeYoutube"
-              class="absolute inset-0 h-full w-full"
-              :src="embedVideo"
-              :title="activeItem.title"
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
-              referrerpolicy="strict-origin-when-cross-origin"
-            />
-            <iframe
-              v-else-if="embedVideo && fuenteVideoActiva === 'drive'"
-              :key="`${activeItem.id}-${embedVideo}`"
-              class="absolute inset-0 h-full w-full"
-              :src="embedVideo"
-              :title="activeItem.title"
-              allow="autoplay; encrypted-media; fullscreen"
-              referrerpolicy="no-referrer"
-            />
             <div
-              v-else-if="embedVideo && fuenteVideoActiva === 'tiktok'"
-              class="absolute inset-0 flex items-center justify-center p-3"
+              v-if="videoActivo"
+              class="absolute inset-0 h-full w-full"
             >
-              <iframe
-                :key="`${activeItem.id}-${embedVideo}`"
-                class="h-full max-h-[min(70vh,720px)] w-full max-w-[min(100%,420px)] rounded-none bg-black"
-                :src="embedVideo"
-                :title="activeItem.title"
-                allow="encrypted-media; fullscreen; autoplay"
-                referrerpolicy="strict-origin-when-cross-origin"
+              <ReproductorPlyrYoutube
+                :key="activeItem.id"
+                :url="videoActivo.url"
+                :titulo="activeItem.title"
+                :start-seconds="videoActivo.startSeconds"
+                @progreso="onProgresoVideo"
+                @finalizado="onVideoFinalizado"
+                @duracion="onDuracionVideo"
               />
             </div>
-            <a
-              v-if="embedVideo && fuenteVideoActiva === 'drive' && urlAperturaVideoActiva"
-              class="absolute left-3 bottom-3 z-10 rounded-md bg-black/70 px-3 py-1.5 text-xs font-semibold text-white hover:bg-black/85"
-              :href="urlAperturaVideoActiva"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Abrir en Google Drive
-            </a>
             <div
-              v-if="embedVideo && !completedItems.includes(activeItem.id)"
-              class="absolute bottom-3 right-3 z-10"
-            >
-              <Button
-                size="sm"
-                class="bg-primary text-white hover:bg-primary/90 font-semibold shadow-lg"
-                @click="marcarActividadCompleta(activeItem.id)"
-              >
-                Marcar como vista
-              </Button>
-            </div>
-            <div
-              v-else-if="!embedVideo"
+              v-else-if="!videoActivo"
               class="absolute inset-0 flex flex-col items-center justify-center gap-4 text-center p-6"
             >
               <div
@@ -1283,7 +1301,7 @@ watch(courseId, cargarCurso);
               <div class="space-y-1.5">
                 <span
                   class="text-xs font-bold text-blue-400 tracking-wider uppercase"
-                  >Video de {{ etiquetaFuenteVideo(fuenteVideoActiva) }}</span
+                  >Video de YouTube</span
                 >
                 <h3
                   class="text-base font-bold text-white max-w-xl mx-auto truncate"
@@ -1292,17 +1310,9 @@ watch(courseId, cargarCurso);
                 </h3>
               </div>
               <p class="max-w-md text-xs text-slate-400">
-                Esta clase aún no tiene un enlace de
-                {{ etiquetaFuenteVideo(fuenteVideoActiva) }} válido. El docente
+                Esta clase requiere un enlace de YouTube válido. El docente
                 puede anclarlo desde el constructor del curso.
               </p>
-              <Button
-                size="sm"
-                class="mt-2 bg-primary text-white hover:bg-primary/90 font-semibold"
-                @click="marcarActividadCompleta(activeItem.id)"
-              >
-                Marcar como vista
-              </Button>
             </div>
           </template>
 
@@ -1841,6 +1851,26 @@ watch(courseId, cargarCurso);
               {{ activeItem.title }}
             </h2>
             <div
+              v-if="ofreceCertificado"
+              class="mt-4 flex flex-col gap-3 border border-emerald-500/30 bg-emerald-500/10 p-4 sm:flex-row sm:items-center sm:justify-between"
+            >
+              <div>
+                <p class="text-sm font-bold text-emerald-800 dark:text-emerald-200">
+                  ¡Curso completado al 100%!
+                </p>
+                <p class="mt-1 text-xs text-muted-foreground">
+                  Ya puedes obtener tu certificado de este curso.
+                </p>
+              </div>
+              <Button
+                size="sm"
+                class="shrink-0 bg-primary text-primary-foreground hover:bg-primary/90"
+                @click="abrirCertificadoCurso"
+              >
+                Descargar certificado
+              </Button>
+            </div>
+            <div
               class="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground sm:text-sm"
             >
               <span
@@ -1852,7 +1882,7 @@ watch(courseId, cargarCurso);
               </span>
               <span
                 class="rounded-none border border-border bg-muted/60 px-2 py-0.5 text-foreground"
-                >{{ course.mode }}</span
+                >{{ etiquetaModalidadCurso(course.mode) }}</span
               >
               <span
                 class="rounded-none border border-border bg-muted/60 px-2 py-0.5 text-foreground"
@@ -1862,6 +1892,26 @@ watch(courseId, cargarCurso);
                 class="rounded-none border border-primary/20 bg-primary/10 px-2 py-0.5 text-primary"
                 >{{ completedItemsCount }} / {{ totalItemsCount }} clases</span
               >
+              <span
+                v-if="
+                  activeItem.type === 'video' &&
+                  !completedItems.includes(activeItem.id) &&
+                  porcentajeVisionadoActivo > 0
+                "
+                class="rounded-none border border-blue-500/30 bg-blue-500/10 px-2 py-0.5 text-blue-700 dark:text-blue-300"
+              >
+                Visto {{ porcentajeVisionadoActivo }}% (mín.
+                {{ umbralVisionadoPorcentaje }}%)
+              </span>
+              <span
+                v-else-if="
+                  activeItem.type === 'video' &&
+                  !completedItems.includes(activeItem.id)
+                "
+                class="rounded-none border border-border bg-muted/60 px-2 py-0.5 text-foreground"
+              >
+                Ver al menos {{ umbralVisionadoPorcentaje }}% para completar
+              </span>
               <span
                 class="rounded-none border px-2 py-0.5"
                 :class="
@@ -2150,13 +2200,18 @@ watch(courseId, cargarCurso);
                     class="mt-0.5 grid h-4 w-4 shrink-0 place-items-center border border-muted-foreground/50 bg-background focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
                     :aria-checked="completedItems.includes(item.id)"
                     :aria-label="
-                      completedItems.includes(item.id)
-                        ? `Completada: ${item.title}`
-                        : `Marcar completada: ${item.title}`
+                      item.type === 'video'
+                        ? completedItems.includes(item.id)
+                          ? `Video completado: ${item.title}`
+                          : `Video pendiente (ver al menos ${umbralVisionadoPorcentaje}%): ${item.title}`
+                        : completedItems.includes(item.id)
+                          ? `Completada: ${item.title}`
+                          : `Marcar completada: ${item.title}`
                     "
                     :class="
                       item.type === 'quiz' ||
                       item.type === 'assignment' ||
+                      item.type === 'video' ||
                       actividadBloqueada(item.id)
                         ? 'pointer-events-none'
                         : ''
@@ -2194,18 +2249,7 @@ watch(courseId, cargarCurso);
                           :is="getItemIcon(item.type)"
                           class="h-3.5 w-3.5"
                         />
-                        <span>{{
-                          item.duration ||
-                          (item.questions
-                            ? `${item.questions} preguntas`
-                            : item.type === "quiz"
-                              ? "Cuestionario"
-                              : item.type === "assignment"
-                                ? "Tarea"
-                                : item.type === "reading"
-                                  ? "Lectura"
-                                  : "Video")
-                        }}</span>
+                        <span>{{ etiquetaTipoItem(item) }}</span>
                       </span>
                       <button
                         v-if="recursosDeSeccion(section).length"

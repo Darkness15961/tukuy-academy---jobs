@@ -18,6 +18,7 @@ import { useRoute, useRouter } from "vue-router";
 import SiteFooter from "@/components/shared/SiteFooter.vue";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useMetaSocial } from "@/composables/useMetaSocial";
 import { delay } from "@/lib/delay";
 import { CORREO_VENTAS } from "@/lib/constants";
 import HeaderPublico from "../components/HeaderPublico.vue";
@@ -26,6 +27,16 @@ import { planesEmpresariales, type PlanEmpresarial } from "../data/planes.mock";
 const route = useRoute();
 const router = useRouter();
 const cargando = ref(true);
+
+useMetaSocial({
+  title: "Planes empresariales · Tukuy Academy",
+  description:
+    "Capacita a tu equipo con cursos, certificaciones y seguimiento de progreso en una plataforma diseñada para construcción e infraestructura.",
+  image: "/img/portada-planes-empresariales.png",
+  url: "/planes",
+  type: "website",
+});
+
 const facturacionAnual = ref(true);
 const planSeleccionado = ref<PlanEmpresarial | null>(null);
 const solicitudEnviada = ref(false);

@@ -192,6 +192,15 @@ export type FondoCertificadoOrganizacion = {
   creadoPor?: string | null;
 };
 
+/** Logos reutilizables (galería local por instalación), mismo patrón que fondos. */
+export type LogoCertificadoOrganizacion = {
+  id: string;
+  instalacionId: string;
+  nombre: string;
+  logoUrl: string;
+  creadoEn: string;
+};
+
 /** Specs de imagen de fondo para A4 horizontal ~300 dpi. */
 export const FONDO_CERTIFICADO_ESPECIFICACION =
   "Imagen horizontal PNG/JPG · recomendado 3508×2480 px (A4 300 dpi) · máx. 8 MB";
