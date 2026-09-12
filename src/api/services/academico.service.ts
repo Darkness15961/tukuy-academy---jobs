@@ -108,9 +108,19 @@ async function listarCursosPermitidos(): Promise<CursoDocente[]> {
   if (apiConfig.secundariaCursos) {
     const contexto = contextoActual();
     const listado = await secundariaGatewayService.listarCursos();
-    return listado.cursos.map((curso) =>
+    const mapeados = listado.cursos.map((curso) =>
       mapearCursoSecundariaADocente(curso, contexto),
     );
+    // El gateway ya acota con soloDelDocente; refuerzo en cliente por autor/alcance.
+    if (contexto?.portal === "docente") {
+      const yo = contexto.usuarioId?.trim();
+      const alcance = contexto.alcance?.cursoIds ?? [];
+      return mapeados.filter((curso) => {
+        if (yo && curso.docenteResponsableId === yo) return true;
+        return Boolean(alcance.length && alcance.includes(curso.id));
+      });
+    }
+    return mapeados;
   }
   const contexto = contextoActual();
   if (
@@ -173,6 +183,13 @@ function mapearEntregaSecundaria(
     calificadaEn: item.calificadaEn ?? undefined,
     horasReconocidas: Number(item.horasReconocidas ?? 0),
   };
+}
+
+/** Expone el mapper para paneles que ya traen entregas del bootstrap. */
+export function mapearEntregasDesdeSecundaria(
+  items: EntregaActividadSecundaria[],
+): EntregaActividadAcademica[] {
+  return items.map(mapearEntregaSecundaria);
 }
 
 async function archivoABase64(archivo: File): Promise<string> {
@@ -617,13 +634,29 @@ export const academicoService = {
     return entregas.filter((entrega) => entrega.cursoId === id);
   },
 
-  async listarEntregasDocente(): Promise<EntregaActividadAcademica[]> {
+  async listarEntregasDocente(
+    cursoIdsPermitidos?: string[],
+  ): Promise<EntregaActividadAcademica[]> {
     if (apiConfig.secundariaCursos) {
-      const listado = await secundariaGatewayService.listarEntregas();
-      return listado.entregas.map(mapearEntregaSecundaria);
+      const [listado, cursos] = await Promise.all([
+        secundariaGatewayService.listarEntregas(),
+        cursoIdsPermitidos?.length
+          ? Promise.resolve(
+              cursoIdsPermitidos.map((id) => ({ id }) as CursoDocente),
+            )
+          : listarCursosPermitidos(),
+      ]);
+      const ids = new Set(cursos.map((curso) => curso.id));
+      return listado.entregas
+        .map(mapearEntregaSecundaria)
+        .filter((entrega) => ids.has(entrega.cursoId));
     }
     const ids = new Set(
-      (await listarCursosPermitidos()).map((curso) => curso.id),
+      (
+        cursoIdsPermitidos?.length
+          ? cursoIdsPermitidos
+          : (await listarCursosPermitidos()).map((curso) => curso.id)
+      ),
     );
     const entregas = await entregasRepo.listar();
     return entregas.filter((entrega) => ids.has(entrega.cursoId));

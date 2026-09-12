@@ -71,9 +71,30 @@ const inicialesUsuario = computed(() => currentUser.value?.initials ?? "DT");
 
 async function cargarIndicadores() {
   if (apiConfig.secundariaCursos) {
-    // Prefetch no bloqueante; listarEntregas reutiliza SWR del bootstrap.
-    secundariaGatewayService.prefetchDocente();
+    // Comparte inflight con InicioDocenteView.obtenerPanel (1 viaje).
+    // Badge desde bootstrap; campana en diferido (no bloquea el inicio).
+    try {
+      const boot = await secundariaGatewayService.bootstrapDocente();
+      const entregas = boot.entregas?.entregas ?? [];
+      evaluacionesPendientes.value = entregas.filter((item) =>
+        ["ENTREGADA", "EN_REVISION", "OBSERVADA"].includes(
+          String(item.estado ?? ""),
+        ),
+      ).length;
+    } catch {
+      evaluacionesPendientes.value = 0;
+    }
+    void docenteService.notificaciones
+      .listar()
+      .then((avisos) => {
+        notificaciones.value = avisos;
+      })
+      .catch(() => {
+        notificaciones.value = [];
+      });
+    return;
   }
+
   const [evaluaciones, avisos] = await Promise.all([
     academicoService.listarEntregasDocente(),
     docenteService.notificaciones.listar(),
@@ -87,6 +108,11 @@ async function cargarIndicadores() {
 const alCambiarDatos = () => void cargarIndicadores();
 
 onMounted(() => {
+  // Arranca bootstrap YA (en paralelo a sync de sesión) para que el inicio
+  // no espere la principal.
+  if (apiConfig.secundariaCursos) {
+    secundariaGatewayService.prefetchDocente();
+  }
   void (async () => {
     try {
       // Refresca permisos desde la principal (evita localStorage obsoleto).
@@ -95,9 +121,6 @@ onMounted(() => {
       // Si falla la sync, conserva la sesión local.
     }
     await restaurarUsuario();
-    if (apiConfig.secundariaCursos) {
-      secundariaGatewayService.prefetchDocente();
-    }
     void cargarIndicadores();
   })();
   window.addEventListener("tukuy:docente-datos", alCambiarDatos);

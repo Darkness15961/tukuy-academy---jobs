@@ -742,6 +742,38 @@ const usuarios = {
     const clave = String(id);
     return lista.find((item) => String(item.id) === clave) ?? null;
   },
+  async buscarCuentaRegistrada(criterio: string) {
+    if (!usarOrgPrincipal()) {
+      const texto = criterio.trim().toLowerCase();
+      const lista = await listarUsuariosConCache();
+      return lista
+        .filter((usuario) => {
+          return (
+            usuario.correo.trim().toLowerCase().includes(texto) ||
+            usuario.nombre.trim().toLowerCase().includes(texto)
+          );
+        })
+        .slice(0, 12)
+        .map((hallada) => ({
+          identidadId: String(hallada.id),
+          nombre: hallada.nombre,
+          correo: hallada.correo,
+          avatarUrl: null as string | null,
+          estadoIdentidad: hallada.estado,
+          enDirectorioStaff: true,
+          esAlumno: false,
+          roles: [] as Array<{ codigo: string; nombre: string; estado: string }>,
+        }));
+    }
+    const instalacionId = contextoActual().organizacionId;
+    if (!instalacionId) {
+      throw new Error("No hay organización activa en el contexto de sesión");
+    }
+    return organizacionPrincipalService.buscarCuentaRegistrada(
+      instalacionId,
+      criterio,
+    );
+  },
 };
 
 /** Catálogos mínimos para editar organigrama sin demos del Colegio. */
@@ -2860,64 +2892,68 @@ const matriculas = {
       cursos: [],
     };
 
-    let secundaria = vacio;
-    if (usarOrgPrincipal() && apiConfig.secundariaCursos) {
+    // Filtro por curso: el resumen de matrículas vive en secundaria.
+    if (entrada.cursoId) {
+      if (!(usarOrgPrincipal() && apiConfig.secundariaCursos)) {
+        return vacio;
+      }
       try {
         const { secundariaGatewayService } = await import(
           "@/api/services/secundaria-gateway.service"
         );
-        secundaria = await secundariaGatewayService.listarAlumnosResumen(
-          entrada.cursoId
-            ? entrada
-            : { ...entrada, limite: 1, offset: 0 },
-        );
+        return await secundariaGatewayService.listarAlumnosResumen(entrada);
       } catch {
-        secundaria = vacio;
+        return vacio;
       }
-    }
-
-    if (entrada.cursoId) {
-      return secundaria;
     }
 
     const instalacionId = contextoActual().organizacionId;
     if (usarOrgPrincipal() && instalacionId) {
       try {
-        const directorio = await organizacionPrincipalService.listarAlumnos({
-          instalacionId,
-          busqueda: entrada.busqueda,
-          limite: entrada.limite,
-          offset: entrada.offset,
-        });
-        if (directorio.total > 0 || directorio.alumnos.length) {
-          const extraPorId = new Map(
-            (secundaria.alumnos ?? []).map((item) => [String(item.alumnoId), item]),
-          );
-          return {
-            ok: true,
-            total: directorio.total,
-            limite: directorio.limite,
-            offset: directorio.offset,
-            alumnos: directorio.alumnos.map((alumno) => {
-              const extra = extraPorId.get(alumno.alumnoId);
-              return extra
-                ? {
-                    ...alumno,
-                    ...extra,
-                    alumnoId: alumno.alumnoId,
-                    nombre: alumno.nombre,
-                    iniciales: alumno.iniciales,
-                    correo: alumno.correo || extra.correo,
-                  }
-                : alumno;
-            }),
-            cursos: secundaria.cursos ?? [],
-          };
-        }
+        // Antes: secundaria (edge) y luego principal, en serie → latencia doble.
+        // Ahora: directorio en principal + catálogo de cursos en paralelo.
+        const [directorio, catalogo] = await Promise.all([
+          organizacionPrincipalService.listarAlumnos({
+            instalacionId,
+            busqueda: entrada.busqueda,
+            limite: entrada.limite,
+            offset: entrada.offset,
+          }),
+          (async () => {
+            try {
+              const lista = await catalogoCursos.listar();
+              return lista.map((curso) => ({
+                id: String(curso.cursoDocenteId || curso.id),
+                titulo: String(curso.titulo ?? "Curso"),
+              }));
+            } catch {
+              return [] as Array<{ id: string; titulo: string }>;
+            }
+          })(),
+        ]);
+
+        return {
+          ok: true,
+          total: directorio.total,
+          limite: directorio.limite,
+          offset: directorio.offset,
+          alumnos: directorio.alumnos,
+          cursos: catalogo,
+        };
       } catch (causa) {
         if (
           causa instanceof Error &&
-          causa.message.includes("20260818150000_org_listar_alumnos.sql")
+          (causa.message.includes("20260818150000_org_listar_alumnos.sql") ||
+            causa.message.includes("20260907130000_fix_org_listar_alumnos_cte.sql") ||
+            causa.message.includes(
+              "supabase/migrations/20260818150000_org_listar_alumnos.sql",
+            ) ||
+            causa.message.includes(
+              "supabase/migrations/20260907130000_fix_org_listar_alumnos_cte.sql",
+            ) ||
+            causa.message.includes(
+              "supabase/migrations/20260907170000_org_listar_alumnos_rapido.sql",
+            ))
         ) {
           throw causa;
         }

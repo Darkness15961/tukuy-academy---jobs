@@ -1,5 +1,5 @@
 import { api } from "@/api/client";
-import { academicoService } from "@/api/services/academico.service";
+import { academicoService, mapearEntregasDesdeSecundaria } from "@/api/services/academico.service";
 import { apiConfig } from "@/api/config";
 import { API } from "@/api/endpoints";
 import {
@@ -192,18 +192,10 @@ function cursosDelContexto(contexto: ContextoSesion): CursoDocente[] {
     );
   });
 
-  // Docente de organización: solo cursos asignados en la membresía.
-  const idsAlcance = contexto.alcance?.cursoIds;
-  if (
-    contexto.portal === "docente" &&
-    ambito === "ORGANIZACION" &&
-    idsAlcance?.length
-  ) {
-    const permitidos = new Set(idsAlcance);
-    return base.filter((curso) => permitidos.has(curso.id));
-  }
+  if (contexto.portal !== "docente") return base;
 
-  return base;
+  // Docente: solo autor / responsable o cursos del alcance de membresía.
+  return base.filter((curso) => cursoEsDelDocenteActual(curso, contexto));
 }
 
 function coincideConCurso(nombre: string, cursos: CursoDocente[]) {
@@ -376,14 +368,17 @@ const cursosRepositorio = crearRepositorioDocente(
 );
 const cursos = {
   ...cursosRepositorio,
-  async listar() {
+  async listar(opciones?: { enriquecerObservados?: boolean }) {
     if (apiConfig.secundariaCursos) {
       const contexto = obtenerContextoActual();
       const listado = await secundariaGatewayService.listarCursos();
       const base = listado.cursos.map((curso) =>
         mapearCursoSecundariaADocente(curso, contexto),
       );
-      const observados = base.filter((curso) => curso.estado === "OBSERVADO");
+      const enriquecer = opciones?.enriquecerObservados !== false;
+      const observados = enriquecer
+        ? base.filter((curso) => curso.estado === "OBSERVADO")
+        : [];
       if (!observados.length) {
         return limitarCursosSegunPortal(base, contexto);
       }
@@ -464,23 +459,29 @@ const estudiantes = {
   ...estudiantesRepositorio,
   async listar() {
     if (apiConfig.secundariaCursos) {
-      const listado = await secundariaGatewayService.listarEstudiantes();
-      return listado.estudiantes.map(
-        (item): EstudianteDocente => ({
-          id: item.id,
-          alumnoId: item.alumnoId,
-          cursoId: item.cursoId,
-          nombre: item.nombre,
-          iniciales: item.iniciales,
-          curso: item.curso,
-          organizacion: item.organizacion,
-          progreso: Number(item.progreso ?? 0),
-          ultimoAcceso: item.ultimoAcceso,
-          ultimoAccesoFecha: item.ultimoAccesoFecha,
-          fechaInscripcion: item.fechaInscripcion,
-          estado: item.estado,
-        }),
-      );
+      const [listado, listaCursos] = await Promise.all([
+        secundariaGatewayService.listarEstudiantes(),
+        cursos.listar({ enriquecerObservados: false }),
+      ]);
+      const ids = new Set(listaCursos.map((curso) => curso.id));
+      return listado.estudiantes
+        .filter((item) => ids.has(item.cursoId))
+        .map(
+          (item): EstudianteDocente => ({
+            id: item.id,
+            alumnoId: item.alumnoId,
+            cursoId: item.cursoId,
+            nombre: item.nombre,
+            iniciales: item.iniciales,
+            curso: item.curso,
+            organizacion: item.organizacion,
+            progreso: Number(item.progreso ?? 0),
+            ultimoAcceso: item.ultimoAcceso,
+            ultimoAccesoFecha: item.ultimoAccesoFecha,
+            fechaInscripcion: item.fechaInscripcion,
+            estado: item.estado,
+          }),
+        );
     }
     const registros = await estudiantesRepositorio.listar();
     if (!apiConfig.useMock) return registros;
@@ -519,8 +520,19 @@ const sesionesRepositorio = crearRepositorioDocente(
 const sesiones = {
   async listar(): Promise<SesionDocente[]> {
     if (apiConfig.secundariaCursos) {
-      const listado = await secundariaGatewayService.listarSesiones();
-      return listado.sesiones.map(mapearSesionSecundariaADocente);
+      const [listado, listaCursos] = await Promise.all([
+        secundariaGatewayService.listarSesiones(),
+        cursos.listar(),
+      ]);
+      const ids = new Set(listaCursos.map((curso) => curso.id));
+      return listado.sesiones
+        .filter((sesion) => ids.has(sesion.cursoId))
+        .map(mapearSesionSecundariaADocente)
+        .sort((a, b) => {
+          const ta = new Date(a.fechaHoraIso ?? 0).getTime();
+          const tb = new Date(b.fechaHoraIso ?? 0).getTime();
+          return ta - tb;
+        });
     }
     const contexto = obtenerContextoActual();
     const lista = await sesionesEnVivoCompartidas.listarParaContexto(contexto);
@@ -1022,19 +1034,15 @@ async function sintetizarNotificacionesSecundaria(): Promise<
   NotificacionDocente[]
 > {
   const leidas = leerIdsNotificacionesLeidas();
-  const [entregas, sesiones, pendientes] = await Promise.all([
-    academicoService.listarEntregasDocente().catch(() => []),
-    secundariaGatewayService.listarSesiones().catch(() => ({
-      ok: true as const,
-      total: 0,
-      sesiones: [],
-    })),
-    secundariaGatewayService.listarCertificadosPendientes(100).catch(() => ({
-      ok: true as const,
-      total: 0,
-      pendientes: [],
-    })),
-  ]);
+  // Reutiliza bootstrap (caché / inflight); evita 3–4 viajes extra.
+  const boot = await secundariaGatewayService.bootstrapDocente();
+  const idsCursos = new Set(
+    (boot.cursos?.cursos ?? []).map((curso) => curso.id),
+  );
+  const entregas = mapearEntregasDesdeSecundaria(
+    boot.entregas?.entregas ?? [],
+  ).filter((entrega) => idsCursos.has(entrega.cursoId));
+  const sesiones = boot.sesiones?.sesiones ?? [];
 
   const items: NotificacionDocente[] = [];
   for (const entrega of entregas) {
@@ -1054,7 +1062,8 @@ async function sintetizarNotificacionesSecundaria(): Promise<
   }
 
   const ahora = Date.now();
-  for (const sesion of sesiones.sesiones) {
+  for (const sesion of sesiones) {
+    if (!idsCursos.has(sesion.cursoId)) continue;
     const inicio = new Date(sesion.iniciaEn).getTime();
     if (
       !Number.isFinite(inicio) ||
@@ -1078,17 +1087,25 @@ async function sintetizarNotificacionesSecundaria(): Promise<
     });
   }
 
-  for (const pendiente of pendientes.pendientes.slice(0, 8)) {
-    const id = `not-cert-${pendiente.id}`;
-    items.push({
-      id,
-      titulo: "Certificado pendiente",
-      detalle: `${pendiente.nombre} · ${pendiente.curso}`,
-      fecha: new Date().toISOString(),
-      leida: leidas.has(id),
-      ruta: "/docente/certificados",
-      tipo: "CERTIFICADO",
-    });
+  // Certificados: solo si hace falta (1 viaje extra, no bloquea el inicio).
+  try {
+    const pendientes =
+      await secundariaGatewayService.listarCertificadosPendientes(100);
+    for (const pendiente of pendientes.pendientes.slice(0, 8)) {
+      if (pendiente.cursoId && !idsCursos.has(pendiente.cursoId)) continue;
+      const id = `not-cert-${pendiente.id}`;
+      items.push({
+        id,
+        titulo: "Certificado pendiente",
+        detalle: `${pendiente.nombre} · ${pendiente.curso}`,
+        fecha: new Date().toISOString(),
+        leida: leidas.has(id),
+        ruta: "/docente/certificados",
+        tipo: "CERTIFICADO",
+      });
+    }
+  } catch {
+    /* campana sin certificados */
   }
 
   return items
@@ -1097,15 +1114,17 @@ async function sintetizarNotificacionesSecundaria(): Promise<
 }
 
 async function sintetizarActividadesSecundaria(): Promise<ActividadDocente[]> {
-  const [entregas, sesiones, locales] = await Promise.all([
-    academicoService.listarEntregasDocente().catch(() => []),
-    secundariaGatewayService.listarSesiones().catch(() => ({
-      ok: true as const,
-      total: 0,
-      sesiones: [],
-    })),
-    Promise.resolve(leerActividadesLocales()),
-  ]);
+  const boot = await secundariaGatewayService.bootstrapDocente();
+  const idsCursos = new Set(
+    (boot.cursos?.cursos ?? []).map((curso) => curso.id),
+  );
+  const entregas = mapearEntregasDesdeSecundaria(
+    boot.entregas?.entregas ?? [],
+  ).filter((entrega) => idsCursos.has(entrega.cursoId));
+  const sesiones = (boot.sesiones?.sesiones ?? []).filter((s) =>
+    idsCursos.has(s.cursoId),
+  );
+  const locales = leerActividadesLocales();
 
   const sintetizadas: ActividadDocente[] = [];
   for (const entrega of entregas.slice(0, 12)) {
@@ -1122,7 +1141,7 @@ async function sintetizarActividadesSecundaria(): Promise<ActividadDocente[]> {
         new Date().toISOString(),
     });
   }
-  for (const sesion of sesiones.sesiones.slice(0, 8)) {
+  for (const sesion of sesiones.slice(0, 8)) {
     sintetizadas.push({
       id: `act-ses-${sesion.id}`,
       titulo: "Sesión en vivo",
@@ -2683,9 +2702,101 @@ export const docenteService = {
   },
 
   async obtenerPanel() {
-    // Un viaje gateway rellena caché; listar()* reutiliza fragmentos ~45s.
+    // Prioridad velocidad: 1 viaje gateway (bootstrap) → UI. Sin re-listar.
     if (apiConfig.secundariaCursos) {
-      await secundariaGatewayService.bootstrapDocente();
+      const boot = await secundariaGatewayService.bootstrapDocente();
+      const contexto = obtenerContextoActual();
+
+      const listaCursos = limitarCursosSegunPortal(
+        (boot.cursos?.cursos ?? []).map((curso) =>
+          mapearCursoSecundariaADocente(curso, contexto),
+        ),
+        contexto,
+      );
+      const idsSet = new Set(listaCursos.map((curso) => curso.id));
+
+      const entregasPropias = mapearEntregasDesdeSecundaria(
+        boot.entregas?.entregas ?? [],
+      ).filter((entrega) => idsSet.has(entrega.cursoId));
+
+      const ahora = Date.now();
+      const listaSesiones = (boot.sesiones?.sesiones ?? [])
+        .filter((sesion) => idsSet.has(sesion.cursoId))
+        .map(mapearSesionSecundariaADocente)
+        .filter((sesion) => {
+          if (["CANCELADA", "FINALIZADA"].includes(sesion.estado)) return false;
+          const inicio = new Date(sesion.fechaHoraIso ?? 0).getTime();
+          if (!Number.isFinite(inicio)) return false;
+          return inicio >= ahora - 2 * 60 * 60_000;
+        })
+        .sort(
+          (a, b) =>
+            new Date(a.fechaHoraIso ?? 0).getTime() -
+            new Date(b.fechaHoraIso ?? 0).getTime(),
+        );
+
+      const evaluaciones = entregasPropias
+        .filter((entrega) =>
+          ["ENTREGADA", "EN_REVISION", "OBSERVADA"].includes(entrega.estado),
+        )
+        .map(
+          (entrega): EvaluacionDocente => ({
+            id: entrega.id,
+            estudiante: entrega.estudianteNombre,
+            actividad: entrega.actividadTitulo,
+            curso: entrega.cursoTitulo,
+            entrega: entrega.entregadaEn
+              ? new Intl.DateTimeFormat("es-PE", {
+                  day: "2-digit",
+                  month: "short",
+                }).format(new Date(entrega.entregadaEn))
+              : "Sin entregar",
+            tipo:
+              entrega.archivo?.tipo === "application/pdf" ? "PDF" : "Archivo",
+            prioridad: entrega.estado === "OBSERVADA" ? "ALTA" : "NORMAL",
+            estado: "PENDIENTE",
+            retroalimentacion: entrega.retroalimentacion,
+          }),
+        );
+
+      const locales = leerActividadesLocales();
+      const sintetizadas: ActividadDocente[] = [];
+      for (const entrega of entregasPropias.slice(0, 12)) {
+        sintetizadas.push({
+          id: `act-ent-${entrega.id}`,
+          titulo:
+            entrega.estado === "CALIFICADA"
+              ? "Entrega calificada"
+              : "Nueva entrega recibida",
+          detalle: `${entrega.estudianteNombre} · ${entrega.actividadTitulo}`,
+          fecha:
+            entrega.calificadaEn ??
+            entrega.entregadaEn ??
+            new Date().toISOString(),
+        });
+      }
+      for (const sesion of listaSesiones.slice(0, 8)) {
+        sintetizadas.push({
+          id: `act-ses-${sesion.id}`,
+          titulo: "Sesión en vivo",
+          detalle: `${sesion.titulo} · ${sesion.curso}`,
+          fecha: sesion.fechaHoraIso ?? new Date().toISOString(),
+        });
+      }
+      const listaActividades = [...locales, ...sintetizadas]
+        .sort(
+          (a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime(),
+        )
+        .slice(0, 30);
+
+      return {
+        cursos: listaCursos,
+        estudiantes: [],
+        evaluaciones,
+        sesiones: listaSesiones,
+        actividades: listaActividades,
+        notificaciones: [],
+      };
     }
 
     const [

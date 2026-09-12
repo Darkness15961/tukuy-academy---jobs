@@ -878,10 +878,8 @@ async function listarParaContexto(
     }
 
     if (contexto.portal === "docente") {
-      const ids = contexto.alcance?.cursoIds;
-      if (ids?.length) {
-        return todas.filter((sesion) => ids.includes(sesion.cursoId));
-      }
+      // list-sesiones ya llega filtrado (soloDelDocente) desde el gateway.
+      return todas;
     }
 
     return todas;
@@ -942,7 +940,8 @@ async function listarParaContexto(
     if (ids?.length) {
       return todas.filter((sesion) => ids.includes(sesion.cursoId));
     }
-    return todas;
+    // Sin alcance explícito: no filtrar = fuga; devolver vacío en mock org.
+    return [];
   }
 
   return todas;
@@ -956,6 +955,7 @@ async function listarCursosParaCalendario(contexto: ContextoSesion) {
   if (apiConfig.secundariaCursos) {
     // En secundaria permitimos sesiones en vivo sobre cualquier curso
     // (aunque sea VIRTUAL): la modalidad del catálogo no bloquea Meet.
+    // listarCursos ya envía soloDelDocente en portal docente.
     const listado = await secundariaGatewayService.listarCursos();
     return listado.cursos.map((curso) => ({
       id: curso.id,

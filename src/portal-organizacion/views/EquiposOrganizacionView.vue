@@ -1557,16 +1557,22 @@ function etiquetaEstado(estado: VinculacionUnidad["estado"]) {
           <h2 class="font-black">Perfiles institucionales</h2>
           <IconoAyuda texto="Dirección y Administración son protegidos; los demás nombres los define la entidad." />
         </div>
-        <Button size="sm" @click="modalPerfil = true"><Plus class="h-4 w-4" />Crear perfil</Button>
+        <Button
+          v-if="puedeGestionarPermisosPerfil"
+          size="sm"
+          @click="modalPerfil = true"
+        >
+          <Plus class="h-4 w-4" />Crear perfil
+        </Button>
       </div>
       <div class="border-l-4 border-l-primary bg-primary/5 p-4 text-sm">
-        <b>Los módulos se recomiendan según la plantilla del perfil.</b>
+        <b>Dirección y Administración pueden crear perfiles (p. ej. Docente).</b>
         <p class="mt-1 text-xs text-muted-foreground">
-          Solo Dirección y Administración configuran permisos de la entidad en
+          Usa la plantilla <b>Docencia</b> para el portal docente. Los permisos
+          de la entidad se ajustan en
           <RouterLink class="font-bold underline" to="/organizacion/accesos"
             >Accesos</RouterLink
-          >
-          (generales y excepciones). Aquí puedes revisar la plantilla de cada perfil.
+          >.
         </p>
       </div>
       <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">

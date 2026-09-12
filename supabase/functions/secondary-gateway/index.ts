@@ -12,7 +12,69 @@ import {
   googleCalendarConfigurado,
 } from "./google-calendar.ts";
 
+
 const INSTALACION_TUKUY = "30000000-0000-4000-8000-000000000001";
+
+/** Cursos del docente autenticado (autor o docente_edicion). */
+async function idsCursosDelDocente(
+  secundaria: SupabaseClient,
+  docenteId: string,
+): Promise<Set<string>> {
+  const ids = new Set<string>();
+  if (!docenteId) return ids;
+  try {
+    const { data, error } = await secundaria.rpc(
+      "servicio_ids_cursos_del_docente",
+      { p_docente_identidad_ref: docenteId },
+    );
+    if (!error && data) {
+      const raw = Array.isArray(data?.cursoIds) ? data.cursoIds : [];
+      for (const id of raw) {
+        if (typeof id === "string" && id.trim()) ids.add(id.trim());
+      }
+      if (ids.size || data?.ok === true) return ids;
+    }
+  } catch {
+    /* fallback abajo */
+  }
+  // Fallback si falta la migración: solo autor en listado tipado.
+  try {
+    const { data } = await secundaria.rpc("servicio_listar_cursos_tipados", {
+      p_limite: 200,
+    });
+    const cursos = Array.isArray(data?.cursos) ? data.cursos : [];
+    for (const item of cursos) {
+      if (!item || typeof item !== "object") continue;
+      const curso = item as Record<string, unknown>;
+      const id = String(curso.id ?? "").trim();
+      const autor = String(curso.autorIdentidadRef ?? "").trim();
+      if (id && autor === docenteId) ids.add(id);
+    }
+  } catch {
+    /* sin ids */
+  }
+  return ids;
+}
+
+function filtrarArrayPorCursoIds(
+  items: unknown,
+  cursoIds: Set<string>,
+  campoCurso: string,
+): unknown[] {
+  if (!Array.isArray(items)) return [];
+  if (!cursoIds.size) return [];
+  return items.filter((item) => {
+    if (!item || typeof item !== "object") return false;
+    const id = String((item as Record<string, unknown>)[campoCurso] ?? "").trim();
+    return Boolean(id && cursoIds.has(id));
+  });
+}
+
+function debeAcotarADocente(entrada: Record<string, unknown>): boolean {
+  return entrada.soloDelDocente === true ||
+    entrada.action === "bootstrap-docente";
+}
+
 
 const ESTADOS_CATALOGO_PUBLICO = new Set([
   "PUBLICADO",
@@ -650,10 +712,51 @@ function cors(req: Request) {
   };
 }
 
+type ParamsUpsertIndice = {
+  p_instalacion_id: string;
+  p_codigo_verificacion: string;
+  p_certificado_secundario_ref: string;
+  p_documento_secundario_ref: string;
+  p_huella_documento: string;
+  p_titular_historico: string;
+  p_curso_historico: string;
+  p_organizacion_historica: string;
+  p_emitido_en: string;
+  p_estado_publico: string;
+};
+
+/** Preferir service_role (sin auth.uid); fallback a JWT de usuario. */
+async function upsertIndiceCertificadoPublico(entrada: {
+  principal: SupabaseClient;
+  principalAdmin?: SupabaseClient | null;
+  params: ParamsUpsertIndice;
+}): Promise<{ data: unknown; error: string | null }> {
+  if (entrada.principalAdmin) {
+    const conService = await entrada.principalAdmin.rpc(
+      "service_upsert_indice_certificado_publico",
+      entrada.params,
+    );
+    if (!conService.error) {
+      return { data: conService.data, error: null };
+    }
+    // Migración aún no aplicada en principal: probar ruta admin con JWT.
+  }
+
+  const conUsuario = await entrada.principal.rpc(
+    "admin_upsert_indice_certificado_publico",
+    entrada.params,
+  );
+  if (conUsuario.error) {
+    return { data: null, error: conUsuario.error.message };
+  }
+  return { data: conUsuario.data, error: null };
+}
+
 /** Firmas + índice público tras emitir (manual o auto-cert 100%). */
 async function postProcesarCertificadoEmitido(entrada: {
   secundaria: SupabaseClient;
   principal: SupabaseClient;
+  principalAdmin?: SupabaseClient | null;
   instalacionId: string;
   emisorId: string;
   emisorNombre: string | null;
@@ -706,9 +809,10 @@ async function postProcesarCertificadoEmitido(entrada: {
     Boolean(codigo) &&
     (entrada.publicarIndiceSiempre === true || listoParaIndice);
   if (debePublicar) {
-    const indice = await entrada.principal.rpc(
-      "admin_upsert_indice_certificado_publico",
-      {
+    const indice = await upsertIndiceCertificadoPublico({
+      principal: entrada.principal,
+      principalAdmin: entrada.principalAdmin,
+      params: {
         p_instalacion_id: entrada.instalacionId,
         p_codigo_verificacion: codigo,
         p_certificado_secundario_ref: certificadoId,
@@ -729,10 +833,10 @@ async function postProcesarCertificadoEmitido(entrada: {
             : new Date().toISOString(),
         p_estado_publico: "VIGENTE",
       },
-    );
+    });
     if (indice.error) {
       advertenciaIndice =
-        `Certificado emitido en secundaria, pero falta índice en principal: ${indice.error.message}`;
+        `Certificado emitido en secundaria, pero falta índice en principal: ${indice.error}`;
     } else {
       indicePublico = indice.data;
       if (entrada.publicarIndiceSiempre) {
@@ -753,48 +857,60 @@ async function postProcesarCertificadoEmitido(entrada: {
   };
 }
 
+/** Lee un emitido vía RPC (evita .from() bloqueado por RLS). */
+async function obtenerEmitidoParaIndice(
+  secundaria: SupabaseClient,
+  certificadoId: string,
+): Promise<Record<string, unknown> | null> {
+  const listado = await secundaria.rpc("servicio_listar_certificados_emitidos");
+  if (listado.error) return null;
+  const emitidos = Array.isArray(listado.data?.emitidos)
+    ? listado.data.emitidos
+    : [];
+  const hallado = emitidos.find(
+    (item: unknown) =>
+      item &&
+      typeof item === "object" &&
+      String((item as Record<string, unknown>).id ?? "") === certificadoId,
+  );
+  return hallado && typeof hallado === "object"
+    ? (hallado as Record<string, unknown>)
+    : null;
+}
+
 /** Publica certificados MANUAL (TA-M-…) en el índice de verificación pública. */
 async function republicarIndiceCertificadoManual(entrada: {
   secundaria: SupabaseClient;
   principal: SupabaseClient;
+  principalAdmin?: SupabaseClient | null;
   instalacionId: string;
   certificadoId: string;
   documentoId?: string;
   huellaDocumento?: string;
 }): Promise<{ indicePublico: unknown; advertenciaIndice: string | null }> {
   try {
-    const { data: certRow } = await entrada.secundaria
-      .from("certificado_curso")
-      .select(
-        "id, codigo_verificacion, titular_nombre, motivo_titulo, origen_emision, emitido_en, preparado_en",
-      )
-      .eq("id", entrada.certificadoId)
-      .maybeSingle();
+    const emitido = await obtenerEmitidoParaIndice(
+      entrada.secundaria,
+      entrada.certificadoId,
+    );
+    if (!emitido) {
+      return {
+        indicePublico: null,
+        advertenciaIndice:
+          "Certificado no encontrado (o falta servicio_listar_certificados_emitidos)",
+      };
+    }
 
-    const codigo =
-      typeof certRow?.codigo_verificacion === "string"
-        ? certRow.codigo_verificacion.trim()
-        : "";
-    const origen = String(certRow?.origen_emision ?? "").toUpperCase();
+    const codigo = String(emitido.codigoVerificacion ?? "").trim();
+    const origen = String(emitido.origenEmision ?? "").toUpperCase();
     if (!codigo || (origen !== "MANUAL" && !codigo.startsWith("TA-M-"))) {
       return { indicePublico: null, advertenciaIndice: null };
     }
 
-    let documentoId = String(entrada.documentoId ?? "").trim();
-    let huella = String(entrada.huellaDocumento ?? "").trim();
-    if (!documentoId) {
-      const { data: docRow } = await entrada.secundaria
-        .from("certificado_documento")
-        .select("id, huella_documento")
-        .eq("certificado_curso_id", entrada.certificadoId)
-        .order("version", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      documentoId = typeof docRow?.id === "string" ? docRow.id : "";
-      if (!huella && typeof docRow?.huella_documento === "string") {
-        huella = docRow.huella_documento;
-      }
-    }
+    const documentoId =
+      String(entrada.documentoId ?? "").trim() ||
+      String(emitido.documentoId ?? "").trim();
+    const huella = String(entrada.huellaDocumento ?? "").trim();
     if (!documentoId) {
       return {
         indicePublico: null,
@@ -802,47 +918,36 @@ async function republicarIndiceCertificadoManual(entrada: {
       };
     }
 
-    let organizacionHistorica = "Tukuy Academy";
-    try {
-      const { data: ctx } = await entrada.secundaria
-        .from("contexto_instalacion")
-        .select("nombre_organizacion")
-        .eq("id", true)
-        .maybeSingle();
-      if (
-        typeof ctx?.nombre_organizacion === "string" &&
-        ctx.nombre_organizacion.trim()
-      ) {
-        organizacionHistorica = ctx.nombre_organizacion.trim();
-      }
-    } catch {
-      /* fallback */
-    }
+    const organizacionHistorica =
+      String(emitido.organizacionEmisora ?? "").trim() || "Tukuy Academy";
 
-    const indice = await entrada.principal.rpc(
-      "admin_upsert_indice_certificado_publico",
-      {
+    const indice = await upsertIndiceCertificadoPublico({
+      principal: entrada.principal,
+      principalAdmin: entrada.principalAdmin,
+      params: {
         p_instalacion_id: entrada.instalacionId,
         p_codigo_verificacion: codigo,
         p_certificado_secundario_ref: entrada.certificadoId,
         p_documento_secundario_ref: documentoId,
         p_huella_documento: huella,
         p_titular_historico:
-          String(certRow?.titular_nombre ?? "").trim() || "Titular",
+          String(emitido.nombre ?? "").trim() || "Titular",
         p_curso_historico:
-          String(certRow?.motivo_titulo ?? "").trim() || "Certificación",
+          String(emitido.curso ?? "").trim() || "Certificación",
         p_organizacion_historica: organizacionHistorica,
         p_emitido_en:
-          certRow?.emitido_en ??
-          certRow?.preparado_en ??
-          new Date().toISOString(),
+          typeof emitido.emitidoEn === "string"
+            ? emitido.emitidoEn
+            : typeof emitido.fecha === "string"
+              ? emitido.fecha
+              : new Date().toISOString(),
         p_estado_publico: "VIGENTE",
       },
-    );
+    });
     if (indice.error) {
       return {
         indicePublico: null,
-        advertenciaIndice: indice.error.message,
+        advertenciaIndice: indice.error,
       };
     }
     return { indicePublico: indice.data, advertenciaIndice: null };
@@ -1957,6 +2062,15 @@ Deno.serve(async (req) => {
       const payloadCursos = cursos.data as Record<string, unknown>;
       await enriquecerCertificadoListadoCursos(secundaria, payloadCursos);
       await enriquecerModalidadListadoCursos(secundaria, payloadCursos);
+      if (debeAcotarADocente(entrada)) {
+        const ids = await idsCursosDelDocente(secundaria, usuario.user.id);
+        const lista = Array.isArray(payloadCursos.cursos)
+          ? payloadCursos.cursos
+          : [];
+        const filtrados = filtrarArrayPorCursoIds(lista, ids, "id");
+        payloadCursos.cursos = filtrados;
+        payloadCursos.total = filtrados.length;
+      }
       return json({ ok: true, cursos: payloadCursos }, 200, corsHeaders);
     }
 
@@ -2408,6 +2522,7 @@ Deno.serve(async (req) => {
             ? await postProcesarCertificadoEmitido({
               secundaria,
               principal,
+              principalAdmin,
               instalacionId,
               emisorId: usuario.user.id,
               emisorNombre:
@@ -2475,6 +2590,7 @@ Deno.serve(async (req) => {
             ? await postProcesarCertificadoEmitido({
               secundaria,
               principal,
+              principalAdmin,
               instalacionId,
               emisorId: usuario.user.id,
               emisorNombre:
@@ -2526,6 +2642,17 @@ Deno.serve(async (req) => {
           typeof entrada.cursoId === "string" && entrada.cursoId.trim()
             ? entrada.cursoId.trim()
             : null;
+        const acotar = debeAcotarADocente(entrada);
+        const idsDocente = acotar
+          ? await idsCursosDelDocente(secundaria, usuario.user.id)
+          : null;
+        if (acotar && cursoId && idsDocente && !idsDocente.has(cursoId)) {
+          return json(
+            { ok: true, total: 0, sesiones: [] },
+            200,
+            corsHeaders,
+          );
+        }
         const listado = await secundaria.rpc("servicio_listar_sesiones_en_vivo", {
           p_curso_id: cursoId,
           p_limite: 100,
@@ -2538,6 +2665,18 @@ Deno.serve(async (req) => {
                 "Falta ejecutar en la secundaria 20260805246000_sesiones_en_vivo.sql (o 20260805249000)",
               details: listado.error.message,
             },
+            200,
+            corsHeaders,
+          );
+        }
+        if (acotar && idsDocente && !cursoId) {
+          const sesiones = filtrarArrayPorCursoIds(
+            listado.data?.sesiones,
+            idsDocente,
+            "cursoId",
+          );
+          return json(
+            { ok: true, total: sesiones.length, sesiones },
             200,
             corsHeaders,
           );
@@ -2710,6 +2849,17 @@ Deno.serve(async (req) => {
           typeof entrada.cursoId === "string" && entrada.cursoId.trim()
             ? entrada.cursoId.trim()
             : null;
+        const acotar = debeAcotarADocente(entrada);
+        const idsDocente = acotar
+          ? await idsCursosDelDocente(secundaria, usuario.user.id)
+          : null;
+        if (acotar && cursoId && idsDocente && !idsDocente.has(cursoId)) {
+          return json(
+            { ok: true, total: 0, estudiantes: [] },
+            200,
+            corsHeaders,
+          );
+        }
         const listado = await secundaria.rpc(
           "servicio_listar_estudiantes_matriculas",
           { p_curso_id: cursoId },
@@ -2722,6 +2872,18 @@ Deno.serve(async (req) => {
                 "Falta ejecutar en la secundaria 20260805249000_academia_sin_mock_estudiantes_sesiones.sql",
               details: listado.error.message,
             },
+            200,
+            corsHeaders,
+          );
+        }
+        if (acotar && idsDocente && !cursoId) {
+          const estudiantes = filtrarArrayPorCursoIds(
+            listado.data?.estudiantes,
+            idsDocente,
+            "cursoId",
+          );
+          return json(
+            { ok: true, total: estudiantes.length, estudiantes },
             200,
             corsHeaders,
           );
@@ -3612,6 +3774,19 @@ Deno.serve(async (req) => {
             corsHeaders,
           );
         }
+        if (debeAcotarADocente(entrada)) {
+          const ids = await idsCursosDelDocente(secundaria, usuario.user.id);
+          const emitidos = filtrarArrayPorCursoIds(
+            listado.data?.emitidos,
+            ids,
+            "cursoId",
+          );
+          return json(
+            { ok: true, total: emitidos.length, emitidos },
+            200,
+            corsHeaders,
+          );
+        }
         return json({ ok: true, ...listado.data }, 200, corsHeaders);
       }
 
@@ -3637,6 +3812,19 @@ Deno.serve(async (req) => {
             corsHeaders,
           );
         }
+        if (debeAcotarADocente(entrada)) {
+          const ids = await idsCursosDelDocente(secundaria, usuario.user.id);
+          const pendientes = filtrarArrayPorCursoIds(
+            listado.data?.pendientes,
+            ids,
+            "cursoId",
+          );
+          return json(
+            { ok: true, total: pendientes.length, pendientes },
+            200,
+            corsHeaders,
+          );
+        }
         return json({ ok: true, ...listado.data }, 200, corsHeaders);
       }
 
@@ -3651,6 +3839,26 @@ Deno.serve(async (req) => {
               error:
                 "Falta ejecutar en la secundaria 20260810195000_firma_certificado.sql",
               details: listado.error.message,
+            },
+            200,
+            corsHeaders,
+          );
+        }
+        if (debeAcotarADocente(entrada)) {
+          const ids = await idsCursosDelDocente(secundaria, usuario.user.id);
+          const pendientesFirma = filtrarArrayPorCursoIds(
+            listado.data?.pendientesFirma ??
+              listado.data?.pendientes ??
+              listado.data?.certificados,
+            ids,
+            "cursoId",
+          );
+          return json(
+            {
+              ok: true,
+              total: pendientesFirma.length,
+              pendientesFirma,
+              pendientes: pendientesFirma,
             },
             200,
             corsHeaders,
@@ -3723,6 +3931,7 @@ Deno.serve(async (req) => {
         const republicado = await republicarIndiceCertificadoManual({
           secundaria,
           principal,
+          principalAdmin,
           instalacionId,
           certificadoId,
           documentoId:
@@ -3759,23 +3968,12 @@ Deno.serve(async (req) => {
             corsHeaders,
           );
         }
-        const { data: docRow } = await secundaria
-          .from("certificado_documento")
-          .select("id, huella_documento")
-          .eq("certificado_curso_id", certificadoId)
-          .order("version", { ascending: false })
-          .limit(1)
-          .maybeSingle();
         const republicado = await republicarIndiceCertificadoManual({
           secundaria,
           principal,
+          principalAdmin,
           instalacionId,
           certificadoId,
-          documentoId: typeof docRow?.id === "string" ? docRow.id : "",
-          huellaDocumento:
-            typeof docRow?.huella_documento === "string"
-              ? docRow.huella_documento
-              : "",
         });
         if (!republicado.indicePublico && republicado.advertenciaIndice) {
           return json(
@@ -3915,9 +4113,10 @@ Deno.serve(async (req) => {
           firmado.data.documentoId &&
           firmado.data.codigoVerificacion
         ) {
-          const indice = await principal.rpc(
-            "admin_upsert_indice_certificado_publico",
-            {
+          const indice = await upsertIndiceCertificadoPublico({
+            principal,
+            principalAdmin,
+            params: {
               p_instalacion_id: instalacionId,
               p_codigo_verificacion: firmado.data.codigoVerificacion,
               p_certificado_secundario_ref: firmado.data.certificadoId,
@@ -3930,10 +4129,10 @@ Deno.serve(async (req) => {
               p_emitido_en: firmado.data.emitidoEn ?? new Date().toISOString(),
               p_estado_publico: "VIGENTE",
             },
-          );
+          });
           if (indice.error) {
             advertenciaIndice =
-              `Firmado, pero falta índice público: ${indice.error.message}`;
+              `Firmado, pero falta índice público: ${indice.error}`;
           } else {
             indicePublico = indice.data;
           }
@@ -4031,6 +4230,7 @@ Deno.serve(async (req) => {
           const post = await postProcesarCertificadoEmitido({
             secundaria,
             principal,
+            principalAdmin,
             instalacionId,
             emisorId: usuario.user.id,
             emisorNombre:
@@ -4103,6 +4303,7 @@ Deno.serve(async (req) => {
         const post = await postProcesarCertificadoEmitido({
           secundaria,
           principal,
+          principalAdmin,
           instalacionId,
           emisorId: usuario.user.id,
           emisorNombre:
@@ -4159,6 +4360,17 @@ Deno.serve(async (req) => {
             ? entrada.cursoId.trim()
             : null;
         const soloPropias = entrada.soloPropias === true;
+        const acotar = debeAcotarADocente(entrada) && !soloPropias;
+        const idsDocente = acotar
+          ? await idsCursosDelDocente(secundaria, usuario.user.id)
+          : null;
+        if (acotar && cursoId && idsDocente && !idsDocente.has(cursoId)) {
+          return json(
+            { ok: true, total: 0, entregas: [] },
+            200,
+            corsHeaders,
+          );
+        }
         const listado = await secundaria.rpc("servicio_listar_entregas", {
           p_curso_id: cursoId,
           p_estudiante_identidad_ref: soloPropias ? usuario.user.id : null,
@@ -4172,6 +4384,18 @@ Deno.serve(async (req) => {
                 "Falta ejecutar en la secundaria 20260805251000_entregas_calificaciones.sql",
               details: listado.error.message,
             },
+            200,
+            corsHeaders,
+          );
+        }
+        if (acotar && idsDocente && !cursoId) {
+          const entregas = filtrarArrayPorCursoIds(
+            listado.data?.entregas,
+            idsDocente,
+            "cursoId",
+          );
+          return json(
+            { ok: true, total: entregas.length, entregas },
             200,
             corsHeaders,
           );
@@ -4378,21 +4602,24 @@ Deno.serve(async (req) => {
       const advertencias: string[] = [];
 
       if (entrada.action === "bootstrap-docente") {
-        const [cursos, entregas, sesiones, estudiantes] = await Promise.all([
-          secundaria.rpc("servicio_listar_cursos_tipados", { p_limite: 100 }),
-          secundaria.rpc("servicio_listar_entregas", {
-            p_curso_id: null,
-            p_estudiante_identidad_ref: null,
-            p_incluir_archivo: false,
-          }),
-          secundaria.rpc("servicio_listar_sesiones_en_vivo", {
-            p_curso_id: null,
-            p_limite: 100,
-          }),
-          secundaria.rpc("servicio_listar_estudiantes_matriculas", {
-            p_curso_id: null,
-          }),
-        ]);
+        // ids + listados en paralelo (antes ids bloqueaba ~1 RTT extra).
+        const [idsDocente, cursos, entregas, sesiones, estudiantes] =
+          await Promise.all([
+            idsCursosDelDocente(secundaria, usuario.user.id),
+            secundaria.rpc("servicio_listar_cursos_tipados", { p_limite: 100 }),
+            secundaria.rpc("servicio_listar_entregas", {
+              p_curso_id: null,
+              p_estudiante_identidad_ref: null,
+              p_incluir_archivo: false,
+            }),
+            secundaria.rpc("servicio_listar_sesiones_en_vivo", {
+              p_curso_id: null,
+              p_limite: 100,
+            }),
+            secundaria.rpc("servicio_listar_estudiantes_matriculas", {
+              p_curso_id: null,
+            }),
+          ]);
 
         if (cursos.error) {
           advertencias.push(`cursos: ${cursos.error.message}`);
@@ -4407,19 +4634,64 @@ Deno.serve(async (req) => {
           advertencias.push(`estudiantes: ${estudiantes.error.message}`);
         }
 
+        const payloadCursos = cursos.error
+          ? vacioCursos
+          : { ...(cursos.data as Record<string, unknown>) };
+        if (!cursos.error) {
+          const lista = Array.isArray(payloadCursos.cursos)
+            ? payloadCursos.cursos
+            : [];
+          const filtrados = filtrarArrayPorCursoIds(lista, idsDocente, "id");
+          payloadCursos.cursos = filtrados;
+          payloadCursos.total = filtrados.length;
+        }
+
+        const payloadEntregas = entregas.error
+          ? { ok: true, total: 0, entregas: [] }
+          : { ...(entregas.data as Record<string, unknown>) };
+        if (!entregas.error) {
+          const filtradas = filtrarArrayPorCursoIds(
+            payloadEntregas.entregas,
+            idsDocente,
+            "cursoId",
+          );
+          payloadEntregas.entregas = filtradas;
+          payloadEntregas.total = filtradas.length;
+        }
+
+        const payloadSesiones = sesiones.error
+          ? { ok: true, total: 0, sesiones: [] }
+          : { ...(sesiones.data as Record<string, unknown>) };
+        if (!sesiones.error) {
+          const filtradas = filtrarArrayPorCursoIds(
+            payloadSesiones.sesiones,
+            idsDocente,
+            "cursoId",
+          );
+          payloadSesiones.sesiones = filtradas;
+          payloadSesiones.total = filtradas.length;
+        }
+
+        const payloadEstudiantes = estudiantes.error
+          ? { ok: true, total: 0, estudiantes: [] }
+          : { ...(estudiantes.data as Record<string, unknown>) };
+        if (!estudiantes.error) {
+          const filtrados = filtrarArrayPorCursoIds(
+            payloadEstudiantes.estudiantes,
+            idsDocente,
+            "cursoId",
+          );
+          payloadEstudiantes.estudiantes = filtrados;
+          payloadEstudiantes.total = filtrados.length;
+        }
+
         return json(
           {
             ok: true,
-            cursos: cursos.error ? vacioCursos : cursos.data,
-            entregas: entregas.error
-              ? { ok: true, total: 0, entregas: [] }
-              : entregas.data,
-            sesiones: sesiones.error
-              ? { ok: true, total: 0, sesiones: [] }
-              : sesiones.data,
-            estudiantes: estudiantes.error
-              ? { ok: true, total: 0, estudiantes: [] }
-              : estudiantes.data,
+            cursos: payloadCursos,
+            entregas: payloadEntregas,
+            sesiones: payloadSesiones,
+            estudiantes: payloadEstudiantes,
             advertencias: advertencias.length ? advertencias : undefined,
           },
           200,

@@ -580,6 +580,77 @@ export const organizacionPrincipalService = {
     return ((data ?? []) as MiembroRpc[]).map(mapMiembroAUsuarioOrganizacion);
   },
 
+  /**
+   * Busca cuentas Tukuy por nombre o correo (aunque solo sean alumnos).
+   */
+  async buscarCuentaRegistrada(
+    instalacionId: string,
+    criterio: string,
+  ): Promise<
+    Array<{
+      identidadId: string;
+      nombre: string;
+      correo: string;
+      avatarUrl: string | null;
+      estadoIdentidad: string;
+      enDirectorioStaff: boolean;
+      esAlumno: boolean;
+      roles: Array<{ codigo: string; nombre: string; estado: string }>;
+    }>
+  > {
+    const { data, error } = await cliente().rpc("org_buscar_cuenta_registrada", {
+      p_instalacion_id: instalacionId,
+      p_criterio: criterio.trim(),
+    });
+    if (error) {
+      throw new Error(
+        error.message.includes("Could not find the function") ||
+          error.message.includes("PGRST202")
+          ? "Falta aplicar supabase/migrations/20260907140000_org_buscar_cuenta_nombre_correo.sql en PRINCIPAL."
+          : error.message,
+      );
+    }
+    if (!data) return [];
+
+    const mapear = (raw: Record<string, unknown>) => {
+      const rolesRaw = Array.isArray(raw.roles) ? raw.roles : [];
+      return {
+        identidadId: String(raw.identidadId ?? ""),
+        nombre: String(raw.nombre ?? "Usuario"),
+        correo: String(raw.correo ?? ""),
+        avatarUrl:
+          typeof raw.avatarUrl === "string" && raw.avatarUrl.trim()
+            ? raw.avatarUrl
+            : null,
+        estadoIdentidad: String(raw.estadoIdentidad ?? "ACTIVO"),
+        enDirectorioStaff: raw.enDirectorioStaff === true,
+        esAlumno: raw.esAlumno === true,
+        roles: rolesRaw.map((item) => {
+          const fila = (item ?? {}) as Record<string, unknown>;
+          return {
+            codigo: String(fila.codigo ?? ""),
+            nombre: String(fila.nombre ?? ""),
+            estado: String(fila.estado ?? ""),
+          };
+        }),
+      };
+    };
+
+    // Formato nuevo: { coincidencias: [...] }
+    if (typeof data === "object" && data !== null && "coincidencias" in data) {
+      const lista = Array.isArray((data as { coincidencias?: unknown }).coincidencias)
+        ? ((data as { coincidencias: unknown[] }).coincidencias)
+        : [];
+      return lista
+        .map((item) => mapear((item ?? {}) as Record<string, unknown>))
+        .filter((item) => item.identidadId);
+    }
+
+    // Compat: respuesta antigua de un solo objeto
+    const unica = mapear(data as Record<string, unknown>);
+    return unica.identidadId ? [unica] : [];
+  },
+
   async listarAlumnos(entrada: {
     instalacionId: string;
     busqueda?: string;
@@ -601,7 +672,7 @@ export const organizacionPrincipalService = {
       throw new Error(
         error.message.includes("Could not find the function") ||
           error.message.includes("PGRST202")
-          ? "Falta aplicar 20260818150000_org_listar_alumnos.sql en PRINCIPAL."
+          ? "Falta aplicar supabase/migrations/20260907170000_org_listar_alumnos_rapido.sql en PRINCIPAL."
           : error.message,
       );
     }

@@ -1,14 +1,7 @@
--- PRINCIPAL: directorio paginado de alumnos (rol STUDENT).
--- No exige nodo ni matrícula. Sin nodo = alumno externo en la UI.
--- Incluye alumnos de la instalación actual y los de Tukuy Academy
--- (alta automática al registrarse).
--- SQL Editor del proyecto PRINCIPAL (nidkyztqapeqdplzvnkc).
+-- PRINCIPAL: corrige org_listar_alumnos (CTE "filtrado" no sobrevive entre statements).
+-- Error: relation "filtrado" does not exist (42P01).
 
 begin;
-
-create index if not exists membresia_principal_instalacion_estado_idx
-  on public.membresia_principal (instalacion_organizacion_ref, estado)
-  where alcance_tipo = 'ORGANIZACION';
 
 create or replace function public.org_listar_alumnos(
   p_instalacion_id uuid,
@@ -40,7 +33,6 @@ begin
     raise exception 'No autorizado' using errcode = '42501';
   end if;
 
-  -- Un solo statement: el CTE "filtrado" no existe entre SELECTs distintos.
   with base as (
     select distinct on (identidad.id)
       identidad.id as alumno_id,

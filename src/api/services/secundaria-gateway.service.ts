@@ -110,6 +110,25 @@ function portalActivoEsAlumno(): boolean {
   return contextoActivo.value?.portal === "estudiante";
 }
 
+function portalActivoEsDocente(): boolean {
+  const { contextoActivo } = useContextoSesion();
+  return contextoActivo.value?.portal === "docente";
+}
+
+/** Clave de caché: instalación + portal (evita que org/docente compartan listados). */
+function claveCacheSecundaria(): string {
+  const portal = (() => {
+    const { contextoActivo } = useContextoSesion();
+    return contextoActivo.value?.portal ?? "anon";
+  })();
+  return `${instalacionSecundariaActiva()}:${portal}`;
+}
+
+/** Flag para que el gateway acote cursos/entregas/etc. al docente autenticado. */
+function extrasAlcanceDocente(): { soloDelDocente?: true } {
+  return portalActivoEsDocente() ? { soloDelDocente: true } : {};
+}
+
 const vacioListadoCursos = (): ListadoCursosSecundaria => ({
   ok: true,
   total: 0,
@@ -124,7 +143,7 @@ const vacioMisCursos = (): ResultadoMisCursosSecundaria => ({
 });
 
 function obtenerCache(): FragmentosCache | null {
-  const clave = instalacionSecundariaActiva();
+  const clave = claveCacheSecundaria();
   const cache = cachePorInstalacion.get(clave) ?? null;
   if (!cache) return null;
   if (Date.now() - cache.at > CACHE_STALE_MS) {
@@ -139,7 +158,7 @@ function cacheEsFresco(cache: FragmentosCache | null): boolean {
 }
 
 function fusionarCache(parcial: Omit<FragmentosCache, "at">) {
-  const clave = instalacionSecundariaActiva();
+  const clave = claveCacheSecundaria();
   const previo = cachePorInstalacion.get(clave);
   const base =
     previo && Date.now() - previo.at <= CACHE_STALE_MS
@@ -153,7 +172,8 @@ function fusionarCache(parcial: Omit<FragmentosCache, "at">) {
 }
 
 function invalidarFragmentos(...fragmentos: FragmentoClave[]) {
-  const clave = instalacionSecundariaActiva();
+  const clave = claveCacheSecundaria();
+  const instalacion = instalacionSecundariaActiva();
   const cache = cachePorInstalacion.get(clave);
   if (!cache) return;
   const siguiente: FragmentosCache = { ...cache, at: cache.at };
@@ -162,7 +182,7 @@ function invalidarFragmentos(...fragmentos: FragmentoClave[]) {
   }
   cachePorInstalacion.set(clave, siguiente);
   if (fragmentos.includes("cursos") || fragmentos.includes("misCursos")) {
-    inflightAlumnoPorInstalacion.delete(clave);
+    inflightAlumnoPorInstalacion.delete(instalacion);
   }
   if (
     fragmentos.includes("cursos") ||
@@ -170,17 +190,24 @@ function invalidarFragmentos(...fragmentos: FragmentoClave[]) {
     fragmentos.includes("sesiones") ||
     fragmentos.includes("estudiantes")
   ) {
-    inflightDocentePorInstalacion.delete(clave);
+    inflightDocentePorInstalacion.delete(instalacion);
   }
 }
 
 export function invalidarCacheSecundaria() {
-  const clave = instalacionSecundariaActiva();
+  const instalacion = instalacionSecundariaActiva();
+  const clave = claveCacheSecundaria();
   cachePorInstalacion.delete(clave);
-  inflightDocentePorInstalacion.delete(clave);
-  inflightAlumnoPorInstalacion.delete(clave);
+  // Si invalidamos desde org/docente, limpia también el otro portal de la misma org.
+  for (const k of [...cachePorInstalacion.keys()]) {
+    if (k.startsWith(`${instalacion}:`)) cachePorInstalacion.delete(k);
+  }
+  inflightDocentePorInstalacion.delete(instalacion);
+  inflightAlumnoPorInstalacion.delete(instalacion);
   for (const k of [...revalidacionPorClave.keys()]) {
-    if (k.startsWith(`${clave}:`)) revalidacionPorClave.delete(k);
+    if (k.startsWith(`${instalacion}:`) || k.startsWith(`${clave}:`)) {
+      revalidacionPorClave.delete(k);
+    }
   }
   void import("@/lib/storage-academia")
     .then((m) => m.invalidarCacheMedia())
@@ -295,7 +322,7 @@ async function invocarMutacion<T>(
 }
 
 function claveRevalidacion(fragmento: string): string {
-  return `${instalacionSecundariaActiva()}:${fragmento}`;
+  return `${claveCacheSecundaria()}:${fragmento}`;
 }
 
 /** Sirve cache (fresco o stale) y revalida en segundo plano si ya no es fresco. */
@@ -468,11 +495,12 @@ export const secundariaGatewayService = {
   },
 
   async listarCursos(limite = 100): Promise<ListadoCursosSecundaria> {
+    const alcance = extrasAlcanceDocente();
     if (limite > 100) {
       const data = await invocar<{
         ok: true;
         cursos: ListadoCursosSecundaria;
-      }>("list-cursos", { limite });
+      }>("list-cursos", { limite, ...alcance });
       return data.cursos;
     }
 
@@ -483,7 +511,7 @@ export const secundariaGatewayService = {
         const data = await invocar<{
           ok: true;
           cursos: ListadoCursosSecundaria;
-        }>("list-cursos", { limite });
+        }>("list-cursos", { limite, ...alcance });
         return data.cursos;
       },
       guardar: (cursos) => fusionarCache({ cursos }),
@@ -799,9 +827,11 @@ export const secundariaGatewayService = {
   },
 
   async listarSesiones(cursoId?: string): Promise<ResultadoListarSesionesSecundaria> {
+    const alcance = extrasAlcanceDocente();
     if (cursoId) {
       return invocar<ResultadoListarSesionesSecundaria>("list-sesiones", {
         cursoId,
+        ...alcance,
       });
     }
 
@@ -811,6 +841,7 @@ export const secundariaGatewayService = {
       cargar: () =>
         invocar<ResultadoListarSesionesSecundaria>("list-sesiones", {
           cursoId: null,
+          ...alcance,
         }),
       guardar: (sesiones) => fusionarCache({ sesiones }),
     });
@@ -1011,9 +1042,11 @@ export const secundariaGatewayService = {
   async listarEstudiantes(
     cursoId?: string,
   ): Promise<ResultadoListarEstudiantesSecundaria> {
+    const alcance = extrasAlcanceDocente();
     if (cursoId) {
       return invocar<ResultadoListarEstudiantesSecundaria>("list-estudiantes", {
         cursoId,
+        ...alcance,
       });
     }
 
@@ -1023,6 +1056,7 @@ export const secundariaGatewayService = {
       cargar: () =>
         invocar<ResultadoListarEstudiantesSecundaria>("list-estudiantes", {
           cursoId: null,
+          ...alcance,
         }),
       guardar: (estudiantes) => fusionarCache({ estudiantes }),
     });
@@ -1075,7 +1109,7 @@ export const secundariaGatewayService = {
       ok: true;
       total: number;
       emitidos: import("@/lib/contrato-secundaria").CertificadoEmitidoSecundaria[];
-    }>("list-certificados");
+    }>("list-certificados", extrasAlcanceDocente());
   },
 
   async listarMisCertificados() {
@@ -1091,7 +1125,10 @@ export const secundariaGatewayService = {
       ok: true;
       total: number;
       pendientes: import("@/lib/contrato-secundaria").CertificadoPendienteSecundaria[];
-    }>("list-certificados-pendientes", { progresoMinimo });
+    }>("list-certificados-pendientes", {
+      progresoMinimo,
+      ...extrasAlcanceDocente(),
+    });
   },
 
   async emitirCertificado(matriculaId: string) {
@@ -1209,11 +1246,12 @@ export const secundariaGatewayService = {
         matriculaId?: string;
         nombre: string;
         curso: string;
+        cursoId?: string;
         rolFirma: string;
         estadoFirma: string;
         preparadoEn?: string;
       }>;
-    }>("list-certificados-pendientes-firma");
+    }>("list-certificados-pendientes-firma", extrasAlcanceDocente());
   },
 
   async firmarCertificado(entrada: {
@@ -1238,6 +1276,7 @@ export const secundariaGatewayService = {
     soloPropias?: boolean;
     incluirArchivo?: boolean;
   } = {}) {
+    const alcance = extrasAlcanceDocente();
     const sinFiltros =
       !entrada.cursoId &&
       entrada.soloPropias !== true &&
@@ -1252,6 +1291,7 @@ export const secundariaGatewayService = {
         cursoId: entrada.cursoId ?? null,
         soloPropias: entrada.soloPropias === true,
         incluirArchivo: entrada.incluirArchivo === true,
+        ...alcance,
       });
     }
 
@@ -1267,6 +1307,7 @@ export const secundariaGatewayService = {
           cursoId: null,
           soloPropias: false,
           incluirArchivo: false,
+          ...alcance,
         });
         return {
           ok: true as const,

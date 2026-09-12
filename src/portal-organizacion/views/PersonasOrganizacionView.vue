@@ -15,7 +15,7 @@ import Select from "primevue/select";
 import Skeleton from "primevue/skeleton";
 import Tag from "primevue/tag";
 import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
-import { useRoute } from "vue-router";
+import { RouterLink, useRoute } from "vue-router";
 
 import {
   organizacionService,
@@ -26,6 +26,7 @@ import { Button } from "@/components/ui/button";
 import TituloConAyuda from "@/components/shared/TituloConAyuda.vue";
 import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "@/lib/toast";
+import { PERMISOS_POR_PLANTILLA } from "@/lib/control-acceso";
 import { ORG_ESTRUCTURA_SELECCIONADA_KEY } from "@/lib/constants";
 import { useContextoSesion } from "@/composables/useContextoSesion";
 import { notificacionesCorreoService } from "@/api/services/notificaciones-correo.service";
@@ -33,15 +34,23 @@ import { env } from "@/lib/env";
 import type {
   EstructuraOrganizacional,
   NivelOrganizacional,
+  PerfilEntidad,
   UnidadOrganizacional,
   VinculacionUnidad,
 } from "@/portal-organizacion/types/estructura-organizacional.types";
 
 const route = useRoute();
-const { contextoActivo } = useContextoSesion();
+const { contextoActivo, tienePermiso } = useContextoSesion();
 
 const operadorId = computed(
   () => contextoActivo.value?.usuarioId?.trim() || "",
+);
+const puedeCrearPerfiles = computed(
+  () =>
+    tienePermiso("perfiles.administrar") ||
+    tienePermiso("equipos.administrar") ||
+    tienePermiso("entidad.gobernar") ||
+    tienePermiso("usuarios.administrar"),
 );
 
 function leerEstructuraSeleccionada() {
@@ -75,11 +84,24 @@ const filtroEstadoAsignacion = ref<"TODOS" | "SIN_ASIGNAR" | "ASIGNADOS" | "PEND
 const buscarPersonaVinculacion = ref("");
 const mostrarFiltrosAvanzados = ref(false);
 
-/** Búsqueda para vincular: DNI o correo de alguien que ya tiene cuenta. */
+/** Búsqueda para vincular: nombre o correo de alguien que ya tiene cuenta. */
 const criterioBusqueda = ref("");
 const personaEncontrada = ref<UsuarioOrganizacion | null>(null);
+const candidatosVinculacion = ref<
+  Array<{
+    usuario: UsuarioOrganizacion;
+    enDirectorioStaff: boolean;
+    esAlumno: boolean;
+  }>
+>([]);
 const errorBusqueda = ref("");
 const busquedaRealizada = ref(false);
+const buscandoCuenta = ref(false);
+/** Si solo es alumno (u otra cuenta sin rol de staff), hay que asignar perfil. */
+const requierePerfilStaff = ref(false);
+const perfilesDisponibles = ref<PerfilEntidad[]>([]);
+const perfilIdVinculacion = ref("");
+const guardandoVinculacion = ref(false);
 
 const opcionesEstadoAsignacion = [
   { label: "Todas las personas", value: "TODOS" as const },
@@ -115,6 +137,80 @@ const formularioVinculacion = reactive({
 });
 const notificarPorCorreo = ref(true);
 const opcionesTipoVinculacion = ["PRINCIPAL", "SECUNDARIA", "TEMPORAL"];
+const opcionesPerfilVinculacion = computed(() =>
+  perfilesDisponibles.value
+    .filter((perfil) => perfil.estado === "ACTIVO")
+    .map((perfil) => ({
+      label: `${perfil.nombre}${perfil.plantilla === "DOCENCIA" ? " (docente)" : ""}`,
+      value: perfil.id,
+    })),
+);
+const faltaPerfilDocente = computed(
+  () =>
+    !perfilesDisponibles.value.some(
+      (perfil) =>
+        perfil.estado === "ACTIVO" &&
+        (perfil.plantilla === "DOCENCIA" ||
+          /docente|instructor/i.test(perfil.nombre)),
+    ),
+);
+const creandoPerfilDocente = ref(false);
+
+function perfilDocenciaPorDefecto(lista: PerfilEntidad[]) {
+  return (
+    lista.find((p) => p.plantilla === "DOCENCIA" && p.estado === "ACTIVO") ??
+    lista.find((p) => /docente|instructor/i.test(p.nombre) && p.estado === "ACTIVO") ??
+    lista.find((p) => p.estado === "ACTIVO" && !["DIRECCION", "ADMINISTRACION"].includes(p.plantilla)) ??
+    lista.find((p) => p.estado === "ACTIVO")
+  );
+}
+
+async function asegurarPerfilesVinculacion() {
+  try {
+    perfilesDisponibles.value = await organizacionService.estructura.perfiles.listar();
+  } catch {
+    perfilesDisponibles.value = [];
+  }
+}
+
+async function crearPerfilDocenteDesdeVinculacion() {
+  if (!puedeCrearPerfiles.value) {
+    toast.error(
+      "Tu rol no puede crear perfiles. Pide a Dirección o Administración que cree el perfil Docente en Estructura → Perfiles.",
+    );
+    return;
+  }
+  creandoPerfilDocente.value = true;
+  try {
+    const creado = await organizacionService.estructura.perfiles.crear({
+      id: `perfil-docente-${Date.now()}`,
+      nombre: "Docente",
+      descripcion: "Imparte cursos, evalúa estudiantes y gestiona su portal docente.",
+      tipo: "PERSONALIZADO",
+      plantilla: "DOCENCIA",
+      nivelAutoridad: 400,
+      permisos: [...PERMISOS_POR_PLANTILLA.DOCENCIA],
+      alcanceDefecto: "CURSOS_PROPIOS",
+      rutaInicial: "/docente/inicio",
+      esSistema: false,
+      estado: "ACTIVO",
+    });
+    await asegurarPerfilesVinculacion();
+    const docencia =
+      perfilesDisponibles.value.find((p) => p.id === creado.id) ??
+      perfilDocenciaPorDefecto(perfilesDisponibles.value);
+    perfilIdVinculacion.value = docencia?.id ?? creado.id;
+    toast.success("Perfil Docente creado. Ya puedes incorporarlo.");
+  } catch (error) {
+    toast.error(
+      error instanceof Error
+        ? error.message
+        : "No se pudo crear el perfil Docente.",
+    );
+  } finally {
+    creandoPerfilDocente.value = false;
+  }
+}
 
 onMounted(cargar);
 
@@ -500,8 +596,12 @@ function nombreUnidad(id: string) {
 function resetBusquedaVinculacion() {
   criterioBusqueda.value = "";
   personaEncontrada.value = null;
+  candidatosVinculacion.value = [];
   errorBusqueda.value = "";
   busquedaRealizada.value = false;
+  buscandoCuenta.value = false;
+  requierePerfilStaff.value = false;
+  perfilIdVinculacion.value = "";
   Object.assign(formularioVinculacion, {
     usuarioId: "",
     unidadId: nodosDisponiblesVinculacion.value[0]?.id ?? "",
@@ -514,7 +614,49 @@ function abrirSolicitudes() {
   modalSolicitudes.value = true;
 }
 
-function abrirVinculacion(usuario?: UsuarioOrganizacion) {
+function inicialesDeNombre(nombre: string) {
+  return (
+    nombre
+      .trim()
+      .split(/\s+/)
+      .slice(0, 2)
+      .map((parte) => parte[0] ?? "")
+      .join("")
+      .toUpperCase() || "UT"
+  );
+}
+
+async function seleccionarCandidatoVinculacion(entrada: {
+  usuario: UsuarioOrganizacion;
+  enDirectorioStaff: boolean;
+  esAlumno: boolean;
+}) {
+  if (entrada.usuario.estado === "SUSPENDIDO") {
+    errorBusqueda.value =
+      "Esta cuenta está suspendida. Reactívala antes de vincularla a un nodo.";
+    personaEncontrada.value = null;
+    formularioVinculacion.usuarioId = "";
+    return;
+  }
+  errorBusqueda.value = "";
+  personaEncontrada.value = entrada.usuario;
+  formularioVinculacion.usuarioId = String(entrada.usuario.id);
+  const yaTieneActiva = vinculaciones.value.some(
+    (item) =>
+      item.usuarioId === String(entrada.usuario.id) && item.estado === "ACTIVA",
+  );
+  formularioVinculacion.tipo = yaTieneActiva ? "SECUNDARIA" : "PRINCIPAL";
+  requierePerfilStaff.value = !entrada.enDirectorioStaff;
+  if (requierePerfilStaff.value) {
+    await asegurarPerfilesVinculacion();
+    perfilIdVinculacion.value =
+      perfilDocenciaPorDefecto(perfilesDisponibles.value)?.id ?? "";
+  } else {
+    perfilIdVinculacion.value = "";
+  }
+}
+
+async function abrirVinculacion(usuario?: UsuarioOrganizacion) {
   resetBusquedaVinculacion();
   const nodoFiltrado = [...filtrosNodosVinculaciones.value]
     .reverse()
@@ -528,73 +670,136 @@ function abrirVinculacion(usuario?: UsuarioOrganizacion) {
   formularioVinculacion.unidadId = nodoInicial ?? "";
 
   if (usuario) {
-    personaEncontrada.value = usuario;
     busquedaRealizada.value = true;
-    criterioBusqueda.value = usuario.dni || usuario.correo;
-    formularioVinculacion.usuarioId = String(usuario.id);
-    const yaTieneActiva = vinculaciones.value.some(
-      (item) =>
-        item.usuarioId === String(usuario.id) && item.estado === "ACTIVA",
-    );
-    formularioVinculacion.tipo = yaTieneActiva ? "SECUNDARIA" : "PRINCIPAL";
+    criterioBusqueda.value = usuario.correo || usuario.nombre;
+    await seleccionarCandidatoVinculacion({
+      usuario,
+      enDirectorioStaff: true,
+      esAlumno: false,
+    });
   }
 
   modalVinculacion.value = true;
+  await asegurarPerfilesVinculacion();
 }
 
-function buscarPersonaParaVincular() {
+async function buscarPersonaParaVincular() {
   errorBusqueda.value = "";
   personaEncontrada.value = null;
+  candidatosVinculacion.value = [];
+  requierePerfilStaff.value = false;
+  perfilIdVinculacion.value = "";
+  formularioVinculacion.usuarioId = "";
   busquedaRealizada.value = true;
   const texto = criterioBusqueda.value.trim().toLowerCase();
   if (!texto) {
-    errorBusqueda.value = "Ingresa un DNI o un correo para buscar.";
+    errorBusqueda.value = "Ingresa un nombre o un correo para buscar.";
+    return;
+  }
+  if (texto.length < 2) {
+    errorBusqueda.value = "Escribe al menos 2 caracteres.";
     return;
   }
 
-  const esDni = /^\d{8}$/.test(texto);
-  const encontrada = usuarios.value.find((usuario) => {
-    if (esDni) return (usuario.dni ?? "").toLowerCase() === texto;
-    return usuario.correo.trim().toLowerCase() === texto;
-  });
+  const enDirectorio = usuarios.value
+    .filter((usuario) => {
+      return (
+        usuario.correo.trim().toLowerCase().includes(texto) ||
+        usuario.nombre.trim().toLowerCase().includes(texto)
+      );
+    })
+    .slice(0, 12)
+    .map((usuario) => ({
+      usuario,
+      enDirectorioStaff: true,
+      esAlumno: false,
+    }));
 
-  if (!encontrada) {
+  buscandoCuenta.value = true;
+  try {
+    const cuentas = await organizacionService.usuarios.buscarCuentaRegistrada(
+      criterioBusqueda.value.trim(),
+    );
+    const idsLocales = new Set(enDirectorio.map((c) => String(c.usuario.id)));
+    const remotas = cuentas
+      .filter((cuenta) => cuenta.identidadId && !idsLocales.has(cuenta.identidadId))
+      .map((cuenta) => ({
+        usuario: {
+          id: cuenta.identidadId,
+          nombre: cuenta.nombre,
+          iniciales: inicialesDeNombre(cuenta.nombre),
+          correo: cuenta.correo,
+          area:
+            cuenta.esAlumno && !cuenta.enDirectorioStaff
+              ? "Alumno"
+              : "Cuenta Tukuy",
+          sede: "—",
+          rol:
+            cuenta.roles.map((r) => r.nombre).filter(Boolean).join(", ") ||
+            (cuenta.esAlumno ? "Alumno" : "Sin perfil de equipo"),
+          progreso: 0,
+          estado: "ACTIVO" as const,
+          origenIngreso: "INVITACION_ADMIN" as const,
+        },
+        enDirectorioStaff: cuenta.enDirectorioStaff,
+        esAlumno: cuenta.esAlumno,
+      }));
+
+    candidatosVinculacion.value = [...enDirectorio, ...remotas];
+    if (!candidatosVinculacion.value.length) {
+      errorBusqueda.value =
+        "No hay nadie con ese nombre o correo registrado en Tukuy. La persona debe crear su cuenta (correo o Google) o pedir unirse desde Comunidad.";
+      return;
+    }
+    if (candidatosVinculacion.value.length === 1) {
+      await seleccionarCandidatoVinculacion(candidatosVinculacion.value[0]!);
+    }
+  } catch (error) {
     errorBusqueda.value =
-      "No hay nadie con ese DNI o correo en el directorio. La persona debe registrarse en Tukuy o solicitar unirse desde Comunidad.";
-    formularioVinculacion.usuarioId = "";
-    return;
+      error instanceof Error
+        ? error.message
+        : "No se pudo buscar la cuenta en Tukuy.";
+  } finally {
+    buscandoCuenta.value = false;
   }
-
-  if (encontrada.estado === "SUSPENDIDO") {
-    errorBusqueda.value =
-      "Esta cuenta está suspendida. Reactívala antes de vincularla a un nodo.";
-    return;
-  }
-
-  personaEncontrada.value = encontrada;
-  formularioVinculacion.usuarioId = String(encontrada.id);
-  const yaTieneActiva = vinculaciones.value.some(
-    (item) =>
-      item.usuarioId === String(encontrada.id) && item.estado === "ACTIVA",
-  );
-  formularioVinculacion.tipo = yaTieneActiva ? "SECUNDARIA" : "PRINCIPAL";
 }
 
 async function crearVinculacion() {
   if (!formularioVinculacion.usuarioId || !formularioVinculacion.unidadId) return;
+  if (requierePerfilStaff.value && !perfilIdVinculacion.value) {
+    toast.error(
+      "Elige un perfil (por ejemplo Docente) para incorporar a la persona.",
+    );
+    return;
+  }
   const persona = personaEncontrada.value;
   const unidad = unidadesPorId.value.get(formularioVinculacion.unidadId);
+  const fueIncorporacion = requierePerfilStaff.value;
+  guardandoVinculacion.value = true;
   try {
-    await organizacionService.estructura.vincularPersonaANodo({
-      usuarioId: formularioVinculacion.usuarioId,
-      unidadId: formularioVinculacion.unidadId,
-      tipo: formularioVinculacion.tipo,
-      origen: formularioVinculacion.origen,
-      aprobadaPor: operadorId.value || undefined,
-    });
+    if (fueIncorporacion && persona?.correo) {
+      await organizacionService.incorporarPersona({
+        nombre: persona.nombre,
+        correo: persona.correo,
+        unidadId: formularioVinculacion.unidadId,
+        perfilId: perfilIdVinculacion.value,
+      });
+    } else {
+      await organizacionService.estructura.vincularPersonaANodo({
+        usuarioId: formularioVinculacion.usuarioId,
+        unidadId: formularioVinculacion.unidadId,
+        tipo: formularioVinculacion.tipo,
+        origen: formularioVinculacion.origen,
+        aprobadaPor: operadorId.value || undefined,
+      });
+    }
     await recargarDirectorio();
     modalVinculacion.value = false;
-    toast.success("La persona fue vinculada al nodo seleccionado.");
+    toast.success(
+      fueIncorporacion
+        ? "La persona fue incorporada al equipo y vinculada al nodo."
+        : "La persona fue vinculada al nodo seleccionado.",
+    );
 
     if (
       notificarPorCorreo.value &&
@@ -624,7 +829,11 @@ async function crearVinculacion() {
       }
     }
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "No se pudo crear la vinculación.");
+    toast.error(
+      error instanceof Error ? error.message : "No se pudo crear la vinculación.",
+    );
+  } finally {
+    guardandoVinculacion.value = false;
   }
 }
 
@@ -766,7 +975,7 @@ async function resolverSolicitud(fila: FilaSolicitud) {
               <InputText
                 v-model="buscarPersonaVinculacion"
                 class="filtro-control w-full pl-10"
-                placeholder="Nombre, correo o DNI"
+                placeholder="Nombre o correo"
               />
             </div>
           </label>
@@ -1012,7 +1221,7 @@ async function resolverSolicitud(fila: FilaSolicitud) {
       </template>
     </Dialog>
 
-    <!-- Vincular por DNI / correo -->
+    <!-- Vincular por nombre / correo -->
     <Dialog
       v-model:visible="modalVinculacion"
       modal
@@ -1028,13 +1237,13 @@ async function resolverSolicitud(fila: FilaSolicitud) {
         <div class="border-l-4 border-l-primary bg-primary/8 p-4 text-sm">
           <b>Busca una cuenta existente</b>
           <p class="mt-1 text-xs text-muted-foreground">
-            La persona ya debió registrarse en Tukuy (correo o Google) o pedir
-            unirse desde Comunidad. Aquí solo la vinculas a un nodo.
+            Busca por nombre o correo. Sirve aunque la persona figure solo como
+            alumno: eliges un perfil (p. ej. Docente) y se incorpora al nodo.
           </p>
         </div>
 
         <label class="grid gap-2">
-          <span class="filtro-label">DNI o correo</span>
+          <span class="filtro-label">Nombre o correo</span>
           <div class="flex gap-2">
             <div class="relative min-w-0 flex-1">
               <Search
@@ -1043,12 +1252,17 @@ async function resolverSolicitud(fila: FilaSolicitud) {
               <InputText
                 v-model="criterioBusqueda"
                 class="filtro-control w-full pl-10"
-                placeholder="Ej. 45678901 o correo@dominio.com"
+                placeholder="Ej. María Pérez o correo@dominio.com"
+                :disabled="buscandoCuenta || guardandoVinculacion"
                 @keyup.enter="buscarPersonaParaVincular"
               />
             </div>
-            <Button type="button" @click="buscarPersonaParaVincular">
-              Buscar
+            <Button
+              type="button"
+              :disabled="buscandoCuenta || guardandoVinculacion"
+              @click="buscarPersonaParaVincular"
+            >
+              {{ buscandoCuenta ? "Buscando…" : "Buscar" }}
             </Button>
           </div>
         </label>
@@ -1056,6 +1270,39 @@ async function resolverSolicitud(fila: FilaSolicitud) {
         <p v-if="errorBusqueda" class="border border-border border-l-4 border-l-accent bg-accent/10 px-3 py-2 text-xs text-[#7A5600]">
           {{ errorBusqueda }}
         </p>
+
+        <div
+          v-if="candidatosVinculacion.length > 1"
+          class="grid max-h-48 gap-2 overflow-y-auto"
+        >
+          <button
+            v-for="candidato in candidatosVinculacion"
+            :key="String(candidato.usuario.id)"
+            type="button"
+            class="flex items-center gap-3 border border-border px-3 py-2 text-left transition hover:border-primary/40 hover:bg-primary/5"
+            :class="
+              String(personaEncontrada?.id) === String(candidato.usuario.id)
+                ? 'border-l-4 border-l-primary bg-primary/5'
+                : ''
+            "
+            @click="seleccionarCandidatoVinculacion(candidato)"
+          >
+            <span
+              class="grid h-9 w-9 place-items-center bg-primary/10 text-[10px] font-black text-primary"
+            >
+              {{ candidato.usuario.iniciales }}
+            </span>
+            <span class="min-w-0 flex-1">
+              <b class="block truncate text-sm">{{ candidato.usuario.nombre }}</b>
+              <span class="block truncate text-xs text-muted-foreground">
+                {{ candidato.usuario.correo }}
+                <template v-if="candidato.esAlumno && !candidato.enDirectorioStaff">
+                  · Alumno
+                </template>
+              </span>
+            </span>
+          </button>
+        </div>
 
         <div
           v-if="personaEncontrada"
@@ -1070,9 +1317,6 @@ async function resolverSolicitud(fila: FilaSolicitud) {
             <b class="block text-sm">{{ personaEncontrada.nombre }}</b>
             <p class="text-xs text-muted-foreground">
               {{ personaEncontrada.correo }}
-              <span v-if="personaEncontrada.dni">
-                · DNI {{ personaEncontrada.dni }}
-              </span>
             </p>
           </div>
           <Tag
@@ -1088,13 +1332,61 @@ async function resolverSolicitud(fila: FilaSolicitud) {
         </div>
 
         <p
-          v-else-if="busquedaRealizada && !errorBusqueda"
+          v-else-if="busquedaRealizada && !errorBusqueda && !candidatosVinculacion.length"
           class="text-xs text-muted-foreground"
         >
           Realiza una búsqueda para continuar.
         </p>
 
+        <p
+          v-else-if="candidatosVinculacion.length > 1 && !personaEncontrada"
+          class="text-xs text-muted-foreground"
+        >
+          Elige una de las coincidencias para continuar.
+        </p>
+
         <template v-if="personaEncontrada">
+          <div
+            v-if="requierePerfilStaff"
+            class="border border-border border-l-4 border-l-accent bg-accent/10 px-3 py-2 text-xs text-[#7A5600]"
+          >
+            Esta cuenta existe (p. ej. como alumno) pero aún no está en el
+            directorio de equipo. Elige un perfil para incorporarla.
+          </div>
+          <label v-if="requierePerfilStaff">
+            <span class="filtro-label">Perfil / rol en la organización</span>
+            <Select
+              v-model="perfilIdVinculacion"
+              :options="opcionesPerfilVinculacion"
+              option-label="label"
+              option-value="value"
+              placeholder="Selecciona perfil (Docente…)"
+              class="filtro-control w-full"
+            />
+            <div
+              v-if="faltaPerfilDocente"
+              class="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
+            >
+              <span>No hay perfil Docente todavía.</span>
+              <Button
+                v-if="puedeCrearPerfiles"
+                type="button"
+                size="sm"
+                variant="outline"
+                :disabled="creandoPerfilDocente"
+                @click="crearPerfilDocenteDesdeVinculacion"
+              >
+                {{ creandoPerfilDocente ? "Creando…" : "Crear perfil Docente" }}
+              </Button>
+              <RouterLink
+                v-else
+                class="font-semibold underline"
+                to="/organizacion/equipos?seccion=perfiles"
+              >
+                Pedir a Administración en Estructura → Perfiles
+              </RouterLink>
+            </div>
+          </label>
           <label>
             <span class="filtro-label">Nodo de destino</span>
             <Select
@@ -1105,7 +1397,7 @@ async function resolverSolicitud(fila: FilaSolicitud) {
               class="filtro-control w-full"
             />
           </label>
-          <label>
+          <label v-if="!requierePerfilStaff">
             <span class="filtro-label">Tipo de vínculo</span>
             <Select
               v-model="formularioVinculacion.tipo"
@@ -1134,11 +1426,19 @@ async function resolverSolicitud(fila: FilaSolicitud) {
           :disabled="
             !personaEncontrada ||
             !formularioVinculacion.usuarioId ||
-            !formularioVinculacion.unidadId
+            !formularioVinculacion.unidadId ||
+            (requierePerfilStaff && !perfilIdVinculacion) ||
+            guardandoVinculacion
           "
           @click="crearVinculacion"
         >
-          Guardar vinculación
+          {{
+            guardandoVinculacion
+              ? "Guardando…"
+              : requierePerfilStaff
+                ? "Incorporar y vincular"
+                : "Guardar vinculación"
+          }}
         </Button>
       </template>
     </Dialog>

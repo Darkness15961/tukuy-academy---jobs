@@ -8,7 +8,7 @@ import {
   ShieldCheck,
   XCircle,
 } from "lucide-vue-next";
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 import {
@@ -22,18 +22,38 @@ import Skeleton from "primevue/skeleton";
 const route = useRoute();
 const router = useRouter();
 const cargando = ref(true);
+const errorConsulta = ref<string | null>(null);
 const certificado = ref<VerificacionCertificadoAcademico | null>(null);
-const codigo = computed(() => String(route.params.codigo));
-
-onMounted(async () => {
+const codigo = computed(() => {
+  const raw = String(route.params.codigo ?? "");
   try {
+    return decodeURIComponent(raw).trim();
+  } catch {
+    return raw.trim();
+  }
+});
+
+async function consultar() {
+  cargando.value = true;
+  errorConsulta.value = null;
+  certificado.value = null;
+  try {
+    if (!codigo.value) {
+      return;
+    }
     certificado.value = await academicoService.verificarCertificado(
       codigo.value,
     );
+  } catch (err) {
+    errorConsulta.value =
+      err instanceof Error ? err.message : "No se pudo consultar el certificado";
   } finally {
     cargando.value = false;
   }
-});
+}
+
+onMounted(consultar);
+watch(codigo, consultar);
 </script>
 
 <template>
@@ -212,13 +232,22 @@ onMounted(async () => {
             ><XCircle class="h-8 w-8"
           /></span>
           <h2 class="mt-5 text-2xl font-black">
-            No encontramos este certificado
+            {{
+              errorConsulta
+                ? "No pudimos verificar ahora"
+                : "No encontramos este certificado"
+            }}
           </h2>
           <p
             class="mt-3 max-w-xl text-sm leading-6 text-slate-600 dark:text-slate-300"
           >
-            El código {{ codigo }} no corresponde a una emisión registrada.
-            Verifica que el enlace o el código estén completos.
+            <template v-if="errorConsulta">{{ errorConsulta }}</template>
+            <template v-else>
+              El código
+              <strong class="font-mono">{{ codigo || "(vacío)" }}</strong> no
+              corresponde a una emisión registrada. Verifica que el enlace o el
+              código estén completos.
+            </template>
           </p>
           <Button class="mt-6" @click="router.push('/')"
             >Volver a Tukuy Academy</Button

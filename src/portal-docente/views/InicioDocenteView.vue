@@ -79,21 +79,24 @@ const ambitoActivo = computed(() =>
     : "ORGANIZACION",
 );
 const cursosContexto = computed(() => {
-  const idsAlcance = contextoActivo.value?.alcance?.cursoIds;
+  // panel.cursos ya viene acotado al docente; solo filtramos por ámbito activo.
   return cursos.value.filter((curso) => {
     if (ambitoActivo.value === "INDEPENDIENTE") {
       return curso.ambito === "INDEPENDIENTE";
     }
-    const deLaOrg =
+    return (
       curso.ambito === "ORGANIZACION" &&
-      curso.organizacionId === contextoActivo.value?.organizacionId;
-    if (!deLaOrg) return false;
-    if (contextoActivo.value?.portal === "docente" && idsAlcance?.length) {
-      return idsAlcance.includes(curso.id);
-    }
-    return true;
+      (!contextoActivo.value?.organizacionId ||
+        curso.organizacionId === contextoActivo.value.organizacionId)
+    );
   });
 });
+
+const proximaSesion = computed(() => sesiones.value[0] ?? null);
+
+const evaluacionesVisibles = computed(() => evaluaciones.value.slice(0, 6));
+
+const actividadesVisibles = computed(() => actividades.value.slice(0, 8));
 const nombreContexto = computed(() =>
   ambitoActivo.value === "INDEPENDIENTE"
     ? "tu espacio de docencia independiente"
@@ -330,7 +333,7 @@ function fechaActividad(fecha: string) {
               class="border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-400"
               variant="outline"
             >
-              {{ sesiones[0]?.estado ?? "Sin fecha" }}
+              {{ proximaSesion?.estado ?? "Sin fecha" }}
             </Badge>
           </div>
           <div class="mt-5 bg-muted p-4">
@@ -342,10 +345,10 @@ function fechaActividad(fecha: string) {
               </div>
               <div>
                 <p class="font-bold text-foreground">
-                  {{ sesiones[0]?.titulo ?? "Sin sesiones programadas" }}
+                  {{ proximaSesion?.titulo ?? "Sin sesiones programadas" }}
                 </p>
                 <p class="text-xs text-muted-foreground">
-                  {{ sesiones[0]?.curso }}
+                  {{ proximaSesion?.curso }}
                 </p>
               </div>
             </div>
@@ -353,8 +356,8 @@ function fechaActividad(fecha: string) {
               class="mt-4 flex items-center gap-2 text-sm text-muted-foreground"
             >
               <Clock3 class="h-4 w-4 text-accent" />
-              {{ sesiones[0]?.hora ?? "--:--" }} ·
-              {{ sesiones[0]?.duracion ?? "Sin duración" }}
+              {{ proximaSesion?.hora ?? "--:--" }} ·
+              {{ proximaSesion?.duracion ?? "Sin duración" }}
             </div>
             <Button
               class="mt-4 w-full bg-primary text-primary-foreground hover:bg-primary/90"
@@ -392,7 +395,13 @@ function fechaActividad(fecha: string) {
           </div>
           <div class="mt-4 space-y-3">
             <div
-              v-for="item in evaluaciones"
+              v-if="!evaluacionesVisibles.length"
+              class="border border-dashed border-border bg-muted/20 p-4 text-center text-xs text-muted-foreground"
+            >
+              No tienes entregas pendientes de revisar.
+            </div>
+            <div
+              v-for="item in evaluacionesVisibles"
               :key="item.id"
               class="flex items-center gap-3 border border-border bg-muted/40 p-3"
             >
@@ -425,7 +434,13 @@ function fechaActividad(fecha: string) {
           </p>
           <div class="mt-5 space-y-5">
             <div
-              v-for="actividad in actividades"
+              v-if="!actividadesVisibles.length"
+              class="text-xs text-muted-foreground"
+            >
+              Aún no hay actividad reciente en tus cursos.
+            </div>
+            <div
+              v-for="actividad in actividadesVisibles"
               :key="actividad.id"
               class="relative flex gap-3 pl-1"
             >
